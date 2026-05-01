@@ -8,9 +8,11 @@
 
 mod cursor;
 mod cypher;
+mod insert;
 mod match_part;
 mod return_part;
 mod where_part;
 
 pub use cursor::CypherQuery;
-pub use cypher::{build, BuilderError};
+pub use cypher::{build, build_read, compile, BuilderError};
+pub use insert::{build_insert, InsertError};

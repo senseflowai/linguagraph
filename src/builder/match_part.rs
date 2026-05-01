@@ -6,7 +6,7 @@ use crate::ast::query::*;
 
 use super::cursor::Cursor;
 
-pub(super) fn write_match(cur: &mut Cursor, q: &Query) {
+pub(super) fn write_match(cur: &mut Cursor, q: &ReadQuery) {
     cur.buf.push_str("MATCH ");
     write_node(cur, &q.start);
     for t in &q.traversals {

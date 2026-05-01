@@ -20,6 +20,15 @@ pub enum Error {
     #[error("Cypher builder error: {0}")]
     Builder(#[from] crate::builder::BuilderError),
 
+    #[error("Insert builder error: {0}")]
+    InsertBuilder(#[from] crate::builder::InsertError),
+
+    #[error("Mapper error: {0}")]
+    Mapper(#[from] crate::mapper::MapperError),
+
+    #[error("Ingest error: {0}")]
+    Ingest(#[from] crate::ingest::IngestError),
+
     #[error("Database error: {0}")]
     Db(#[from] crate::db::DbError),
 

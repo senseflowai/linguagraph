@@ -1,0 +1,65 @@
+{
+  "cameras": [
+    {
+      "id": "cam-001",
+      "state": "active",
+      "created_at": "2026-04-01T10:00:00Z",
+      "updated_at": "2026-04-30T18:00:00Z",
+      "video_streaming": { "storage_depth": 30 },
+      "origin": {
+        "place_id": "plc-7",
+        "place_name": "Warehouse 7",
+        "place_description": "12 Industrial Way, Bremen",
+        "place_latitude": 53.0793,
+        "place_longitude": 8.8017
+      },
+      "source": { "url": "rtsp://10.0.0.7/cam-001" },
+      "video_analytics": {
+        "modules": [
+          { "module": "PeopleCounting" },
+          { "module": "LicensePlateRecognition" }
+        ]
+      }
+    },
+    {
+      "id": "cam-002",
+      "state": "inactive",
+      "created_at": "2026-04-02T11:00:00Z",
+      "updated_at": "2026-04-29T09:30:00Z",
+      "video_streaming": { "storage_depth": 30 },
+      "origin": {
+        "place_id": "plc-7",
+        "place_name": "Warehouse 7",
+        "place_description": "12 Industrial Way, Bremen",
+        "place_latitude": 53.0793,
+        "place_longitude": 8.8017
+      },
+      "source": { "url": "rtsp://10.0.0.7/cam-002" },
+      "video_analytics": {
+        "modules": [
+          { "module": "PeopleCounting" }
+        ]
+      }
+    },
+    {
+      "id": "cam-003",
+      "state": "active",
+      "created_at": "2026-04-15T08:00:00Z",
+      "updated_at": "2026-04-30T19:45:00Z",
+      "video_streaming": { "storage_depth": 60 },
+      "origin": {
+        "place_id": "plc-12",
+        "place_name": "Loading Dock",
+        "place_description": "12 Industrial Way, Bremen — North Gate",
+        "place_latitude": 53.0801,
+        "place_longitude": 8.8020
+      },
+      "source": { "url": "rtsp://10.0.0.7/cam-003" },
+      "video_analytics": {
+        "modules": [
+          { "module": "IntrusionDetection" }
+        ]
+      }
+    }
+  ]
+}

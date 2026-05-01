@@ -5,16 +5,20 @@ use thiserror::Error;
 use crate::ast::query::*;
 
 use super::cursor::{Cursor, CypherQuery};
+use super::insert::{build_insert, InsertError};
 use super::{match_part, return_part, where_part};
 
 #[derive(Debug, Error)]
 pub enum BuilderError {
     #[error("query has no projection (RETURN list is empty)")]
     EmptyReturn,
+
+    #[error("insert builder error: {0}")]
+    Insert(#[from] InsertError),
 }
 
-/// Compile a [`Query`] into a parameterized [`CypherQuery`].
-pub fn build(query: &Query) -> Result<CypherQuery, BuilderError> {
+/// Compile a [`ReadQuery`] into a single parameterized [`CypherQuery`].
+pub fn build_read(query: &ReadQuery) -> Result<CypherQuery, BuilderError> {
     if query.returns.is_empty() {
         return Err(BuilderError::EmptyReturn);
     }
@@ -34,6 +38,25 @@ pub fn build(query: &Query) -> Result<CypherQuery, BuilderError> {
     Ok(cur.finish())
 }
 
+/// Backwards-compatible alias for [`build_read`].
+///
+/// Existing call sites that operate on the read AST continue to compile;
+/// new code that holds a [`Query`] enum should use [`build`].
+pub fn build(query: &ReadQuery) -> Result<CypherQuery, BuilderError> {
+    build_read(query)
+}
+
+/// Compile any [`Query`] variant.
+///
+/// Reads return a single batch; inserts return one batch per node-/relation-
+/// batch in the [`InsertQuery`].
+pub fn compile(query: &Query) -> Result<Vec<CypherQuery>, BuilderError> {
+    match query {
+        Query::Read(r) => Ok(vec![build_read(r)?]),
+        Query::Insert(i) => Ok(build_insert(i)?),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -48,7 +71,7 @@ mod tests {
 
     #[test]
     fn builds_basic_match_with_filter() {
-        let q = Query {
+        let q = ReadQuery {
             action: Action::Find,
             start: Node { label: "Person".into(), alias: alias("p") },
             traversals: vec![],
@@ -65,7 +88,7 @@ mod tests {
             sort: vec![],
             limit: Some(10),
         };
-        let q = build(&q).unwrap();
+        let q = build_read(&q).unwrap();
         assert!(q.text.starts_with("MATCH (p:Person)"));
         assert!(q.text.contains("WHERE p.age > $p0"));
         assert!(q.text.contains("RETURN p.name AS name"));
@@ -75,7 +98,7 @@ mod tests {
 
     #[test]
     fn renders_traversal_with_depth_and_direction() {
-        let q = Query {
+        let q = ReadQuery {
             action: Action::Find,
             start: Node { label: "Person".into(), alias: alias("p") },
             traversals: vec![EdgeTraversal {
@@ -94,13 +117,13 @@ mod tests {
             sort: vec![],
             limit: None,
         };
-        let out = build(&q).unwrap().text;
+        let out = build_read(&q).unwrap().text;
         assert!(out.contains("(p:Person)-[r:KNOWS*1..3]->(p2:Person)"), "got: {out}");
     }
 
     #[test]
     fn builds_aggregate_with_order_by_alias() {
-        let q = Query {
+        let q = ReadQuery {
             action: Action::Aggregate,
             start: Node { label: "Customer".into(), alias: alias("c") },
             traversals: vec![EdgeTraversal {
@@ -129,14 +152,14 @@ mod tests {
             }],
             limit: Some(5),
         };
-        let out = build(&q).unwrap().text;
+        let out = build_read(&q).unwrap().text;
         assert!(out.contains("RETURN c.name AS customer, sum(o.total) AS total_spent"));
         assert!(out.contains("ORDER BY total_spent DESC"));
     }
 
     #[test]
     fn parameter_indices_increment() {
-        let q = Query {
+        let q = ReadQuery {
             action: Action::Find,
             start: Node { label: "Person".into(), alias: alias("p") },
             traversals: vec![],
@@ -160,7 +183,7 @@ mod tests {
             sort: vec![],
             limit: None,
         };
-        let q = build(&q).unwrap();
+        let q = build_read(&q).unwrap();
         assert!(q.text.contains("p.age > $p0"));
         assert!(q.text.contains("p.city = $p1"));
         assert_eq!(q.params.len(), 2);

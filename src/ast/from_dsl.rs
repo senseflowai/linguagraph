@@ -40,7 +40,7 @@ pub enum AstError {
 ///
 /// `max_depth` is enforced here so the AST itself can advertise that any
 /// traversal it carries is within limits; downstream code never has to check.
-pub fn lower(dsl: d::DslQuery, max_depth: u32) -> Result<Query, AstError> {
+pub fn lower(dsl: d::DslQuery, max_depth: u32) -> Result<ReadQuery, AstError> {
     let mut bound: HashMap<String, ()> = HashMap::new();
     bound.insert(dsl.start.alias.clone(), ());
 
@@ -88,7 +88,7 @@ pub fn lower(dsl: d::DslQuery, max_depth: u32) -> Result<Query, AstError> {
 
     let sort = lower_sort(&dsl.sort, &returns, &bound)?;
 
-    Ok(Query {
+    Ok(ReadQuery {
         action,
         start,
         traversals,

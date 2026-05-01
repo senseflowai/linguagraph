@@ -212,6 +212,28 @@ mod tests {
         assert!(matches!(parse_str(json), Err(DslError::InvalidDepth { .. })));
     }
 
+    fn multiple_traversal() {
+        let json = r#"{
+          "action": "aggregate",
+          "start": { "label": "Camera", "alias": "c" },
+          "traversals": [
+            { "edge": { "label": "HAS_STORAGE", "alias": "s", "direction": "out" }, "target": { "label": "Storage", "alias": "st" } },
+            { "edge": { "label": "LOCATED_IN", "alias": "l", "direction": "out" }, "target": { "label": "Place", "alias": "p" } }
+          ],
+          "filters": [
+            { "field": "c.state", "op": "eq", "value": "active" },
+            { "field": "st.depth", "op": "eq", "value": 30 },
+            { "field": "p.name", "op": "eq", "value": "Office" }
+          ],
+          "return": [
+            { "aggregate": "count", "field": "c.id", "alias": "count" }
+          ],
+          "limit": 1
+        }"#;
+
+        let _q = parse_str(json).unwrap();
+    }
+
     #[test]
     fn rejects_empty_return() {
         let json = r#"{

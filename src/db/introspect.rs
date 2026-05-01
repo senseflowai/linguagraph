@@ -351,6 +351,7 @@ fn looks_like_datetime(s: &str) -> bool {
     // tolerated.
     let b = s.as_bytes();
     b.len() >= 19
+        && b[..10].iter().all(|c| c.is_ascii()) // optional safety
         && looks_like_date(&s[..10])
         && b[10] == b'T'
         && b[11..13].iter().all(|c| c.is_ascii_digit())

@@ -2,13 +2,16 @@
   "entities": [
     {
       "type": "Camera",
-      "name": "$.cameras[*].name",
       "source_path": "$.cameras[*]",
       "description": "This is an IP camera for a video surveillance system",
       "properties": [
         {
           "name": "id",
           "source_path": "$.cameras[*].id"
+        },
+        {
+          "name": "name",
+          "source_path": "$.cameras[*].name"
         },
         {
           "name": "state",
@@ -45,12 +48,15 @@
     {
       "type": "Place",
       "description": "Camera installation place",
-      "name": "$.cameras[*].origin.place_name",
       "source_path": "$.cameras[*].origin",
       "properties": [
         {
           "name": "id",
           "source_path": "$.cameras[*].origin.place_id"
+        },
+        {
+          "name": "name",
+          "source_path": "$.cameras[*].origin.place_name"
         },
         {
           "name": "address",
@@ -62,7 +68,6 @@
     },
     {
       "type": "Location",
-      "name": "$.cameras[*].origin.place_name",
       "source_path": "$.cameras[*].origin",
       "description": "Geolocation of the camera's installation site",
       "properties": [
@@ -81,7 +86,6 @@
     },
     {
       "type": "Source",
-      "name": "$.cameras[*].source.url",
       "description": "link to the video stream",
       "source_path": "$.cameras[*].source",
       "properties": [

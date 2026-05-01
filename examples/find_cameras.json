@@ -1,0 +1,23 @@
+{
+  "action": "aggregate",
+  "start": { "label": "Camera", "alias": "c" },
+  "traversals": [
+    {
+      "edge": { "label": "HAS_STORAGE", "alias": "s_rel", "direction": "out" },
+      "target": { "label": "Storage", "alias": "st" }
+    },
+    {
+      "edge": { "label": "LOCATED_IN", "alias": "loc_rel", "direction": "out" },
+      "target": { "label": "Place", "alias": "p" }
+    }
+  ],
+  "filters": [
+    { "field": "c.state", "op": "eq", "value": "active" },
+    { "field": "p.name", "op": "eq", "value": "Office" },
+    { "field": "st.depth", "op": "eq", "value": 30 }
+  ],
+  "return": [
+    { "aggregate": "count", "field": "c.id", "alias": "count" }
+  ],
+  "group_by": []
+}

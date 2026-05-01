@@ -1,0 +1,1720 @@
+{
+  "pagination": {
+    "cursor": "eyJuYW1lIjoielRhcmdldEFJIC0gMzI0IFJvb21GYWNlIiwiaWQiOiI0MTlhMTczMS03ZjA0LTQ2YjYtODM0OC0xNTRhODM1ZGI3ZTciLCJlbnRpdHlfdHlwZSI6WyJDYW1lcmEiLCJmaW5kIl19.TSia34YuLHsV7f_zorS8xsnlFQ2dxQnpr_T83O-zTVU"
+  },
+  "cameras": [
+    {
+      "name": "Body Cam Dahua",
+      "source": {
+        "url": "rtsp://oper:QAZwsx1234@217.76.75.123:554/",
+        "body": {
+          "host": "217.76.75.123",
+          "path": "/",
+          "port": 554,
+          "password": "QAZwsx1234",
+          "protocol": "rtsp",
+          "username": "oper",
+          "transport": "tcp"
+        }
+      },
+      "video_analytics": {
+        "modules": [
+          {
+            "config": {
+              "roi": [],
+              "lines": [],
+              "min_detection_size": 0.03
+            },
+            "module": "FaceRecognitionModule"
+          }
+        ],
+        "version": 5
+      },
+      "video_streaming": {
+        "by_event": false,
+        "storage_depth": 30
+      },
+      "ptz": null,
+      "place_id": 72,
+      "is_dvr": false,
+      "onvif_host": null,
+      "onvif_port": null,
+      "onvif_login": null,
+      "onvif_password": null,
+      "scheduler_group": "default",
+      "scheduler_tags": [],
+      "state": "inactive",
+      "plan_x": null,
+      "plan_y": null,
+      "plan_id": null,
+      "capacitygroup_token": "bd7777ec9869d9f0",
+      "edge_id": null,
+      "edge": false,
+      "id": "3d4fdee7-8069-4ca4-ac94-b30b6f5f524b",
+      "created_at": "2026-04-30T09:07:24.368247Z",
+      "updated_at": "2026-04-30T12:26:58.385277Z",
+      "snapshot_url": "https://bd7777ec9869d9f0.teye.kz/s3/vab/2026/5/1/3d4fdee7-8069-4ca4-ac94-b30b6f5f524b.jpeg?ticket=eyJrZXkiOiIyMDI2LzUvMS8zZDRmZGVlNy04MDY5LTRjYTQtYWM5NC1iMzBiNmY1ZjUyNGIuanBlZyIsInRzIjoxNzc3NjM1NjE0LCJ0dGwiOjkwMC4wfQ.A2ipMrgorltm9QIa-igt_VAQ0DRfuVtHl2VJutukPf4",
+      "origin": {
+        "place_id": 72,
+        "group_id": 72,
+        "is_dvr": false,
+        "place_name": "Office",
+        "place_description": "проспект Мангилик Ел, 55/22, Астана",
+        "place_latitude": 51.08784147023002,
+        "place_longitude": 71.41307690647338,
+        "plan_id": null,
+        "plan_name": null
+      },
+      "state_reason": "user_action",
+      "video_modules": [
+        "fr"
+      ],
+      "tags": []
+    },
+    {
+      "name": "TargetAI - BigRoom",
+      "source": {
+        "url": "rtsp://oper:d394mPe73Q@10.1.0.19:554/Streaming/Channels/101",
+        "body": {
+          "host": "10.1.0.19",
+          "path": "/Streaming/Channels/101",
+          "port": 554,
+          "password": "d394mPe73Q",
+          "protocol": "rtsp",
+          "username": "oper",
+          "transport": "tcp"
+        }
+      },
+      "video_analytics": {
+        "modules": [
+          {
+            "config": {
+              "roi": [
+                {
+                  "id": "033c5dea-3974-449e-a4d2-1cbcd0eeaf92",
+                  "name": "Скопление людей",
+                  "polygon": [
+                    0.0020708550068282597,
+                    0.6006598416541815,
+                    0.33673226522332894,
+                    0.0014206490573278965,
+                    0.7058411958748392,
+                    0.27721977762022,
+                    0.5310339979313945,
+                    0.9416033392640558
+                  ],
+                  "obj_class_type": 1,
+                  "min_event_interval": 60,
+                  "obj_class_threshold": 5,
+                  "watch_people_activity": false
+                },
+                {
+                  "id": "870302fc-103b-4b1e-a6a5-08458491e915",
+                  "name": "Area 1",
+                  "polygon": [
+                    0.10411311053984576,
+                    0.9178082191780822,
+                    0.12724935732647816,
+                    0.3515981735159817,
+                    0.7583547557840618,
+                    0.3127853881278539,
+                    0.6953727506426736,
+                    0.8789954337899544
+                  ],
+                  "obj_class_type": 2,
+                  "obj_class_threshold": 1,
+                  "watch_people_activity": false
+                }
+              ],
+              "lines": [],
+              "min_detection_size": 0.03
+            },
+            "module": "SituationAnalyticsModule"
+          }
+        ],
+        "version": 5
+      },
+      "video_streaming": {
+        "by_event": false,
+        "storage_depth": 30
+      },
+      "ptz": null,
+      "place_id": 72,
+      "is_dvr": false,
+      "onvif_host": null,
+      "onvif_port": null,
+      "onvif_login": null,
+      "onvif_password": null,
+      "scheduler_group": "default",
+      "scheduler_tags": [],
+      "state": "active",
+      "plan_x": 0.5779606267620171,
+      "plan_y": 0.6613807656509059,
+      "plan_id": 181,
+      "capacitygroup_token": "bd7777ec9869d9f0",
+      "edge_id": null,
+      "edge": false,
+      "id": "361c7877-bc47-484a-b80e-f698827458a4",
+      "created_at": "2024-05-31T11:11:37.087769Z",
+      "updated_at": "2026-05-01T09:56:31.743073Z",
+      "snapshot_url": "https://bd7777ec9869d9f0.teye.kz/s3/vab/2026/5/1/361c7877-bc47-484a-b80e-f698827458a4.jpeg?ticket=eyJrZXkiOiIyMDI2LzUvMS8zNjFjNzg3Ny1iYzQ3LTQ4NGEtYjgwZS1mNjk4ODI3NDU4YTQuanBlZyIsInRzIjoxNzc3NjM1NjE0LCJ0dGwiOjkwMC4wfQ.SRwY_-Zt9EeoUabmuKzCuXoS80Ehc6pApejKyNz7y2Q",
+      "origin": {
+        "place_id": 72,
+        "group_id": 72,
+        "is_dvr": false,
+        "place_name": "Office",
+        "place_description": "проспект Мангилик Ел, 55/22, Астана",
+        "place_latitude": 51.08784147023002,
+        "place_longitude": 71.41307690647338,
+        "plan_id": 181,
+        "plan_name": "Office"
+      },
+      "state_reason": "scheduler_action",
+      "video_modules": [
+        "sa"
+      ],
+      "tags": []
+    },
+    {
+      "name": "TargetAI - Corridor",
+      "source": {
+        "url": "rtsp://oper:ub7UMF6Z@10.1.0.8:554/Streaming/Channels/101",
+        "body": {
+          "host": "10.1.0.8",
+          "path": "/Streaming/Channels/101",
+          "port": 554,
+          "password": "ub7UMF6Z",
+          "protocol": "rtsp",
+          "username": "oper",
+          "transport": "tcp"
+        }
+      },
+      "video_analytics": {
+        "modules": [
+          {
+            "config": {
+              "roi": [
+                {
+                  "id": "41ccf49b-31a6-4015-a2d8-5d6e1a98a695",
+                  "name": "Область 1",
+                  "polygon": [
+                    0.09640102827763496,
+                    0.5707762557077626,
+                    0.2416452442159383,
+                    0.1872146118721461,
+                    0.6439588688946015,
+                    0.2625570776255708,
+                    0.8264781491002571,
+                    0.5821917808219178,
+                    0.7223650385604113,
+                    0.7922374429223744,
+                    0.2262210796915167,
+                    0.7899543378995434
+                  ],
+                  "situation_id": "be5d66e9-e3c1-40b1-8da1-534033a0164e",
+                  "obj_class_type": 4
+                }
+              ],
+              "lines": [],
+              "min_detection_size": 0.03
+            },
+            "module": "SituationAnalyticsModule"
+          }
+        ],
+        "version": 5
+      },
+      "video_streaming": {
+        "by_event": false,
+        "storage_depth": 30
+      },
+      "ptz": null,
+      "place_id": 72,
+      "is_dvr": false,
+      "onvif_host": null,
+      "onvif_port": null,
+      "onvif_login": null,
+      "onvif_password": null,
+      "scheduler_group": "default",
+      "scheduler_tags": [],
+      "state": "inactive",
+      "plan_x": null,
+      "plan_y": null,
+      "plan_id": null,
+      "capacitygroup_token": "bd7777ec9869d9f0",
+      "edge_id": null,
+      "edge": false,
+      "id": "957674ab-718f-45aa-af06-292fc46f070a",
+      "created_at": "2026-01-29T07:49:43.680649Z",
+      "updated_at": "2026-05-01T10:35:16.760444Z",
+      "snapshot_url": "https://bd7777ec9869d9f0.teye.kz/s3/vab/2026/5/1/957674ab-718f-45aa-af06-292fc46f070a.jpeg?ticket=eyJrZXkiOiIyMDI2LzUvMS85NTc2NzRhYi03MThmLTQ1YWEtYWYwNi0yOTJmYzQ2ZjA3MGEuanBlZyIsInRzIjoxNzc3NjM1NjE0LCJ0dGwiOjkwMC4wfQ.aXTShbKKOEL7OaE5bQNdOMzl9FLJEsmHg7CwK3MBZb8",
+      "origin": {
+        "place_id": 72,
+        "group_id": 72,
+        "is_dvr": false,
+        "place_name": "Office",
+        "place_description": "проспект Мангилик Ел, 55/22, Астана",
+        "place_latitude": 51.08784147023002,
+        "place_longitude": 71.41307690647338,
+        "plan_id": null,
+        "plan_name": null
+      },
+      "state_reason": "scheduler_deadline",
+      "video_modules": [
+        "sa"
+      ],
+      "tags": []
+    },
+    {
+      "name": "TargetAI - Face (Hik)",
+      "source": {
+        "url": "rtsp://oper:Y5QvJ57zp5@10.1.0.9:554/Streaming/Channels/101",
+        "body": {
+          "host": "10.1.0.9",
+          "path": "/Streaming/Channels/101",
+          "port": 554,
+          "password": "Y5QvJ57zp5",
+          "protocol": "rtsp",
+          "username": "oper",
+          "transport": "tcp"
+        }
+      },
+      "video_analytics": {
+        "modules": [
+          {
+            "config": {
+              "roi": [],
+              "lines": [],
+              "min_detection_size": 0.01
+            },
+            "module": "FaceRecognitionModule"
+          }
+        ],
+        "version": 5
+      },
+      "video_streaming": {
+        "by_event": false,
+        "storage_depth": 14
+      },
+      "ptz": null,
+      "place_id": 5390,
+      "is_dvr": false,
+      "onvif_host": null,
+      "onvif_port": null,
+      "onvif_login": null,
+      "onvif_password": null,
+      "scheduler_group": "default",
+      "scheduler_tags": [],
+      "state": "active",
+      "plan_x": 0.3856619698572895,
+      "plan_y": 0.5060125150001229,
+      "plan_id": 190,
+      "capacitygroup_token": "bd7777ec9869d9f0",
+      "edge_id": null,
+      "edge": false,
+      "id": "4e94bbf1-5207-43d6-b727-e6689ec13193",
+      "created_at": "2023-02-14T13:41:26.352762Z",
+      "updated_at": "2026-04-28T18:11:27.831148Z",
+      "snapshot_url": "https://bd7777ec9869d9f0.teye.kz/s3/vab/2026/5/1/4e94bbf1-5207-43d6-b727-e6689ec13193.jpeg?ticket=eyJrZXkiOiIyMDI2LzUvMS80ZTk0YmJmMS01MjA3LTQzZDYtYjcyNy1lNjY4OWVjMTMxOTMuanBlZyIsInRzIjoxNzc3NjM1NjE0LCJ0dGwiOjkwMC4wfQ.7kNmKj4zZi_gxPY1XC-hrKgNxivKZG5syjpYnJp-xQg",
+      "origin": {
+        "place_id": 5390,
+        "group_id": 71,
+        "is_dvr": false,
+        "place_name": "Sales",
+        "place_description": "проспект Мангилик Ел, С4.6, Астана",
+        "place_latitude": 51.088347218320884,
+        "place_longitude": 71.41420765848626,
+        "plan_id": 190,
+        "plan_name": "План "
+      },
+      "state_reason": "scheduler_action",
+      "video_modules": [
+        "fr"
+      ],
+      "tags": []
+    },
+    {
+      "name": "TargetAI - Library",
+      "source": {
+        "url": "rtsp://oper:4255LQWSdt@10.1.0.16:554/Streaming/Channels/101",
+        "body": {
+          "host": "10.1.0.16",
+          "path": "/Streaming/Channels/101",
+          "port": 554,
+          "password": "4255LQWSdt",
+          "protocol": "rtsp",
+          "username": "oper",
+          "transport": "tcp"
+        }
+      },
+      "video_analytics": {
+        "modules": [
+          {
+            "config": {
+              "detect_blurring": true,
+              "detect_flashing": true,
+              "detect_tampering": true
+            },
+            "module": "TamperingModule"
+          },
+          {
+            "config": {
+              "roi": [
+                {
+                  "id": "3d587b4e-5314-4c25-809c-018708e5db10",
+                  "name": "Область 1",
+                  "polygon": [
+                    0.781491002570694,
+                    0.634703196347032,
+                    0.5951156812339332,
+                    0.410958904109589,
+                    0.34190231362467866,
+                    0.5616438356164384,
+                    0.2737789203084833,
+                    0.4041095890410959,
+                    0.17737789203084833,
+                    0.4497716894977169,
+                    0.2802056555269923,
+                    0.997716894977169,
+                    0.6876606683804627,
+                    0.9931506849315068
+                  ],
+                  "situation_id": "32db873c-20ff-454d-9fcf-b85ca72d4c21",
+                  "obj_class_type": 1,
+                  "min_event_interval": 1200,
+                  "obj_class_threshold": 2,
+                  "watch_people_activity": false
+                }
+              ],
+              "lines": [],
+              "min_detection_size": 0.03
+            },
+            "module": "SituationAnalyticsModule"
+          }
+        ],
+        "version": 5
+      },
+      "video_streaming": {
+        "by_event": false,
+        "storage_depth": 30
+      },
+      "ptz": null,
+      "place_id": 72,
+      "is_dvr": false,
+      "onvif_host": null,
+      "onvif_port": null,
+      "onvif_login": null,
+      "onvif_password": null,
+      "scheduler_group": "default",
+      "scheduler_tags": [],
+      "state": "active",
+      "plan_x": null,
+      "plan_y": null,
+      "plan_id": null,
+      "capacitygroup_token": "bd7777ec9869d9f0",
+      "edge_id": null,
+      "edge": false,
+      "id": "2255cba6-34b7-40b0-a875-00032bd514cf",
+      "created_at": "2024-06-10T13:35:42.020582Z",
+      "updated_at": "2026-05-01T09:41:31.713735Z",
+      "snapshot_url": "https://bd7777ec9869d9f0.teye.kz/s3/vab/2026/5/1/2255cba6-34b7-40b0-a875-00032bd514cf.jpeg?ticket=eyJrZXkiOiIyMDI2LzUvMS8yMjU1Y2JhNi0zNGI3LTQwYjAtYTg3NS0wMDAzMmJkNTE0Y2YuanBlZyIsInRzIjoxNzc3NjM1NjE0LCJ0dGwiOjkwMC4wfQ.3-Ii6YTBeEnASzqaetS7ffnYSrsCGvVcIUYL9h-13E4",
+      "origin": {
+        "place_id": 72,
+        "group_id": 72,
+        "is_dvr": false,
+        "place_name": "Office",
+        "place_description": "проспект Мангилик Ел, 55/22, Астана",
+        "place_latitude": 51.08784147023002,
+        "place_longitude": 71.41307690647338,
+        "plan_id": null,
+        "plan_name": null
+      },
+      "state_reason": "scheduler_action",
+      "video_modules": [
+        "sa",
+        "tp"
+      ],
+      "tags": []
+    },
+    {
+      "name": "TargetAI Office Almaty",
+      "source": {
+        "url": "rtsp://admin:TargetaiALA2023@10.1.3.2:554/Streaming/Channels/101",
+        "body": {
+          "host": "10.1.3.2",
+          "path": "/Streaming/Channels/101",
+          "port": 554,
+          "password": "TargetaiALA2023",
+          "protocol": "rtsp",
+          "username": "admin",
+          "transport": "tcp"
+        }
+      },
+      "video_analytics": null,
+      "video_streaming": {
+        "by_event": false,
+        "storage_depth": 30
+      },
+      "ptz": null,
+      "place_id": 72,
+      "is_dvr": false,
+      "onvif_host": null,
+      "onvif_port": null,
+      "onvif_login": null,
+      "onvif_password": null,
+      "scheduler_group": "default",
+      "scheduler_tags": [],
+      "state": "active",
+      "plan_x": null,
+      "plan_y": null,
+      "plan_id": null,
+      "capacitygroup_token": "be69c017473b2fe6",
+      "edge_id": null,
+      "edge": false,
+      "id": "c1f1b17a-d831-484a-bcb0-fc69d5dfaf51",
+      "created_at": "2026-01-29T07:55:53.239649Z",
+      "updated_at": "2026-04-03T17:58:33.734367Z",
+      "snapshot_url": "https://be69c017473b2fe6.teye.kz/s3/vab/2026/5/1/c1f1b17a-d831-484a-bcb0-fc69d5dfaf51.jpeg?ticket=eyJrZXkiOiIyMDI2LzUvMS9jMWYxYjE3YS1kODMxLTQ4NGEtYmNiMC1mYzY5ZDVkZmFmNTEuanBlZyIsInRzIjoxNzc3NjM1NjE0LCJ0dGwiOjkwMC4wfQ.kOYho_YogEmANWTkG7s0H3cV_ziNeEz8bsiGwQYUL5Q",
+      "origin": {
+        "place_id": 72,
+        "group_id": 72,
+        "is_dvr": false,
+        "place_name": "Office",
+        "place_description": "проспект Мангилик Ел, 55/22, Астана",
+        "place_latitude": 51.08784147023002,
+        "place_longitude": 71.41307690647338,
+        "plan_id": null,
+        "plan_name": null
+      },
+      "state_reason": "scheduler_action",
+      "video_modules": [],
+      "tags": []
+    },
+    {
+      "name": "TargetAI Office Almaty Face",
+      "source": {
+        "url": "rtsp://admin:TargetaiALA2023@10.1.3.3:554/Streaming/Channels/101",
+        "body": {
+          "host": "10.1.3.3",
+          "path": "/Streaming/Channels/101",
+          "port": 554,
+          "password": "TargetaiALA2023",
+          "protocol": "rtsp",
+          "username": "admin",
+          "transport": "tcp"
+        }
+      },
+      "video_analytics": {
+        "modules": [
+          {
+            "config": {
+              "roi": [],
+              "lines": [],
+              "min_detection_size": 0.03
+            },
+            "module": "FaceRecognitionModule"
+          }
+        ],
+        "version": 5
+      },
+      "video_streaming": {
+        "by_event": false,
+        "storage_depth": 30
+      },
+      "ptz": null,
+      "place_id": 72,
+      "is_dvr": false,
+      "onvif_host": null,
+      "onvif_port": null,
+      "onvif_login": null,
+      "onvif_password": null,
+      "scheduler_group": "default",
+      "scheduler_tags": [],
+      "state": "active",
+      "plan_x": null,
+      "plan_y": null,
+      "plan_id": null,
+      "capacitygroup_token": "be69c017473b2fe6",
+      "edge_id": null,
+      "edge": false,
+      "id": "99af0975-39ea-486e-a7d1-cb4a1b7dc9ae",
+      "created_at": "2025-10-06T11:39:23.030683Z",
+      "updated_at": "2026-04-07T13:28:36.539659Z",
+      "snapshot_url": "https://be69c017473b2fe6.teye.kz/s3/vab/2026/5/1/99af0975-39ea-486e-a7d1-cb4a1b7dc9ae.jpeg?ticket=eyJrZXkiOiIyMDI2LzUvMS85OWFmMDk3NS0zOWVhLTQ4NmUtYTdkMS1jYjRhMWI3ZGM5YWUuanBlZyIsInRzIjoxNzc3NjM1NjE0LCJ0dGwiOjkwMC4wfQ.rYqD6WEwTXsZyFGLK-FHeTUZ-LJsoAYEQukO5kDXKaA",
+      "origin": {
+        "place_id": 72,
+        "group_id": 72,
+        "is_dvr": false,
+        "place_name": "Office",
+        "place_description": "проспект Мангилик Ел, 55/22, Астана",
+        "place_latitude": 51.08784147023002,
+        "place_longitude": 71.41307690647338,
+        "plan_id": null,
+        "plan_name": null
+      },
+      "state_reason": "scheduler_action",
+      "video_modules": [
+        "fr"
+      ],
+      "tags": []
+    },
+    {
+      "name": "TargetAI Office Almaty Face PTZ",
+      "source": {
+        "url": "rtsp://admin:Target159753!@192.168.55.8:554/cam/realmonitor?channel=1&subtype=0",
+        "body": {
+          "host": "192.168.55.8",
+          "path": "/cam/realmonitor?channel=1&subtype=0",
+          "port": 554,
+          "password": "Target159753!",
+          "protocol": "rtsp",
+          "username": "admin",
+          "transport": "tcp"
+        }
+      },
+      "video_analytics": null,
+      "video_streaming": {
+        "by_event": false,
+        "storage_depth": 30
+      },
+      "ptz": null,
+      "place_id": 72,
+      "is_dvr": false,
+      "onvif_host": "192.168.55.8",
+      "onvif_port": 80,
+      "onvif_login": "admin",
+      "onvif_password": "Target159753!",
+      "scheduler_group": "default",
+      "scheduler_tags": [],
+      "state": "active",
+      "plan_x": null,
+      "plan_y": null,
+      "plan_id": null,
+      "capacitygroup_token": "be69c017473b2fe6",
+      "edge_id": null,
+      "edge": false,
+      "id": "250863bf-9ca3-410a-9751-d9127e6ae9d1",
+      "created_at": "2026-03-04T13:12:40.661553Z",
+      "updated_at": "2026-04-30T15:58:43.958124Z",
+      "snapshot_url": "https://be69c017473b2fe6.teye.kz/s3/vab/2026/5/1/250863bf-9ca3-410a-9751-d9127e6ae9d1.jpeg?ticket=eyJrZXkiOiIyMDI2LzUvMS8yNTA4NjNiZi05Y2EzLTQxMGEtOTc1MS1kOTEyN2U2YWU5ZDEuanBlZyIsInRzIjoxNzc3NjM1NjE0LCJ0dGwiOjkwMC4wfQ.oolb0bwqjKvIBcFv0GLHPsGKHOg811KwwjWy8wIlCng",
+      "origin": {
+        "place_id": 72,
+        "group_id": 72,
+        "is_dvr": false,
+        "place_name": "Office",
+        "place_description": "проспект Мангилик Ел, 55/22, Астана",
+        "place_latitude": 51.08784147023002,
+        "place_longitude": 71.41307690647338,
+        "plan_id": null,
+        "plan_name": null
+      },
+      "state_reason": "scheduler_action",
+      "video_modules": [],
+      "tags": []
+    },
+    {
+      "name": "TargetAI - Openspace 1",
+      "source": {
+        "url": "rtsp://oper:AQ9gUj7o@10.1.0.2:554/Streaming/Channels/101",
+        "body": {
+          "host": "10.1.0.2",
+          "path": "/Streaming/Channels/101",
+          "port": 554,
+          "password": "AQ9gUj7o",
+          "protocol": "rtsp",
+          "username": "oper",
+          "transport": "tcp"
+        }
+      },
+      "video_analytics": null,
+      "video_streaming": {
+        "by_event": false,
+        "storage_depth": 30
+      },
+      "ptz": null,
+      "place_id": 72,
+      "is_dvr": false,
+      "onvif_host": null,
+      "onvif_port": null,
+      "onvif_login": null,
+      "onvif_password": null,
+      "scheduler_group": "default",
+      "scheduler_tags": [],
+      "state": "active",
+      "plan_x": null,
+      "plan_y": null,
+      "plan_id": null,
+      "capacitygroup_token": "bd7777ec9869d9f0",
+      "edge_id": null,
+      "edge": false,
+      "id": "d9ce82b4-31c3-4e5b-b06a-2bf48e9726ca",
+      "created_at": "2026-02-09T06:51:12.548910Z",
+      "updated_at": "2026-04-30T19:11:30.930080Z",
+      "snapshot_url": "https://bd7777ec9869d9f0.teye.kz/s3/vab/2026/5/1/d9ce82b4-31c3-4e5b-b06a-2bf48e9726ca.jpeg?ticket=eyJrZXkiOiIyMDI2LzUvMS9kOWNlODJiNC0zMWMzLTRlNWItYjA2YS0yYmY0OGU5NzI2Y2EuanBlZyIsInRzIjoxNzc3NjM1NjE0LCJ0dGwiOjkwMC4wfQ.GL2SDAbrUQBExAWn8mFdKvRa7wpspqPiOilPtNuzZWY",
+      "origin": {
+        "place_id": 72,
+        "group_id": 72,
+        "is_dvr": false,
+        "place_name": "Office",
+        "place_description": "проспект Мангилик Ел, 55/22, Астана",
+        "place_latitude": 51.08784147023002,
+        "place_longitude": 71.41307690647338,
+        "plan_id": null,
+        "plan_name": null
+      },
+      "state_reason": "scheduler_action",
+      "video_modules": [],
+      "tags": []
+    },
+    {
+      "name": "TargetAI - Openspace 2",
+      "source": {
+        "url": "rtsp://oper:S2n2q5Wow8@10.1.0.5:554/cam/realmonitor?channel=1&subtype=0",
+        "body": {
+          "host": "10.1.0.5",
+          "path": "/cam/realmonitor?channel=1&subtype=0",
+          "port": 554,
+          "password": "S2n2q5Wow8",
+          "protocol": "rtsp",
+          "username": "oper",
+          "transport": "tcp"
+        }
+      },
+      "video_analytics": {
+        "modules": [
+          {
+            "config": {
+              "roi": [
+                {
+                  "id": "ec342247-d87d-4e8c-af8e-4b0cc8fd31d9",
+                  "name": "Area 1",
+                  "polygon": [
+                    0.480719794344473,
+                    0.2191780821917808,
+                    0.4652956298200514,
+                    0.4132420091324201,
+                    0.7647814910025706,
+                    0.5958904109589042,
+                    0.8251928020565553,
+                    0.2899543378995434,
+                    0.48586118251928023,
+                    0.1506849315068493
+                  ],
+                  "obj_class_type": 7
+                }
+              ],
+              "lines": [],
+              "min_detection_size": 0.03
+            },
+            "module": "SituationAnalyticsModule"
+          }
+        ],
+        "version": 5
+      },
+      "video_streaming": {
+        "by_event": false,
+        "storage_depth": 30
+      },
+      "ptz": null,
+      "place_id": 72,
+      "is_dvr": false,
+      "onvif_host": null,
+      "onvif_port": null,
+      "onvif_login": null,
+      "onvif_password": null,
+      "scheduler_group": "default",
+      "scheduler_tags": [],
+      "state": "inactive",
+      "plan_x": null,
+      "plan_y": null,
+      "plan_id": null,
+      "capacitygroup_token": "bd7777ec9869d9f0",
+      "edge_id": null,
+      "edge": false,
+      "id": "b1988d7e-83f0-49a0-baa9-ca1d8e2eb5b3",
+      "created_at": "2024-05-31T11:11:08.561710Z",
+      "updated_at": "2026-05-01T11:10:46.772908Z",
+      "snapshot_url": "https://bd7777ec9869d9f0.teye.kz/s3/vab/2026/5/1/b1988d7e-83f0-49a0-baa9-ca1d8e2eb5b3.jpeg?ticket=eyJrZXkiOiIyMDI2LzUvMS9iMTk4OGQ3ZS04M2YwLTQ5YTAtYmFhOS1jYTFkOGUyZWI1YjMuanBlZyIsInRzIjoxNzc3NjM1NjE0LCJ0dGwiOjkwMC4wfQ.s8lu5UtOMq1jypUCDpRhr6WdH-YJ47apzm57CuqHfIE",
+      "origin": {
+        "place_id": 72,
+        "group_id": 72,
+        "is_dvr": false,
+        "place_name": "Office",
+        "place_description": "проспект Мангилик Ел, 55/22, Астана",
+        "place_latitude": 51.08784147023002,
+        "place_longitude": 71.41307690647338,
+        "plan_id": null,
+        "plan_name": null
+      },
+      "state_reason": "scheduler_deadline",
+      "video_modules": [
+        "sa"
+      ],
+      "tags": []
+    },
+    {
+      "name": "TargetAI - Openspace 3",
+      "source": {
+        "url": "rtsp://oper:78eL7d37Ts@10.1.0.18:554/Streaming/Channels/101",
+        "body": {
+          "host": "10.1.0.18",
+          "path": "/Streaming/Channels/101",
+          "port": 554,
+          "password": "78eL7d37Ts",
+          "protocol": "rtsp",
+          "username": "oper",
+          "transport": "tcp"
+        }
+      },
+      "video_analytics": {
+        "modules": [
+          {
+            "config": {
+              "detect_blurring": true,
+              "detect_flashing": true,
+              "detect_tampering": true
+            },
+            "module": "TamperingModule"
+          },
+          {
+            "config": {
+              "roi": [
+                {
+                  "id": "f1f7283a-ec04-48f8-abf4-26486e4347d1",
+                  "name": "Область 1",
+                  "polygon": [
+                    0.12082262210796915,
+                    0.4840182648401826,
+                    0.2480719794344473,
+                    0.6712328767123288,
+                    0.04627249357326478,
+                    1,
+                    0.002570694087403599,
+                    0.6575342465753424
+                  ],
+                  "situation_id": "4072565b-f04d-4643-80fb-98e6bd5f53e2",
+                  "obj_class_type": 1,
+                  "obj_class_threshold": 1,
+                  "watch_people_activity": false
+                }
+              ],
+              "lines": [],
+              "min_detection_size": 0.03
+            },
+            "module": "AbandonedObjectsModule"
+          }
+        ],
+        "version": 5
+      },
+      "video_streaming": {
+        "by_event": false,
+        "storage_depth": 30
+      },
+      "ptz": null,
+      "place_id": 5390,
+      "is_dvr": false,
+      "onvif_host": null,
+      "onvif_port": null,
+      "onvif_login": null,
+      "onvif_password": null,
+      "scheduler_group": "default",
+      "scheduler_tags": [],
+      "state": "active",
+      "plan_x": 0.18598623852889545,
+      "plan_y": 0.5044287363432036,
+      "plan_id": 190,
+      "capacitygroup_token": "bd7777ec9869d9f0",
+      "edge_id": null,
+      "edge": false,
+      "id": "f684eee4-b80c-4fbf-81eb-38aca54ba5fa",
+      "created_at": "2024-05-31T11:08:31.101593Z",
+      "updated_at": "2026-05-01T08:56:31.666131Z",
+      "snapshot_url": "https://bd7777ec9869d9f0.teye.kz/s3/vab/2026/5/1/f684eee4-b80c-4fbf-81eb-38aca54ba5fa.jpeg?ticket=eyJrZXkiOiIyMDI2LzUvMS9mNjg0ZWVlNC1iODBjLTRmYmYtODFlYi0zOGFjYTU0YmE1ZmEuanBlZyIsInRzIjoxNzc3NjM1NjE0LCJ0dGwiOjkwMC4wfQ.Q_yQ0lzS7QhBm804H0Q7IiPQLWZ384eAsSV7v6x4OqM",
+      "origin": {
+        "place_id": 5390,
+        "group_id": 71,
+        "is_dvr": false,
+        "place_name": "Sales",
+        "place_description": "проспект Мангилик Ел, С4.6, Астана",
+        "place_latitude": 51.088347218320884,
+        "place_longitude": 71.41420765848626,
+        "plan_id": 190,
+        "plan_name": "План "
+      },
+      "state_reason": "scheduler_action",
+      "video_modules": [
+        "ao",
+        "tp"
+      ],
+      "tags": [
+        {
+          "name": "test",
+          "camerataggroup_id": null,
+          "id": 11,
+          "camerataggroup_name": null
+        }
+      ]
+    },
+    {
+      "name": "TargetAI - Openspace 4",
+      "source": {
+        "url": "rtsp://oper:9c7A358oYW%40@10.1.0.15:554/Streaming/Channels/101",
+        "body": {
+          "host": "10.1.0.15",
+          "path": "/Streaming/Channels/101",
+          "port": 554,
+          "password": "9c7A358oYW@",
+          "protocol": "rtsp",
+          "username": "oper",
+          "transport": "tcp"
+        }
+      },
+      "video_analytics": null,
+      "video_streaming": {
+        "by_event": false,
+        "storage_depth": 30
+      },
+      "ptz": null,
+      "place_id": 72,
+      "is_dvr": false,
+      "onvif_host": null,
+      "onvif_port": null,
+      "onvif_login": null,
+      "onvif_password": null,
+      "scheduler_group": "default",
+      "scheduler_tags": [],
+      "state": "active",
+      "plan_x": null,
+      "plan_y": null,
+      "plan_id": null,
+      "capacitygroup_token": "bd7777ec9869d9f0",
+      "edge_id": null,
+      "edge": false,
+      "id": "f700b2df-22ea-41d1-bb57-4e43866a8e0c",
+      "created_at": "2024-06-10T14:41:16.850696Z",
+      "updated_at": "2026-05-01T09:56:31.743073Z",
+      "snapshot_url": "https://bd7777ec9869d9f0.teye.kz/s3/vab/2026/5/1/f700b2df-22ea-41d1-bb57-4e43866a8e0c.jpeg?ticket=eyJrZXkiOiIyMDI2LzUvMS9mNzAwYjJkZi0yMmVhLTQxZDEtYmI1Ny00ZTQzODY2YThlMGMuanBlZyIsInRzIjoxNzc3NjM1NjE0LCJ0dGwiOjkwMC4wfQ.pX3c3Wp1dSi4Yx9ct9FHwg0FFBlMEZbPpBb12x7AZHs",
+      "origin": {
+        "place_id": 72,
+        "group_id": 72,
+        "is_dvr": false,
+        "place_name": "Office",
+        "place_description": "проспект Мангилик Ел, 55/22, Астана",
+        "place_latitude": 51.08784147023002,
+        "place_longitude": 71.41307690647338,
+        "plan_id": null,
+        "plan_name": null
+      },
+      "state_reason": "scheduler_action",
+      "video_modules": [],
+      "tags": [
+        {
+          "name": "test",
+          "camerataggroup_id": null,
+          "id": 11,
+          "camerataggroup_name": null
+        }
+      ]
+    },
+    {
+      "name": "TargetAI - PTZ Hikvision",
+      "source": {
+        "url": "rtsp://admin:E97YEqWhmq@10.1.0.23:554/Streaming/Channels/101",
+        "body": {
+          "host": "10.1.0.23",
+          "path": "/Streaming/Channels/101",
+          "port": 554,
+          "password": "E97YEqWhmq",
+          "protocol": "rtsp",
+          "username": "admin",
+          "transport": "tcp"
+        }
+      },
+      "video_analytics": null,
+      "video_streaming": {
+        "by_event": false,
+        "storage_depth": 5
+      },
+      "ptz": null,
+      "place_id": 5307,
+      "is_dvr": false,
+      "onvif_host": "10.1.0.23",
+      "onvif_port": 80,
+      "onvif_login": "admin",
+      "onvif_password": "E97YEqWhmq",
+      "scheduler_group": "default",
+      "scheduler_tags": [],
+      "state": "active",
+      "plan_x": null,
+      "plan_y": null,
+      "plan_id": null,
+      "capacitygroup_token": "bd7777ec9869d9f0",
+      "edge_id": null,
+      "edge": false,
+      "id": "aa8496a2-254e-4170-ac6a-b85f77b89593",
+      "created_at": "2024-10-10T05:03:12.612605Z",
+      "updated_at": "2026-04-29T01:26:28.310127Z",
+      "snapshot_url": "https://bd7777ec9869d9f0.teye.kz/s3/vab/2026/5/1/aa8496a2-254e-4170-ac6a-b85f77b89593.jpeg?ticket=eyJrZXkiOiIyMDI2LzUvMS9hYTg0OTZhMi0yNTRlLTQxNzAtYWM2YS1iODVmNzdiODk1OTMuanBlZyIsInRzIjoxNzc3NjM1NjE0LCJ0dGwiOjkwMC4wfQ.Nh6sW-s1i0S41q69rSqUe2SjZO0sR2S4SJy7vcTo0vQ",
+      "origin": {
+        "place_id": 5307,
+        "group_id": 711,
+        "is_dvr": false,
+        "place_name": "г. Тараз, пр-т Жамбыла 200, Март Магнат",
+        "place_description": "Айтеке би 3 переулок, 200, Тараз",
+        "place_latitude": 42.894698908611495,
+        "place_longitude": 71.35983793029115,
+        "plan_id": null,
+        "plan_name": null
+      },
+      "state_reason": "scheduler_action",
+      "video_modules": [],
+      "tags": []
+    },
+    {
+      "name": "TargetAI - Sales",
+      "source": {
+        "url": "rtsp://oper:2m9846gUyB@10.1.0.17:554/Streaming/Channels/101",
+        "body": {
+          "host": "10.1.0.17",
+          "path": "/Streaming/Channels/101",
+          "port": 554,
+          "password": "2m9846gUyB",
+          "protocol": "rtsp",
+          "username": "oper",
+          "transport": "tcp"
+        }
+      },
+      "video_analytics": {
+        "modules": [
+          {
+            "config": {
+              "roi": [],
+              "lines": [],
+              "min_detection_size": 0.03
+            },
+            "module": "FaceRecognitionModule"
+          }
+        ],
+        "version": 5
+      },
+      "video_streaming": {
+        "by_event": false,
+        "storage_depth": 30
+      },
+      "ptz": null,
+      "place_id": 7293,
+      "is_dvr": false,
+      "onvif_host": null,
+      "onvif_port": null,
+      "onvif_login": null,
+      "onvif_password": null,
+      "scheduler_group": "default",
+      "scheduler_tags": [],
+      "state": "active",
+      "plan_x": null,
+      "plan_y": null,
+      "plan_id": null,
+      "capacitygroup_token": "bd7777ec9869d9f0",
+      "edge_id": null,
+      "edge": false,
+      "id": "a101faf6-fd83-460d-af67-eb068c6d34e7",
+      "created_at": "2024-06-11T06:50:39.632719Z",
+      "updated_at": "2026-04-29T17:56:29.352067Z",
+      "snapshot_url": "https://bd7777ec9869d9f0.teye.kz/s3/vab/2026/5/1/a101faf6-fd83-460d-af67-eb068c6d34e7.jpeg?ticket=eyJrZXkiOiIyMDI2LzUvMS9hMTAxZmFmNi1mZDgzLTQ2MGQtYWY2Ny1lYjA2OGM2ZDM0ZTcuanBlZyIsInRzIjoxNzc3NjM1NjE0LCJ0dGwiOjkwMC4wfQ.BM926whX2-UY4nGxHxkCwklRYNlnPIawyz0iI5cWxvE",
+      "origin": {
+        "place_id": 7293,
+        "group_id": 2152,
+        "is_dvr": false,
+        "place_name": "Тест",
+        "place_description": "проспект Мангилик Ел, С4.6, Астана",
+        "place_latitude": 51.08835011303691,
+        "place_longitude": 71.41422686440994,
+        "plan_id": null,
+        "plan_name": null
+      },
+      "state_reason": "scheduler_action",
+      "video_modules": [
+        "fr"
+      ],
+      "tags": []
+    },
+    {
+      "name": "TargetAI - TeamLeads",
+      "source": {
+        "url": "rtsp://oper:36f2Dit449@10.1.0.13:554/Streaming/Channels/101",
+        "body": {
+          "host": "10.1.0.13",
+          "path": "/Streaming/Channels/101",
+          "port": 554,
+          "password": "36f2Dit449",
+          "protocol": "rtsp",
+          "username": "oper",
+          "transport": "tcp"
+        }
+      },
+      "video_analytics": {
+        "modules": [
+          {
+            "config": {
+              "roi": [
+                {
+                  "id": "98970c9c-0c63-4ff9-8bdd-425921552da4",
+                  "name": "Area 1",
+                  "polygon": [
+                    0.07603092783505154,
+                    0.5560640732265446,
+                    0.16623711340206185,
+                    0.4302059496567506,
+                    0.25773195876288657,
+                    0.5789473684210527,
+                    0.39948453608247425,
+                    0.6109839816933639,
+                    0.4832474226804124,
+                    0.5240274599542334,
+                    0.529639175257732,
+                    0.5469107551487414,
+                    0.5270618556701031,
+                    0.8581235697940504,
+                    0.44329896907216493,
+                    0.9450800915331807,
+                    0.31443298969072164,
+                    0.9221967963386728,
+                    0.1958762886597938,
+                    0.8878718535469108,
+                    0.08505154639175258,
+                    0.7597254004576659
+                  ],
+                  "obj_class_type": 1,
+                  "obj_class_threshold": 1,
+                  "watch_people_activity": false
+                }
+              ],
+              "lines": [],
+              "min_detection_size": 0.03
+            },
+            "module": "SituationAnalyticsModule"
+          }
+        ],
+        "version": 5
+      },
+      "video_streaming": {
+        "by_event": false,
+        "storage_depth": 30
+      },
+      "ptz": null,
+      "place_id": 72,
+      "is_dvr": false,
+      "onvif_host": null,
+      "onvif_port": null,
+      "onvif_login": null,
+      "onvif_password": null,
+      "scheduler_group": "default",
+      "scheduler_tags": [],
+      "state": "active",
+      "plan_x": null,
+      "plan_y": null,
+      "plan_id": null,
+      "capacitygroup_token": "bd7777ec9869d9f0",
+      "edge_id": null,
+      "edge": false,
+      "id": "968ad96f-e2ef-453c-8ac5-87e60e3f5dab",
+      "created_at": "2024-07-05T09:24:08.752779Z",
+      "updated_at": "2026-04-30T22:26:31.057090Z",
+      "snapshot_url": "https://bd7777ec9869d9f0.teye.kz/s3/vab/2026/5/1/968ad96f-e2ef-453c-8ac5-87e60e3f5dab.jpeg?ticket=eyJrZXkiOiIyMDI2LzUvMS85NjhhZDk2Zi1lMmVmLTQ1M2MtOGFjNS04N2U2MGUzZjVkYWIuanBlZyIsInRzIjoxNzc3NjM1NjE0LCJ0dGwiOjkwMC4wfQ.wJLOtuUq5wXu3VMUdfMx-t6zuew6sJfFISpXwxCOtv8",
+      "origin": {
+        "place_id": 72,
+        "group_id": 72,
+        "is_dvr": false,
+        "place_name": "Office",
+        "place_description": "проспект Мангилик Ел, 55/22, Астана",
+        "place_latitude": 51.08784147023002,
+        "place_longitude": 71.41307690647338,
+        "plan_id": null,
+        "plan_name": null
+      },
+      "state_reason": "scheduler_action",
+      "video_modules": [
+        "sa"
+      ],
+      "tags": []
+    },
+    {
+      "name": "TargetAI - Алматы склад ",
+      "source": {
+        "url": "rtsp://admin:Targetai1234@10.1.7.10:554/Streaming/Channels/101",
+        "body": {
+          "host": "10.1.7.10",
+          "path": "/Streaming/Channels/101",
+          "port": 554,
+          "password": "Targetai1234",
+          "protocol": "rtsp",
+          "username": "admin",
+          "transport": "tcp"
+        }
+      },
+      "video_analytics": {
+        "modules": [
+          {
+            "config": {
+              "roi": [],
+              "lines": [],
+              "min_detection_size": 0.03
+            },
+            "module": "FaceRecognitionModule"
+          }
+        ],
+        "version": 5
+      },
+      "video_streaming": {
+        "by_event": false,
+        "storage_depth": 30
+      },
+      "ptz": null,
+      "place_id": 5285,
+      "is_dvr": false,
+      "onvif_host": null,
+      "onvif_port": null,
+      "onvif_login": null,
+      "onvif_password": null,
+      "scheduler_group": "default",
+      "scheduler_tags": [],
+      "state": "active",
+      "plan_x": 0.36295859194651714,
+      "plan_y": 0.49382277063937013,
+      "plan_id": 177,
+      "capacitygroup_token": "bd7777ec9869d9f0",
+      "edge_id": null,
+      "edge": false,
+      "id": "c64d78b7-d6f5-4807-acb6-fef3967fa78d",
+      "created_at": "2024-05-28T10:15:21.058397Z",
+      "updated_at": "2026-04-25T02:11:22.326772Z",
+      "snapshot_url": "https://bd7777ec9869d9f0.teye.kz/s3/vab/2026/5/1/c64d78b7-d6f5-4807-acb6-fef3967fa78d.jpeg?ticket=eyJrZXkiOiIyMDI2LzUvMS9jNjRkNzhiNy1kNmY1LTQ4MDctYWNiNi1mZWYzOTY3ZmE3OGQuanBlZyIsInRzIjoxNzc3NjM1NjE0LCJ0dGwiOjkwMC4wfQ.9zGHm65fIJCouZSVKwflijmowSrgPUjJucxNJHCHUGc",
+      "origin": {
+        "place_id": 5285,
+        "group_id": 507,
+        "is_dvr": false,
+        "place_name": "проспект Райымбек, 208А",
+        "place_description": "Алматы",
+        "place_latitude": 43.26141634681651,
+        "place_longitude": 76.89640873388129,
+        "plan_id": 177,
+        "plan_name": "Warehouse"
+      },
+      "state_reason": "scheduler_action",
+      "video_modules": [
+        "fr"
+      ],
+      "tags": []
+    },
+    {
+      "name": "TargetAI - Алматы склад  01",
+      "source": {
+        "url": "rtsp://admin:Targetai1234@10.1.7.11:554/Streaming/Channels/101",
+        "body": {
+          "host": "10.1.7.11",
+          "path": "/Streaming/Channels/101",
+          "port": 554,
+          "password": "Targetai1234",
+          "protocol": "rtsp",
+          "username": "admin",
+          "transport": "tcp"
+        }
+      },
+      "video_analytics": null,
+      "video_streaming": {
+        "by_event": false,
+        "storage_depth": 30
+      },
+      "ptz": null,
+      "place_id": 5285,
+      "is_dvr": false,
+      "onvif_host": null,
+      "onvif_port": null,
+      "onvif_login": null,
+      "onvif_password": null,
+      "scheduler_group": "default",
+      "scheduler_tags": [],
+      "state": "active",
+      "plan_x": 0.542683586522598,
+      "plan_y": 0.15502923256842405,
+      "plan_id": 177,
+      "capacitygroup_token": "bd7777ec9869d9f0",
+      "edge_id": null,
+      "edge": false,
+      "id": "a102e9bc-ff88-4088-a447-7dc5db5f3ca6",
+      "created_at": "2024-05-16T10:22:48.726305Z",
+      "updated_at": "2026-04-24T06:41:21.089937Z",
+      "snapshot_url": "https://bd7777ec9869d9f0.teye.kz/s3/vab/2026/5/1/a102e9bc-ff88-4088-a447-7dc5db5f3ca6.jpeg?ticket=eyJrZXkiOiIyMDI2LzUvMS9hMTAyZTliYy1mZjg4LTQwODgtYTQ0Ny03ZGM1ZGI1ZjNjYTYuanBlZyIsInRzIjoxNzc3NjM1NjE0LCJ0dGwiOjkwMC4wfQ.SQqD3U5IJgW_sl4XsXclSyVrclgVDa8a-oRVaoJJSK0",
+      "origin": {
+        "place_id": 5285,
+        "group_id": 507,
+        "is_dvr": false,
+        "place_name": "проспект Райымбек, 208А",
+        "place_description": "Алматы",
+        "place_latitude": 43.26141634681651,
+        "place_longitude": 76.89640873388129,
+        "plan_id": 177,
+        "plan_name": "Warehouse"
+      },
+      "state_reason": "scheduler_action",
+      "video_modules": [],
+      "tags": []
+    },
+    {
+      "name": "TargetAI - Алматы склад 02",
+      "source": {
+        "url": "rtsp://admin:Targetai1234@10.1.7.12:554/Streaming/Channels/101",
+        "body": {
+          "host": "10.1.7.12",
+          "path": "/Streaming/Channels/101",
+          "port": 554,
+          "password": "Targetai1234",
+          "protocol": "rtsp",
+          "username": "admin",
+          "transport": "tcp"
+        }
+      },
+      "video_analytics": {
+        "modules": [
+          {
+            "config": {
+              "roi": [
+                {
+                  "id": "c31fd4d0-5d8e-46cb-b117-0975afcce2e4",
+                  "name": "Область 1",
+                  "polygon": [
+                    0.24035989717223616,
+                    0.3538812785388129,
+                    0.4151670951156815,
+                    0.589041095890411,
+                    0.5835475578406175,
+                    0.3356164383561644,
+                    0.4138817480719797,
+                    0.1917808219178082
+                  ],
+                  "situation_id": "25bbb4d4-4aeb-4f5d-88d7-fd13e9c132bc",
+                  "obj_class_type": 3
+                }
+              ],
+              "lines": [
+                {
+                  "id": "4e571ed9-029d-4233-8a97-e17362f15de8",
+                  "name": "Линия 1",
+                  "coords": [
+                    0.08710222822400737,
+                    0.4111323421686627,
+                    0.2726048055435952,
+                    0.2223451568139715
+                  ],
+                  "direction": 1,
+                  "obj_classes": [
+                    1,
+                    2
+                  ]
+                }
+              ],
+              "min_detection_size": 0.03
+            },
+            "module": "SituationAnalyticsModule",
+            "worktime": [
+              [
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true
+              ],
+              [
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true
+              ],
+              [
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true
+              ],
+              [
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true
+              ],
+              [
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true
+              ],
+              [
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true
+              ],
+              [
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true
+              ]
+            ]
+          }
+        ],
+        "version": 5
+      },
+      "video_streaming": {
+        "by_event": false,
+        "storage_depth": 30
+      },
+      "ptz": null,
+      "place_id": 5285,
+      "is_dvr": false,
+      "onvif_host": null,
+      "onvif_port": null,
+      "onvif_login": null,
+      "onvif_password": null,
+      "scheduler_group": "default",
+      "scheduler_tags": [],
+      "state": "active",
+      "plan_x": 0.6056028500724416,
+      "plan_y": 0.6718991378916329,
+      "plan_id": 177,
+      "capacitygroup_token": "bd7777ec9869d9f0",
+      "edge_id": null,
+      "edge": false,
+      "id": "e84f3257-ad3a-419f-a741-d343f4d1f07f",
+      "created_at": "2024-05-16T10:24:13.232048Z",
+      "updated_at": "2026-04-24T06:41:21.089937Z",
+      "snapshot_url": "https://bd7777ec9869d9f0.teye.kz/s3/vab/2026/5/1/e84f3257-ad3a-419f-a741-d343f4d1f07f.jpeg?ticket=eyJrZXkiOiIyMDI2LzUvMS9lODRmMzI1Ny1hZDNhLTQxOWYtYTc0MS1kMzQzZjRkMWYwN2YuanBlZyIsInRzIjoxNzc3NjM1NjE0LCJ0dGwiOjkwMC4wfQ.svT9Q4T5gWJV3_u73PEGZVFwoc9El2VFrQEC8UW0XKE",
+      "origin": {
+        "place_id": 5285,
+        "group_id": 507,
+        "is_dvr": false,
+        "place_name": "проспект Райымбек, 208А",
+        "place_description": "Алматы",
+        "place_latitude": 43.26141634681651,
+        "place_longitude": 76.89640873388129,
+        "plan_id": 177,
+        "plan_name": "Warehouse"
+      },
+      "state_reason": "scheduler_action",
+      "video_modules": [
+        "sa"
+      ],
+      "tags": []
+    },
+    {
+      "name": "zTargetAI - 323 Room",
+      "source": {
+        "url": "rtsp://oper:i2B4CErig4@10.1.0.29:554/Streaming/Channels/101",
+        "body": {
+          "host": "10.1.0.29",
+          "path": "/Streaming/Channels/101",
+          "port": 554,
+          "password": "i2B4CErig4",
+          "protocol": "rtsp",
+          "username": "oper",
+          "transport": "tcp"
+        }
+      },
+      "video_analytics": {
+        "modules": [
+          {
+            "config": {
+              "roi": [
+                {
+                  "id": "c30fcd8b-0f66-4362-8276-d1910a96da6b",
+                  "name": "Проникновение ",
+                  "polygon": [
+                    0.13863183932659823,
+                    0.9144771694886833,
+                    0.21032563238070354,
+                    0.033706002830935035,
+                    0.693901683754418,
+                    0.07251878821906299,
+                    0.9683947467715691,
+                    0.7752079024456611
+                  ],
+                  "situation_id": "a1595908-9d7f-4416-bab4-2c5414ef0aaa",
+                  "obj_class_type": 1,
+                  "obj_class_threshold": 1,
+                  "watch_people_activity": false
+                }
+              ],
+              "lines": [
+                {
+                  "id": "c677fe4b-fdee-4374-97f8-edc4539e16c6",
+                  "name": "Линия 1",
+                  "coords": [
+                    0.31796748060314217,
+                    0.23414561644026974,
+                    0.5179674806031421,
+                    0.23414561644026974
+                  ],
+                  "direction": 1,
+                  "obj_classes": [
+                    1,
+                    2
+                  ]
+                }
+              ],
+              "min_detection_size": 0.03
+            },
+            "module": "SituationAnalyticsModule"
+          }
+        ],
+        "version": 5
+      },
+      "video_streaming": {
+        "by_event": false,
+        "storage_depth": 30
+      },
+      "ptz": null,
+      "place_id": 72,
+      "is_dvr": false,
+      "onvif_host": null,
+      "onvif_port": null,
+      "onvif_login": null,
+      "onvif_password": null,
+      "scheduler_group": "default",
+      "scheduler_tags": [],
+      "state": "active",
+      "plan_x": 0.6332256566234021,
+      "plan_y": 0.2921666288456244,
+      "plan_id": 181,
+      "capacitygroup_token": "bd7777ec9869d9f0",
+      "edge_id": null,
+      "edge": false,
+      "id": "5d65c5df-f33e-483d-ab56-37bb759c2d7c",
+      "created_at": "2024-05-31T11:12:31.912022Z",
+      "updated_at": "2026-05-01T10:56:31.820175Z",
+      "snapshot_url": "https://bd7777ec9869d9f0.teye.kz/s3/vab/2026/5/1/5d65c5df-f33e-483d-ab56-37bb759c2d7c.jpeg?ticket=eyJrZXkiOiIyMDI2LzUvMS81ZDY1YzVkZi1mMzNlLTQ4M2QtYWI1Ni0zN2JiNzU5YzJkN2MuanBlZyIsInRzIjoxNzc3NjM1NjE0LCJ0dGwiOjkwMC4wfQ.2WIsV4IzrMAzlw-oBM_fFnAhBaBGiWQWrJdgsHpCub8",
+      "origin": {
+        "place_id": 72,
+        "group_id": 72,
+        "is_dvr": false,
+        "place_name": "Office",
+        "place_description": "проспект Мангилик Ел, 55/22, Астана",
+        "place_latitude": 51.08784147023002,
+        "place_longitude": 71.41307690647338,
+        "plan_id": 181,
+        "plan_name": "Office"
+      },
+      "state_reason": "scheduler_action",
+      "video_modules": [
+        "sa"
+      ],
+      "tags": []
+    },
+    {
+      "name": "zTargetAI - 324 RoomFace",
+      "source": {
+        "url": "rtsp://oper:wsJYrG9RNN@10.1.0.32:554/Streaming/Channels/101",
+        "body": {
+          "host": "10.1.0.32",
+          "path": "/Streaming/Channels/101",
+          "port": 554,
+          "password": "wsJYrG9RNN",
+          "protocol": "rtsp",
+          "username": "oper",
+          "transport": "tcp"
+        }
+      },
+      "video_analytics": {
+        "modules": [
+          {
+            "config": {
+              "roi": [],
+              "lines": [],
+              "min_detection_size": 0.03
+            },
+            "module": "FaceRecognitionModule"
+          }
+        ],
+        "version": 5
+      },
+      "video_streaming": {
+        "by_event": false,
+        "storage_depth": 30
+      },
+      "ptz": null,
+      "place_id": 72,
+      "is_dvr": false,
+      "onvif_host": null,
+      "onvif_port": null,
+      "onvif_login": null,
+      "onvif_password": null,
+      "scheduler_group": "default",
+      "scheduler_tags": [],
+      "state": "inactive",
+      "plan_x": 0.2628663754415051,
+      "plan_y": 0.6036649865526162,
+      "plan_id": 181,
+      "capacitygroup_token": "bd7777ec9869d9f0",
+      "edge_id": null,
+      "edge": false,
+      "id": "419a1731-7f04-46b6-8348-154a835db7e7",
+      "created_at": "2023-02-14T13:40:43.312668Z",
+      "updated_at": "2026-02-09T06:50:32.902313Z",
+      "snapshot_url": "https://bd7777ec9869d9f0.teye.kz/s3/vab/2026/5/1/419a1731-7f04-46b6-8348-154a835db7e7.jpeg?ticket=eyJrZXkiOiIyMDI2LzUvMS80MTlhMTczMS03ZjA0LTQ2YjYtODM0OC0xNTRhODM1ZGI3ZTcuanBlZyIsInRzIjoxNzc3NjM1NjE0LCJ0dGwiOjkwMC4wfQ.wUqqsK0BSDUm1X7vbt4GyxybaHW7Pj2w3Yy9mXCH9hk",
+      "origin": {
+        "place_id": 72,
+        "group_id": 72,
+        "is_dvr": false,
+        "place_name": "Office",
+        "place_description": "проспект Мангилик Ел, 55/22, Астана",
+        "place_latitude": 51.08784147023002,
+        "place_longitude": 71.41307690647338,
+        "plan_id": 181,
+        "plan_name": "Office"
+      },
+      "state_reason": "user_action",
+      "video_modules": [
+        "fr"
+      ],
+      "tags": []
+    }
+  ],
+  "count": 30
+}

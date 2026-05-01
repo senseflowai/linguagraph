@@ -20,6 +20,7 @@ pub struct DatabaseConfig {
     pub uri: String,
     pub user: String,
     pub password: String,
+    pub database: String,
     #[serde(default = "default_max_connections")]
     pub max_connections: u32,
     #[serde(default = "default_query_timeout")]

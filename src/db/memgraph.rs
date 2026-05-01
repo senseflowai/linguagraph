@@ -41,6 +41,7 @@ impl MemgraphClient {
             .uri(cfg.uri.clone())
             .user(cfg.user.clone())
             .password(cfg.password.clone())
+            .db(cfg.database.clone())
             .max_connections(cfg.max_connections as usize)
             .build()
             .map_err(|e| DbError::Connection(e.to_string()))?;

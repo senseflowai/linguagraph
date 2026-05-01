@@ -268,6 +268,7 @@ async fn load_config_or_default(path: &std::path::Path) -> Config {
                 password: String::new(),
                 max_connections: 1,
                 query_timeout_secs: 30,
+                database: "memgraph".to_string(),
             },
             llm: Default::default(),
             query: Default::default(),

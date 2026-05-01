@@ -7,7 +7,10 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use neo4rs::{ConfigBuilder, Graph};
+use neo4rs::{
+    BoltBoolean, BoltFloat, BoltInteger, BoltList, BoltMap, BoltNull, BoltString, BoltType,
+    ConfigBuilder, Graph,
+};
 use serde_json::Value as Json;
 
 use crate::ast::query::Literal;
@@ -56,7 +59,7 @@ impl GraphClient for MemgraphClient {
     async fn execute(&self, q: &CypherQuery) -> Result<QueryResult, DbError> {
         let mut bolt = neo4rs::query(&q.text);
         for (name, value) in &q.params {
-            bolt = bind_param(bolt, name, value)?;
+            bolt = bolt.param(name, literal_to_bolt(value));
         }
 
         let mut stream = tokio::time::timeout(self.timeout, self.graph.execute(bolt))
@@ -110,59 +113,52 @@ impl GraphClient for MemgraphClient {
     }
 }
 
-/// Bind one [`Literal`] to a Bolt parameter. The match is exhaustive so any
-/// new variant added to [`Literal`] will fail to compile here.
-fn bind_param(q: neo4rs::Query, name: &str, lit: &Literal) -> Result<neo4rs::Query, DbError> {
-    Ok(match lit {
-        Literal::String(s) => q.param(name, s.clone()),
-        Literal::Bool(b) => q.param(name, *b),
-        Literal::Int(i) => q.param(name, *i),
-        Literal::Float(f) => q.param(name, *f),
-        Literal::Null => q.param(name, Option::<String>::None),
-        Literal::List(items) => bind_list(q, name, items)?,
-    })
+/// Recursively translate a [`Literal`] into a [`BoltType`]. The mapping
+/// is total: every variant of `Literal` corresponds to a Bolt primitive
+/// that the driver knows how to serialise.
+pub(crate) fn literal_to_bolt(lit: &Literal) -> BoltType {
+    match lit {
+        Literal::Null => BoltType::Null(BoltNull),
+        Literal::Bool(b) => BoltType::Boolean(BoltBoolean::new(*b)),
+        Literal::Int(i) => BoltType::Integer(BoltInteger::new(*i)),
+        Literal::Float(f) => BoltType::Float(BoltFloat::new(*f)),
+        Literal::String(s) => BoltType::String(BoltString::new(s)),
+        Literal::List(items) => {
+            let mut out = BoltList::with_capacity(items.len());
+            for it in items {
+                out.push(literal_to_bolt(it));
+            }
+            BoltType::List(out)
+        }
+        Literal::Object(map) => {
+            let mut out = BoltMap::with_capacity(map.len());
+            for (k, v) in map {
+                out.put(BoltString::new(k), literal_to_bolt(v));
+            }
+            BoltType::Map(out)
+        }
+    }
 }
 
-fn bind_list(q: neo4rs::Query, name: &str, items: &[Literal]) -> Result<neo4rs::Query, DbError> {
-    if items.iter().all(|x| matches!(x, Literal::Int(_))) {
-        let v: Vec<i64> = items
-            .iter()
-            .map(|x| match x {
-                Literal::Int(i) => *i,
-                _ => unreachable!(),
-            })
-            .collect();
-        Ok(q.param(name, v))
-    } else if items.iter().all(|x| matches!(x, Literal::String(_))) {
-        let v: Vec<String> = items
-            .iter()
-            .map(|x| match x {
-                Literal::String(s) => s.clone(),
-                _ => unreachable!(),
-            })
-            .collect();
-        Ok(q.param(name, v))
-    } else if items.iter().all(|x| matches!(x, Literal::Float(_))) {
-        let v: Vec<f64> = items
-            .iter()
-            .map(|x| match x {
-                Literal::Float(f) => *f,
-                _ => unreachable!(),
-            })
-            .collect();
-        Ok(q.param(name, v))
-    } else if items.iter().all(|x| matches!(x, Literal::Bool(_))) {
-        let v: Vec<bool> = items
-            .iter()
-            .map(|x| match x {
-                Literal::Bool(b) => *b,
-                _ => unreachable!(),
-            })
-            .collect();
-        Ok(q.param(name, v))
-    } else {
-        Err(DbError::UnsupportedParameter(
-            "heterogeneous or nested list literals are not supported as parameters".into(),
-        ))
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn literal_object_round_trips_to_bolt_map() {
+        let mut inner = BTreeMap::new();
+        inner.insert("name".to_string(), Literal::String("cam-1".into()));
+        let lit = Literal::List(vec![Literal::Object(inner)]);
+        match literal_to_bolt(&lit) {
+            BoltType::List(list) => {
+                assert_eq!(list.len(), 1);
+                match list.get(0).unwrap() {
+                    BoltType::Map(_) => {}
+                    other => panic!("expected map, got {other:?}"),
+                }
+            }
+            other => panic!("expected list, got {other:?}"),
+        }
     }
 }

@@ -1,7 +1,11 @@
 //! Strongly-typed query model.
 //!
-//! Every node references aliases by [`Alias`] (a thin newtype) rather than
-//! by raw `String`, so a typo can't slip from one stage to the next.
+//! The AST is a closed sum: every operation the rest of the stack can perform
+//! is one variant of [`Query`]. Today there are two — read traversals and
+//! batched ingestion — and adding a third (e.g. schema migration) means
+//! adding a variant here and a builder for it.
+
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -42,8 +46,21 @@ impl PropertyRef {
     }
 }
 
+/// Top-level AST node.
+///
+/// Read and insert queries are deliberately kept in the same enum so that
+/// callers (CLI, pipeline, future planners) can hold a single value and
+/// dispatch on its kind. Each variant carries a self-contained, validated
+/// structure — by the time it exists, the builder may compile it without
+/// further checks.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Query {
+pub enum Query {
+    Read(ReadQuery),
+    Insert(InsertQuery),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReadQuery {
     pub action: Action,
     pub start: Node,
     pub traversals: Vec<EdgeTraversal>,
@@ -119,7 +136,13 @@ pub enum ComparisonOp {
 }
 
 /// Restricted literal set. We only let through what Memgraph parameters
-/// can actually carry safely — no arbitrary nested objects.
+/// can actually carry safely — no non-finite numbers, no foreign types.
+///
+/// `Object` was added to support batched ingestion, where we ship a
+/// `List(Object(...))` as the parameter to an `UNWIND` clause. The DSL
+/// front-end still rejects objects (see [`Literal::from_json`]) — they
+/// only enter the system through the ingestion planner, which constructs
+/// them directly.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Literal {
     String(String),
@@ -127,10 +150,16 @@ pub enum Literal {
     Int(i64),
     Float(f64),
     List(Vec<Literal>),
+    Object(BTreeMap<String, Literal>),
     Null,
 }
 
 impl Literal {
+    /// Lower a JSON scalar/array/null into a [`Literal`].
+    ///
+    /// Returns `None` for objects (the DSL filter language forbids them) or
+    /// for non-finite numbers. The ingestion path bypasses this and builds
+    /// objects directly.
     pub fn from_json(v: &serde_json::Value) -> Option<Self> {
         Some(match v {
             serde_json::Value::Null => Literal::Null,
@@ -139,6 +168,9 @@ impl Literal {
                 if let Some(i) = n.as_i64() {
                     Literal::Int(i)
                 } else if let Some(f) = n.as_f64() {
+                    if !f.is_finite() {
+                        return None;
+                    }
                     Literal::Float(f)
                 } else {
                     return None;
@@ -153,6 +185,28 @@ impl Literal {
                 Literal::List(out)
             }
             serde_json::Value::Object(_) => return None,
+        })
+    }
+
+    /// Lower any JSON value, *including* objects. Used by the ingestion
+    /// pipeline where arbitrary nested data is acceptable as a parameter.
+    pub fn from_json_any(v: &serde_json::Value) -> Option<Self> {
+        Some(match v {
+            serde_json::Value::Object(map) => {
+                let mut out = BTreeMap::new();
+                for (k, vv) in map {
+                    out.insert(k.clone(), Literal::from_json_any(vv)?);
+                }
+                Literal::Object(out)
+            }
+            serde_json::Value::Array(items) => {
+                let mut out = Vec::with_capacity(items.len());
+                for it in items {
+                    out.push(Literal::from_json_any(it)?);
+                }
+                Literal::List(out)
+            }
+            other => Literal::from_json(other)?,
         })
     }
 }
@@ -198,4 +252,87 @@ pub enum SortRef {
 pub enum SortOrder {
     Asc,
     Desc,
+}
+
+// ─── Insert ──────────────────────────────────────────────────────────────────
+
+/// Batched, MERGE-semantic insert.
+///
+/// The query is precomputed: every batch is a fully resolved set of rows
+/// whose values are already [`Literal`]s. The builder only has to render
+/// `UNWIND $rows AS row …` template strings; it never re-checks identity
+/// or types.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InsertQuery {
+    pub node_batches: Vec<NodeBatch>,
+    pub relation_batches: Vec<RelationBatch>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeBatch {
+    /// Cypher node label (must be a valid identifier).
+    pub label: String,
+    /// Property name used as the merge key (typically `id`).
+    pub merge_on: String,
+    /// Each row contributes one MERGE.
+    pub rows: Vec<NodeRow>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeRow {
+    /// Stable identifier; the value of the `merge_on` property.
+    pub id: Literal,
+    /// All other properties (the merge key is added automatically by the
+    /// builder so callers never have to remember to include it).
+    pub props: BTreeMap<String, Literal>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelationBatch {
+    pub rel_type: String,
+    pub from_label: String,
+    pub from_key: String,
+    pub to_label: String,
+    pub to_key: String,
+    pub rows: Vec<RelationRow>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct RelationRow {
+    /// The merge-key value of the source node.
+    pub from_id: Literal,
+    /// The merge-key value of the target node.
+    pub to_id: Literal,
+}
+
+// `Literal` derives `PartialEq`; we additionally need `Eq` and `Hash` so
+// `RelationRow` can live inside hash sets for deduplication. Floats break
+// `Eq`/`Hash`, but identifiers produced by the planner are scalars
+// (string/int/null in practice) so the manual impls hold.
+impl Eq for Literal {}
+
+impl std::hash::Hash for Literal {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        match self {
+            Literal::String(s) => s.hash(state),
+            Literal::Bool(b) => b.hash(state),
+            Literal::Int(i) => i.hash(state),
+            Literal::Float(f) => f.to_bits().hash(state),
+            Literal::List(items) => {
+                items.len().hash(state);
+                for it in items {
+                    it.hash(state);
+                }
+            }
+            Literal::Object(map) => {
+                map.len().hash(state);
+                for (k, v) in map {
+                    k.hash(state);
+                    v.hash(state);
+                }
+            }
+            Literal::Null => {}
+        }
+    }
 }

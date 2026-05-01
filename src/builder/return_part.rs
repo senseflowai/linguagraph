@@ -7,7 +7,7 @@ use crate::ast::query::*;
 use super::cursor::Cursor;
 use super::where_part::render_property;
 
-pub(super) fn write_return(cur: &mut Cursor, q: &Query) {
+pub(super) fn write_return(cur: &mut Cursor, q: &ReadQuery) {
     cur.buf.push_str("\nRETURN ");
     let parts: Vec<String> = q.returns.iter().map(render_return).collect();
     cur.buf.push_str(&parts.join(", "));

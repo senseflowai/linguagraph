@@ -12,6 +12,7 @@ use crate::core::Pipeline;
 use crate::db::{GraphClient, MemgraphClient};
 use crate::dsl;
 use crate::error::Result;
+use crate::mapper::Mapping;
 use crate::prompt::{self, GraphSchema, PromptOptions};
 
 #[derive(Parser, Debug)]
@@ -55,6 +56,26 @@ pub enum Command {
     },
     /// Fetch and print the live graph schema as JSON.
     Schema,
+    /// Compile a (data, mapping) pair and execute the ingestion against
+    /// the configured database. Prints a summary of nodes/relationships
+    /// MERGE'd.
+    Ingest {
+        /// Path to the raw data JSON file.
+        data: PathBuf,
+        /// Path to the mapping JSON file.
+        mapping: PathBuf,
+        /// Maximum rows per UNWIND batch.
+        #[arg(long, default_value_t = 1000)]
+        batch_size: usize,
+    },
+    /// Like `ingest` but prints the generated Cypher batches instead of
+    /// executing them. Useful for inspection and CI snapshots.
+    IngestCypher {
+        data: PathBuf,
+        mapping: PathBuf,
+        #[arg(long, default_value_t = 1000)]
+        batch_size: usize,
+    },
 }
 
 pub async fn run(cli: Cli) -> Result<()> {
@@ -64,6 +85,12 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Run { path } => cmd_run(&cli.config, path).await,
         Command::Prompt { schema, no_examples } => cmd_prompt(&cli.config, schema, no_examples).await,
         Command::Schema => cmd_schema(&cli.config).await,
+        Command::Ingest { data, mapping, batch_size } => {
+            cmd_ingest(&cli.config, data, mapping, batch_size).await
+        }
+        Command::IngestCypher { data, mapping, batch_size } => {
+            cmd_ingest_cypher(&cli.config, data, mapping, batch_size).await
+        }
     }
 }
 
@@ -123,6 +150,48 @@ async fn cmd_schema(config_path: &std::path::Path) -> Result<()> {
     let client = MemgraphClient::connect(&cfg.database).await?;
     let schema = client.schema().await?;
     println!("{}", serde_json::to_string_pretty(&schema)?);
+    Ok(())
+}
+
+async fn cmd_ingest(
+    config_path: &std::path::Path,
+    data: PathBuf,
+    mapping: PathBuf,
+    batch_size: usize,
+) -> Result<()> {
+    let cfg = config::load(config_path).await?;
+    let mapping = Mapping::load(&mapping).await?;
+    let raw = fs::read_to_string(&data).await?;
+    let value: serde_json::Value = serde_json::from_str(&raw)?;
+
+    let client = MemgraphClient::connect(&cfg.database).await?;
+    let pipeline = Pipeline::new(Arc::new(client), &cfg).with_ingest_batch_size(batch_size);
+    let summary = pipeline.ingest(&mapping, &value).await?;
+    println!("{}", serde_json::to_string_pretty(&summary)?);
+    Ok(())
+}
+
+async fn cmd_ingest_cypher(
+    config_path: &std::path::Path,
+    data: PathBuf,
+    mapping: PathBuf,
+    batch_size: usize,
+) -> Result<()> {
+    let cfg = load_config_or_default(config_path).await;
+    let mapping = Mapping::load(&mapping).await?;
+    let raw = fs::read_to_string(&data).await?;
+    let value: serde_json::Value = serde_json::from_str(&raw)?;
+
+    let pipeline = Pipeline::new(Arc::new(crate::db::MockClient::new()), &cfg)
+        .with_ingest_batch_size(batch_size);
+    let batches = pipeline.compile_insert(&mapping, &value)?;
+    for (i, q) in batches.iter().enumerate() {
+        println!("-- Batch {i} --\n{}\n-- Parameters --", q.text);
+        for (k, v) in &q.params {
+            println!("${k} = {}", serde_json::to_string(v)?);
+        }
+        println!();
+    }
     Ok(())
 }
 

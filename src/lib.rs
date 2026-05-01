@@ -28,6 +28,8 @@ pub mod core;
 pub mod db;
 pub mod dsl;
 pub mod error;
+pub mod ingest;
+pub mod mapper;
 pub mod prompt;
 
 pub use error::{Error, Result};

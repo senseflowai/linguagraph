@@ -1,4 +1,9 @@
 //! MATCH clause emission.
+//!
+//! Each traversal either *chains* onto the previous one (continuing the
+//! same path expression) or starts a *new* MATCH that references its
+//! `from_alias` by name only. Two siblings of the start node thus
+//! correctly become two MATCH clauses, not one impossible chained path.
 
 use std::fmt::Write;
 
@@ -9,8 +14,22 @@ use super::cursor::Cursor;
 pub(super) fn write_match(cur: &mut Cursor, q: &ReadQuery) {
     cur.buf.push_str("MATCH ");
     write_node(cur, &q.start);
+
+    // Track the alias we just emitted as the rightmost endpoint. When the
+    // next traversal's `from_alias` matches it, we keep extending the same
+    // pattern; otherwise we close the current MATCH and open a new one
+    // that re-uses the bound alias by name.
+    let mut current_endpoint = q.start.alias.clone();
+
     for t in &q.traversals {
-        write_traversal(cur, t);
+        if t.from_alias != current_endpoint {
+            cur.buf.push_str("\nMATCH ");
+            // Reference the already-bound alias without repeating its
+            // label — Cypher resolves it from the surrounding scope.
+            let _ = write!(cur.buf, "({})", t.from_alias);
+        }
+        write_traversal_tail(cur, t);
+        current_endpoint = t.target.alias.clone();
     }
 }
 
@@ -18,7 +37,10 @@ fn write_node(cur: &mut Cursor, node: &Node) {
     let _ = write!(cur.buf, "({}:{})", node.alias, node.label);
 }
 
-fn write_traversal(cur: &mut Cursor, t: &EdgeTraversal) {
+/// The `-[edge]->(target)` portion of a traversal — written *after* the
+/// source node (which the caller has already emitted, either as the
+/// labeled start node or as the bare alias reference).
+fn write_traversal_tail(cur: &mut Cursor, t: &EdgeTraversal) {
     let depth = match t.depth {
         Some(d) if d.min == 1 && d.max == 1 => String::new(),
         Some(d) => format!("*{}..{}", d.min, d.max),

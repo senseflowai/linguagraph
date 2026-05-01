@@ -56,9 +56,20 @@ pub fn lower(dsl: d::DslQuery, max_depth: u32) -> Result<ReadQuery, AstError> {
                 return Err(AstError::DepthTooLarge { got: depth.max, max: max_depth });
             }
         }
+
+        // Resolve `from`. Default = the start node, *not* the previous
+        // traversal's target — we don't want a list of traversals to
+        // silently collapse into one chained path. Authors who actually
+        // want a chain set `from` explicitly.
+        let from_name = t.from.clone().unwrap_or_else(|| dsl.start.alias.clone());
+        if !bound.contains_key(from_name.as_str()) {
+            return Err(AstError::UnknownAlias(from_name));
+        }
+
         bound.insert(t.edge.alias.clone(), ());
         bound.insert(t.target.alias.clone(), ());
         traversals.push(EdgeTraversal {
+            from_alias: Alias::new(from_name),
             edge_label: t.edge.label,
             edge_alias: Alias::new(t.edge.alias),
             direction: lower_direction(t.edge.direction),

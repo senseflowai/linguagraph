@@ -102,6 +102,7 @@ mod tests {
             action: Action::Find,
             start: Node { label: "Person".into(), alias: alias("p") },
             traversals: vec![EdgeTraversal {
+                from_alias: alias("p"),
                 edge_label: "KNOWS".into(),
                 edge_alias: alias("r"),
                 direction: Direction::Out,
@@ -127,6 +128,7 @@ mod tests {
             action: Action::Aggregate,
             start: Node { label: "Customer".into(), alias: alias("c") },
             traversals: vec![EdgeTraversal {
+                from_alias: alias("c"),
                 edge_label: "PLACED".into(),
                 edge_alias: alias("po"),
                 direction: Direction::Out,

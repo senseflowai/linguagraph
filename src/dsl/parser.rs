@@ -61,6 +61,9 @@ fn validate(q: &DslQuery) -> Result<(), DslError> {
     insert_alias(&mut aliases, &q.start.alias)?;
 
     for t in &q.traversals {
+        if let Some(from) = &t.from {
+            check_identifier(from)?;
+        }
         check_identifier(&t.edge.label)?;
         check_identifier(&t.edge.alias)?;
         insert_alias(&mut aliases, &t.edge.alias)?;

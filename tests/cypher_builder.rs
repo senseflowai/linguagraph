@@ -96,3 +96,108 @@ fn parameters_never_appear_inline() {
     assert!(!cypher.text.contains("DROP"));
     assert!(cypher.text.contains("p.name = $p0"));
 }
+
+#[test]
+fn sibling_traversals_emit_separate_match_clauses() {
+    // Two unrelated children of the start node — Storage and Place — must
+    // not be chained as `(c)-[..]->(st)-[..]->(p)`. They are independent
+    // children, each branching off `c`.
+    let cypher = compile(
+        r#"{
+            "action": "aggregate",
+            "start": { "label": "Camera", "alias": "c" },
+            "traversals": [
+                {
+                    "edge": { "label": "HAS_STORAGE", "alias": "s_rel", "direction": "out" },
+                    "target": { "label": "Storage", "alias": "st" }
+                },
+                {
+                    "edge": { "label": "LOCATED_IN", "alias": "loc_rel", "direction": "out" },
+                    "target": { "label": "Place", "alias": "p" }
+                }
+            ],
+            "filters": [
+                { "field": "st.depth", "op": "eq", "value": 30 },
+                { "field": "p.name", "op": "eq", "value": "Office" }
+            ],
+            "return": [
+                { "aggregate": "count", "field": "c.id", "alias": "n" }
+            ]
+        }"#,
+    );
+
+    // First MATCH carries the start node and the first traversal.
+    assert!(
+        cypher
+            .text
+            .contains("MATCH (c:Camera)-[s_rel:HAS_STORAGE]->(st:Storage)"),
+        "got: {}",
+        cypher.text
+    );
+    // Second MATCH branches back from `c` (already bound — no label needed).
+    assert!(
+        cypher
+            .text
+            .contains("MATCH (c)-[loc_rel:LOCATED_IN]->(p:Place)"),
+        "got: {}",
+        cypher.text
+    );
+    // It must NOT have collapsed into one chained pattern.
+    assert!(
+        !cypher.text.contains("(st:Storage)-[loc_rel:LOCATED_IN]"),
+        "sibling traversals must not chain: {}",
+        cypher.text
+    );
+}
+
+#[test]
+fn explicit_from_chains_traversals() {
+    // `from` lets the author keep the legacy chained behavior on demand:
+    // (p)-[k1]->(f1)-[k2]->(f2).
+    let cypher = compile(
+        r#"{
+            "action": "find",
+            "start": { "label": "Person", "alias": "p" },
+            "traversals": [
+                {
+                    "edge": { "label": "KNOWS", "alias": "k1", "direction": "out" },
+                    "target": { "label": "Person", "alias": "f1" }
+                },
+                {
+                    "from": "f1",
+                    "edge": { "label": "KNOWS", "alias": "k2", "direction": "out" },
+                    "target": { "label": "Person", "alias": "f2" }
+                }
+            ],
+            "return": [{ "field": "f2.name" }]
+        }"#,
+    );
+    assert!(
+        cypher
+            .text
+            .contains("MATCH (p:Person)-[k1:KNOWS]->(f1:Person)-[k2:KNOWS]->(f2:Person)"),
+        "got: {}",
+        cypher.text
+    );
+    // Single MATCH clause — chain not split.
+    assert_eq!(cypher.text.matches("MATCH ").count(), 1);
+}
+
+#[test]
+fn from_must_reference_a_bound_alias() {
+    let json = r#"{
+        "action": "find",
+        "start": { "label": "Person", "alias": "p" },
+        "traversals": [
+            {
+                "from": "ghost",
+                "edge": { "label": "KNOWS", "alias": "r", "direction": "out" },
+                "target": { "label": "Person", "alias": "p2" }
+            }
+        ],
+        "return": [{ "field": "p2.name" }]
+    }"#;
+    let dsl = dsl::parse_str(json).unwrap();
+    let err = from_dsl::lower(dsl, 6).unwrap_err();
+    assert!(matches!(err, linguagraph::ast::AstError::UnknownAlias(_)));
+}

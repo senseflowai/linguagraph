@@ -1,0 +1,130 @@
+{
+  "entities": [
+    {
+      "type": "Camera",
+      "name": "$.cameras[*].name",
+      "source_path": "$.cameras[*]",
+      "description": "This is an IP camera for a video surveillance system",
+      "properties": [
+        {
+          "name": "id",
+          "source_path": "$.cameras[*].id"
+        },
+        {
+          "name": "state",
+          "source_path": "$.cameras[*].state",
+          "description": "The camera's status can be active/inactive"
+        },
+        {
+          "name": "created_at",
+          "source_path": "$.cameras[*].created_at",
+          "description": "The date and time the camera was added to the system, in UTC format"
+        },
+        {
+          "name": "updated_at",
+          "source_path": "$.cameras[*].updated_at",
+          "description": "Date and time of the last camera data update in UTC format"
+        }
+      ],
+      "primary_key": "$.cameras[*].id"
+    },
+    {
+      "type": "Storage",
+      "name": "{$.cameras[*].video_streaming.storage_depth} days",
+      "source_path": "$.cameras[*].video_streaming",
+      "description": "Video archive recording depth",
+      "properties": [
+        {
+          "name": "depth",
+          "source_path": "$.cameras[*].video_streaming.storage_depth",
+          "description": "Video archive retention period in days"
+        }
+      ],
+      "primary_key": "$.cameras[*].video_streaming.storage_depth"
+    },
+    {
+      "type": "Place",
+      "description": "Camera installation place",
+      "name": "$.cameras[*].origin.place_name",
+      "source_path": "$.cameras[*].origin",
+      "properties": [
+        {
+          "name": "id",
+          "source_path": "$.cameras[*].origin.place_id"
+        },
+        {
+          "name": "address",
+          "source_path": "$.cameras[*].origin.place_description",
+          "description": "Camera installation address"
+        }
+      ],
+      "primary_key": "$.cameras[*].origin.place_id"
+    },
+    {
+      "type": "Location",
+      "name": "$.cameras[*].origin.place_name",
+      "source_path": "$.cameras[*].origin",
+      "description": "Geolocation of the camera's installation site",
+      "properties": [
+        {
+          "name": "latitude",
+          "source_path": "$.cameras[*].origin.place_latitude",
+          "description": "Latitude (Decimal Degrees)"
+        },
+        {
+          "name": "longitude",
+          "source_path": "$.cameras[*].origin.place_longitude",
+          "description": "Longitude (Decimal Degrees)"
+        }
+      ],
+      "primary_key": "$.cameras[*].origin.place_id"
+    },
+    {
+      "type": "Source",
+      "name": "$.cameras[*].source.url",
+      "description": "link to the video stream",
+      "source_path": "$.cameras[*].source",
+      "properties": [
+        {
+          "name": "url",
+          "source_path": "$.cameras[*].source.url"
+        }
+      ],
+      "primary_key": "$.cameras[*].id"
+    },
+    {
+      "type": "VideoAnalyticsModule",
+      "name": "$.cameras[*].video_analytics.modules[*].module",
+      "description": "The video analytics module enabled on the camera",
+      "source_path": "$.cameras[*].video_analytics.modules[*]",
+      "primary_key": "$.cameras[*].video_analytics.modules[*].module"
+    }
+  ],
+  "relationships": [
+    {
+      "type": "LOCATED_IN",
+      "from": "Camera",
+      "to": "Place"
+    },
+    {
+      "type": "LOCATED_IN",
+      "from": "Place",
+      "to": "Location"
+    },
+    {
+      "type": "HAS_STORAGE",
+      "from": "Camera",
+      "to": "Storage"
+    },
+    {
+      "type": "HAS_SOURCE",
+      "from": "Camera",
+      "to": "Source"
+    },
+    {
+      "type": "HAS_ANALYTICS_MODULE",
+      "from": "Camera",
+      "to": "VideoAnalyticsModule"
+    }
+  ]
+}

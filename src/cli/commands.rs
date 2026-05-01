@@ -4,16 +4,26 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use tokio::fs;
 
 use crate::config::{self, Config};
 use crate::core::Pipeline;
-use crate::db::{GraphClient, MemgraphClient};
+use crate::db::{introspect, GraphClient, MemgraphClient};
 use crate::dsl;
 use crate::error::Result;
 use crate::mapper::Mapping;
 use crate::prompt::{self, GraphSchema, PromptOptions};
+
+/// Output format for the `schema` subcommand.
+#[derive(Debug, Clone, Copy, ValueEnum, Default)]
+pub enum SchemaFormat {
+    /// Pretty-printed JSON (machine-readable).
+    #[default]
+    Json,
+    /// LLM-ready system prompt rendered from the schema.
+    Prompt,
+}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -54,8 +64,28 @@ pub enum Command {
         #[arg(long)]
         no_examples: bool,
     },
-    /// Fetch and print the live graph schema as JSON.
-    Schema,
+    /// Fetch the live graph schema and print it (JSON by default).
+    ///
+    /// Use `--format prompt` to render the schema as a ready-to-use
+    /// system prompt for an LLM.
+    Schema {
+        /// Maximum nodes/relationships sampled per type for property
+        /// inference. Higher = more accurate, slower.
+        #[arg(long, default_value_t = 100)]
+        sample_size: u64,
+
+        /// Output format.
+        #[arg(long, value_enum, default_value_t = SchemaFormat::Json)]
+        format: SchemaFormat,
+
+        /// Write to this path instead of stdout.
+        #[arg(long, short = 'o')]
+        output: Option<PathBuf>,
+
+        /// When `--format prompt`, omit the worked examples block.
+        #[arg(long)]
+        no_examples: bool,
+    },
     /// Compile a (data, mapping) pair and execute the ingestion against
     /// the configured database. Prints a summary of nodes/relationships
     /// MERGE'd.
@@ -84,7 +114,9 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Cypher { path } => cmd_cypher(&cli.config, path).await,
         Command::Run { path } => cmd_run(&cli.config, path).await,
         Command::Prompt { schema, no_examples } => cmd_prompt(&cli.config, schema, no_examples).await,
-        Command::Schema => cmd_schema(&cli.config).await,
+        Command::Schema { sample_size, format, output, no_examples } => {
+            cmd_schema(&cli.config, sample_size, format, output, no_examples).await
+        }
         Command::Ingest { data, mapping, batch_size } => {
             cmd_ingest(&cli.config, data, mapping, batch_size).await
         }
@@ -145,11 +177,40 @@ async fn cmd_prompt(
     Ok(())
 }
 
-async fn cmd_schema(config_path: &std::path::Path) -> Result<()> {
+async fn cmd_schema(
+    config_path: &std::path::Path,
+    sample_size: u64,
+    format: SchemaFormat,
+    output: Option<PathBuf>,
+    no_examples: bool,
+) -> Result<()> {
     let cfg = config::load(config_path).await?;
     let client = MemgraphClient::connect(&cfg.database).await?;
-    let schema = client.schema().await?;
-    println!("{}", serde_json::to_string_pretty(&schema)?);
+
+    let schema = introspect::introspect_schema(
+        &client,
+        introspect::IntrospectOptions { sample_size },
+    )
+    .await?;
+
+    let body = match format {
+        SchemaFormat::Json => serde_json::to_string_pretty(&schema)?,
+        SchemaFormat::Prompt => {
+            let opts = PromptOptions {
+                include_examples: !no_examples,
+                ..PromptOptions::default()
+            };
+            prompt::generate_system_prompt(&schema, &opts)
+        }
+    };
+
+    match output {
+        Some(path) => {
+            fs::write(&path, &body).await?;
+            tracing::info!(target: "linguagraph::cli", path = %path.display(), "wrote schema");
+        }
+        None => println!("{body}"),
+    }
     Ok(())
 }
 

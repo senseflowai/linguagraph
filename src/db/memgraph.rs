@@ -105,11 +105,15 @@ impl GraphClient for MemgraphClient {
     }
 
     async fn schema(&self) -> Result<GraphSchema, DbError> {
-        // A real schema crawl needs `SHOW SCHEMA INFO` (Memgraph) or
-        // `CALL db.schema.visualization()` (Neo4j-compatible). Both are
-        // backend-specific, so the default impl returns an empty schema and
-        // operators are expected to provide one via `--schema <file>`.
-        Ok(GraphSchema::default())
+        // Portable Cypher introspection — works on Memgraph community
+        // and any Neo4j-compatible backend. Sample size defaults to 100;
+        // callers that need finer control can call
+        // [`crate::db::introspect_schema`] directly.
+        super::introspect::introspect_schema(
+            self,
+            super::introspect::IntrospectOptions::default(),
+        )
+        .await
     }
 }
 

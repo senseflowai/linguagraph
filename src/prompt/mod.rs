@@ -8,4 +8,4 @@ mod generator;
 mod schema;
 
 pub use generator::{generate_system_prompt, PromptOptions};
-pub use schema::{GraphSchema, NodeKind, Property, RelKind};
+pub use schema::{GraphSchema, NodeKind, Property, PropertyType, RelKind};

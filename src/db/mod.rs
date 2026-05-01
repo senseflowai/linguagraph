@@ -4,6 +4,7 @@
 //! production implementation in [`memgraph`] wraps `neo4rs`; the test
 //! implementation in [`mock`] returns canned results without a network.
 
+pub mod introspect;
 pub mod memgraph;
 pub mod mock;
 pub mod result;
@@ -11,6 +12,7 @@ pub mod result;
 use async_trait::async_trait;
 use thiserror::Error;
 
+pub use introspect::{introspect_schema, IntrospectOptions};
 pub use memgraph::MemgraphClient;
 pub use mock::MockClient;
 pub use result::{QueryResult, Row, Value};

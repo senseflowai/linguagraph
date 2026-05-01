@@ -1,0 +1,24 @@
+{
+  "action": "aggregate",
+  "start": { "label": "Customer", "alias": "c" },
+  "traversals": [
+    {
+      "edge": { "label": "PLACED", "alias": "po", "direction": "out" },
+      "target": { "label": "Order", "alias": "o" }
+    }
+  ],
+  "filters": [
+    { "field": "o.status", "op": "eq", "value": "completed" },
+    { "field": "o.total", "op": "gte", "value": 100 }
+  ],
+  "return": [
+    { "field": "c.name", "alias": "customer" },
+    { "aggregate": "count", "field": "o", "alias": "order_count" },
+    { "aggregate": "sum", "field": "o.total", "alias": "total_spent" }
+  ],
+  "group_by": ["c.name"],
+  "sort": [
+    { "field": "total_spent", "order": "desc" }
+  ],
+  "limit": 10
+}

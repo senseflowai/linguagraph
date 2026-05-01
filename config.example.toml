@@ -1,0 +1,27 @@
+# linguagraph example configuration.
+# Copy to `config.toml` (or pass --config <path>) and adjust.
+# Any field can be overridden via environment variables prefixed with
+# `LINGUAGRAPH__`, e.g. `LINGUAGRAPH__DATABASE__URI=bolt://memgraph:7687`.
+
+[database]
+uri = "bolt://localhost:7687"
+user = "memgraph"
+password = "memgraph"
+# Maximum number of bolt connections held in the pool.
+max_connections = 16
+# Per-query execution timeout in seconds.
+query_timeout_secs = 30
+
+[llm]
+# Provider is opaque to linguagraph; the prompt module is provider-agnostic.
+provider = "anthropic"
+model = "claude-opus-4-7"
+temperature = 0.0
+# Optional hard cap on tokens for the generated DSL.
+max_tokens = 2048
+
+[query]
+# Refuse traversals deeper than this to keep query plans bounded.
+max_traversal_depth = 6
+# Hard cap appended when the DSL omits an explicit limit.
+default_limit = 100

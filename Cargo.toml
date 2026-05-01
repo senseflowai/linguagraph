@@ -1,0 +1,37 @@
+[package]
+name = "linguagraph"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Natural language to Cypher pipeline backed by Memgraph"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "linguagraph"
+path = "src/lib.rs"
+
+[[bin]]
+name = "linguagraph"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+thiserror = "1.0"
+anyhow = "1.0"
+async-trait = "0.1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "io-util"] }
+clap = { version = "4.5", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+neo4rs = "0.8"
+
+[dev-dependencies]
+pretty_assertions = "1.4"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

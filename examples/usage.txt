@@ -1,0 +1,18 @@
+linguagraph CLI usage examples
+==============================
+
+# 1. Validate a DSL file (prints the parsed AST as JSON):
+linguagraph dsl examples/find_people.json
+
+# 2. Compile DSL to Cypher (prints the query and parameters):
+linguagraph cypher examples/aggregate_orders.json
+
+# 3. Execute the DSL against Memgraph:
+linguagraph run examples/find_people.json --config config.toml
+
+# 4. Print the schema-aware system prompt for an LLM:
+linguagraph prompt --schema schema.json
+
+# 5. Override config via environment:
+LINGUAGRAPH__DATABASE__URI=bolt://memgraph:7687 \
+  linguagraph run examples/find_people.json

@@ -1,0 +1,23 @@
+{
+  "action": "find",
+  "start": { "label": "Person", "alias": "p" },
+  "traversals": [
+    {
+      "edge": { "label": "KNOWS", "alias": "r", "direction": "out" },
+      "target": { "label": "Person", "alias": "friend" },
+      "depth": { "min": 1, "max": 2 }
+    }
+  ],
+  "filters": [
+    { "field": "p.age", "op": "gt", "value": 30 },
+    { "field": "friend.city", "op": "eq", "value": "Berlin" }
+  ],
+  "return": [
+    { "field": "p.name", "alias": "name" },
+    { "field": "friend.name", "alias": "friend_name" }
+  ],
+  "sort": [
+    { "field": "name", "order": "asc" }
+  ],
+  "limit": 25
+}

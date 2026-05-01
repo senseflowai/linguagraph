@@ -85,6 +85,11 @@ pub struct Node {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EdgeTraversal {
+    /// Already-bound alias the edge starts from. Defaults to the query's
+    /// start node when the DSL omits `from`; the builder uses this to
+    /// decide whether to chain the traversal onto the previous MATCH or
+    /// emit a new MATCH clause.
+    pub from_alias: Alias,
     pub edge_label: String,
     pub edge_alias: Alias,
     pub direction: Direction,

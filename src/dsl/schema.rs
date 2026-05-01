@@ -41,6 +41,13 @@ pub struct NodePattern {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Traversal {
+    /// Alias the traversal starts from. Must reference a previously
+    /// bound alias (the start node or an earlier traversal's target).
+    /// When omitted, defaults to the start node — so `traversals: [..., ...]`
+    /// reads as "from `start`, also traverse …, also traverse …" rather
+    /// than as a single chained path.
+    #[serde(default)]
+    pub from: Option<String>,
     pub edge: EdgePattern,
     pub target: NodePattern,
     #[serde(default)]

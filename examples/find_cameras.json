@@ -1,23 +1,17 @@
 {
-  "action": "aggregate",
+  "action": "find",
   "start": { "label": "Camera", "alias": "c" },
   "traversals": [
     {
-      "edge": { "label": "HAS_STORAGE", "alias": "s_rel", "direction": "out" },
-      "target": { "label": "Storage", "alias": "st" }
-    },
-    {
-      "edge": { "label": "LOCATED_IN", "alias": "loc_rel", "direction": "out" },
-      "target": { "label": "Place", "alias": "p" }
+      "edge": { "label": "HAS_SOURCE", "alias": "hs", "direction": "out" },
+      "target": { "label": "Source", "alias": "s" }
     }
   ],
   "filters": [
-    { "field": "c.state", "op": "eq", "value": "active" },
-    { "field": "p.name", "op": "eq", "value": "Office" },
-    { "field": "st.depth", "op": "eq", "value": 30 }
+    { "field": "c.name", "op": "eq", "value": "zTargetAI - 324 RoomFace" }
   ],
   "return": [
-    { "aggregate": "count", "field": "c.id", "alias": "count" }
+    { "field": "s.url", "alias": "url" }
   ],
-  "group_by": []
+  "limit": 1
 }

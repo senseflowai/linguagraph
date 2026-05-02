@@ -30,6 +30,7 @@ pub mod dsl;
 pub mod error;
 pub mod ingest;
 pub mod mapper;
+pub mod metadata;
 pub mod prompt;
 
 pub use error::{Error, Result};

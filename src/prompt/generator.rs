@@ -7,6 +7,7 @@
 use std::fmt::Write;
 
 use super::schema::{GraphSchema, NodeKind, Property, RelKind};
+use crate::metadata::PropertyMetadata;
 
 #[derive(Debug, Clone)]
 pub struct PromptOptions {
@@ -14,6 +15,10 @@ pub struct PromptOptions {
     pub preamble: Option<String>,
     /// If true, include 1-2 worked examples after the rules.
     pub include_examples: bool,
+    /// Optional per-property descriptions. When provided, each schema entry
+    /// whose key matches `<NodeLabel>.<property>` (or `<NodeLabel>` for the
+    /// node itself) is annotated inline.
+    pub property_metadata: Option<PropertyMetadata>,
 }
 
 impl Default for PromptOptions {
@@ -25,6 +30,7 @@ impl Default for PromptOptions {
                     .into(),
             ),
             include_examples: true,
+            property_metadata: None,
         }
     }
 }
@@ -38,8 +44,8 @@ pub fn generate_system_prompt(schema: &GraphSchema, opts: &PromptOptions) -> Str
     }
 
     out.push_str("# Graph schema\n");
-    write_nodes(&mut out, &schema.nodes);
-    write_rels(&mut out, &schema.relationships);
+    write_nodes(&mut out, &schema.nodes, opts.property_metadata.as_ref());
+    write_rels(&mut out, &schema.relationships, opts.property_metadata.as_ref());
 
     out.push_str("\n# DSL rules\n");
     out.push_str(DSL_RULES);
@@ -52,18 +58,33 @@ pub fn generate_system_prompt(schema: &GraphSchema, opts: &PromptOptions) -> Str
     out
 }
 
-fn write_nodes(out: &mut String, nodes: &[NodeKind]) {
+fn write_nodes(out: &mut String, nodes: &[NodeKind], meta: Option<&PropertyMetadata>) {
     if nodes.is_empty() {
         out.push_str("(no node labels declared)\n");
         return;
     }
     out.push_str("Nodes:\n");
     for n in nodes {
-        let _ = writeln!(out, "  - {}{}", n.label, render_props(&n.properties));
+        let header_desc = meta.and_then(|m| m.get(&n.label));
+        let _ = match header_desc {
+            Some(d) => writeln!(
+                out,
+                "  - {} — {}{}",
+                n.label,
+                d,
+                render_props(&n.label, &n.properties, meta)
+            ),
+            None => writeln!(
+                out,
+                "  - {}{}",
+                n.label,
+                render_props(&n.label, &n.properties, meta)
+            ),
+        };
     }
 }
 
-fn write_rels(out: &mut String, rels: &[RelKind]) {
+fn write_rels(out: &mut String, rels: &[RelKind], meta: Option<&PropertyMetadata>) {
     if rels.is_empty() {
         out.push_str("Relationships: (none declared)\n");
         return;
@@ -74,17 +95,32 @@ fn write_rels(out: &mut String, rels: &[RelKind]) {
             (Some(f), Some(t)) => format!("({f})-[:{}]->({t})", r.label),
             _ => format!("[:{}]", r.label),
         };
-        let _ = writeln!(out, "  - {}{}", endpoints, render_props(&r.properties));
+        let _ = writeln!(
+            out,
+            "  - {}{}",
+            endpoints,
+            render_props(&r.label, &r.properties, meta)
+        );
     }
 }
 
-fn render_props(props: &[Property]) -> String {
+fn render_props(
+    owner: &str,
+    props: &[Property],
+    meta: Option<&PropertyMetadata>,
+) -> String {
     if props.is_empty() {
         return String::new();
     }
     let inner: Vec<String> = props
         .iter()
-        .map(|p| format!("{}: {}", p.name, format_ty(p.ty)))
+        .map(|p| {
+            let base = format!("{}: {}", p.name, format_ty(p.ty));
+            match meta.and_then(|m| m.get(&format!("{owner}.{}", p.name))) {
+                Some(d) => format!("{base} /* {d} */"),
+                None => base,
+            }
+        })
         .collect();
     format!(" {{ {} }}", inner.join(", "))
 }
@@ -199,5 +235,34 @@ mod tests {
         assert!(prompt.contains("name: string"));
         assert!(prompt.contains("(Person)-[:KNOWS]->(Person)"));
         assert!(prompt.contains("\"action\": \"find\""));
+    }
+
+    #[test]
+    fn property_metadata_annotates_schema_block() {
+        let schema = GraphSchema {
+            nodes: vec![NodeKind {
+                label: "Camera".into(),
+                properties: vec![
+                    Property { name: "id".into(), ty: PT::String },
+                    Property { name: "state".into(), ty: PT::String },
+                ],
+            }],
+            relationships: vec![],
+        };
+        let mut meta = PropertyMetadata::new();
+        meta.insert("Camera", "An IP surveillance camera");
+        meta.insert("Camera.state", "active or inactive");
+        let prompt = generate_system_prompt(
+            &schema,
+            &PromptOptions {
+                property_metadata: Some(meta),
+                include_examples: false,
+                ..PromptOptions::default()
+            },
+        );
+        assert!(prompt.contains("Camera — An IP surveillance camera"));
+        assert!(prompt.contains("state: string /* active or inactive */"));
+        assert!(prompt.contains("id: string"));
+        assert!(!prompt.contains("id: string /*"));
     }
 }

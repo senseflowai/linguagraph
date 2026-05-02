@@ -13,6 +13,7 @@ use crate::db::{introspect, GraphClient, MemgraphClient};
 use crate::dsl;
 use crate::error::Result;
 use crate::mapper::Mapping;
+use crate::metadata::{FileMetadataStore, MetadataStore};
 use crate::prompt::{self, GraphSchema, PromptOptions};
 
 /// Output format for the `schema` subcommand.
@@ -63,6 +64,9 @@ pub enum Command {
         /// Skip the worked examples in the output.
         #[arg(long)]
         no_examples: bool,
+        /// Skip annotating the prompt with cached property descriptions.
+        #[arg(long)]
+        no_metadata: bool,
     },
     /// Fetch the live graph schema and print it (JSON by default).
     ///
@@ -113,7 +117,9 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Dsl { path } => cmd_dsl(path).await,
         Command::Cypher { path } => cmd_cypher(&cli.config, path).await,
         Command::Run { path } => cmd_run(&cli.config, path).await,
-        Command::Prompt { schema, no_examples } => cmd_prompt(&cli.config, schema, no_examples).await,
+        Command::Prompt { schema, no_examples, no_metadata } => {
+            cmd_prompt(&cli.config, schema, no_examples, no_metadata).await
+        }
         Command::Schema { sample_size, format, output, no_examples } => {
             cmd_schema(&cli.config, sample_size, format, output, no_examples).await
         }
@@ -159,19 +165,32 @@ async fn cmd_prompt(
     config_path: &std::path::Path,
     schema_path: Option<PathBuf>,
     no_examples: bool,
+    no_metadata: bool,
 ) -> Result<()> {
+    let cfg = load_config_or_default(config_path).await;
     let schema = match schema_path {
         Some(p) => {
             let raw = fs::read_to_string(&p).await?;
             serde_json::from_str::<GraphSchema>(&raw)?
         }
         None => {
-            let cfg = config::load(config_path).await?;
-            let client: Arc<dyn GraphClient> = Arc::new(MemgraphClient::connect(&cfg.database).await?);
+            let client: Arc<dyn GraphClient> =
+                Arc::new(MemgraphClient::connect(&cfg.database).await?);
             client.schema().await?
         }
     };
-    let opts = PromptOptions { include_examples: !no_examples, ..PromptOptions::default() };
+    let property_metadata = if no_metadata {
+        None
+    } else {
+        let store = FileMetadataStore::new(&cfg.metadata.cache_path);
+        let m = store.load().await?;
+        if m.is_empty() { None } else { Some(m) }
+    };
+    let opts = PromptOptions {
+        include_examples: !no_examples,
+        property_metadata,
+        ..PromptOptions::default()
+    };
     let prompt = prompt::generate_system_prompt(&schema, &opts);
     println!("{prompt}");
     Ok(())
@@ -226,7 +245,11 @@ async fn cmd_ingest(
     let value: serde_json::Value = serde_json::from_str(&raw)?;
 
     let client = MemgraphClient::connect(&cfg.database).await?;
-    let pipeline = Pipeline::new(Arc::new(client), &cfg).with_ingest_batch_size(batch_size);
+    let store: Arc<dyn MetadataStore> =
+        Arc::new(FileMetadataStore::new(&cfg.metadata.cache_path));
+    let pipeline = Pipeline::new(Arc::new(client), &cfg)
+        .with_ingest_batch_size(batch_size)
+        .with_metadata_store(store);
     let summary = pipeline.ingest(&mapping, &value).await?;
     println!("{}", serde_json::to_string_pretty(&summary)?);
     Ok(())
@@ -272,6 +295,7 @@ async fn load_config_or_default(path: &std::path::Path) -> Config {
             },
             llm: Default::default(),
             query: Default::default(),
+            metadata: Default::default(),
         },
     }
 }

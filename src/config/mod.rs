@@ -13,6 +13,8 @@ pub struct Config {
     pub llm: LlmConfig,
     #[serde(default)]
     pub query: QueryConfig,
+    #[serde(default)]
+    pub metadata: MetadataConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,4 +88,23 @@ fn default_max_depth() -> u32 {
 }
 fn default_limit() -> u32 {
     100
+}
+
+/// Property-metadata cache settings. The default backend is a JSON file;
+/// future SQL or KV backends will plug in via [`crate::metadata::MetadataStore`]
+/// without changing this config shape (add a `backend` field at that point).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetadataConfig {
+    #[serde(default = "default_metadata_path")]
+    pub cache_path: String,
+}
+
+impl Default for MetadataConfig {
+    fn default() -> Self {
+        Self { cache_path: default_metadata_path() }
+    }
+}
+
+fn default_metadata_path() -> String {
+    ".linguagraph/property_metadata.json".into()
 }

@@ -35,6 +35,9 @@ pub enum Error {
     #[error("Configuration error: {0}")]
     Config(#[from] crate::config::ConfigError),
 
+    #[error("Metadata error: {0}")]
+    Metadata(#[from] crate::metadata::MetadataError),
+
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 

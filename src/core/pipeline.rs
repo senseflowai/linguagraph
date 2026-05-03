@@ -343,7 +343,7 @@ fn build_qlink_insert_batch(
     let text = format!(
         "UNWIND $rows AS row\n\
          MATCH (n:{label} {{{key_field}: row.key}})\n\
-         CALL qlink.insert($coll, id(n), row.vec) YIELD success\n\
+         CALL libqlink.insert($coll, id(n), row.vec) YIELD success\n\
          RETURN count(success) AS inserted",
     );
     Ok(CypherQuery::new(text, params))

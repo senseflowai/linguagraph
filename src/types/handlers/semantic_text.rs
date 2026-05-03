@@ -260,7 +260,7 @@ impl TypeHandler for SemanticTextHandler {
                 let topk_p = ctx.bind(top_k);
 
                 ctx.push_pre_match(format!(
-                    "CALL qlink.search([{coll_p}], {emb_p}, {topk_p}) YIELD id AS {alias}__qid, score AS {alias}__score"
+                    "CALL libqlink.search({coll_p}, {emb_p}, {topk_p}) YIELD id AS {alias}__qid, score AS {alias}__score"
                 ));
                 ctx.set_where(format!("id({alias}) = {alias}__qid"));
                 ctx.contribution_mut()
@@ -299,7 +299,7 @@ impl TypeHandler for SemanticTextHandler {
                     "WITH {alias},\n\
                           CASE WHEN {alias}.{prop_name} = {q_p} THEN 1.0 ELSE 0.0 END AS {alias}__exact\n\
                      WITH collect({{ n: {alias}, e: {alias}__exact }}) AS {alias}__rows\n\
-                     CALL qlink.score_batch_node([{coll_p}], [{emb_p}],\n\
+                     CALL libqlink.score_batch_node({coll_p}, [{emb_p}],\n\
                           [r IN {alias}__rows | r.n], 0.0) YIELD node AS {alias}__n, score AS {alias}__sem\n\
                      WITH {alias}__rows, {alias}__n AS {alias}, {alias}__sem,\n\
                           [r IN {alias}__rows WHERE r.n = {alias}__n | r.e][0] AS {alias}__exact"
@@ -484,7 +484,7 @@ mod tests {
 
         let pre = contrib.pre_match.join("\n");
         assert!(
-            pre.contains("CALL qlink.search"),
+            pre.contains("CALL libqlink.search"),
             "pre_match should contain qlink.search; got {pre}"
         );
         assert!(pre.contains("c__qid"));
@@ -534,7 +534,7 @@ mod tests {
 
         let post = contrib.post_match.join("\n");
         assert!(post.contains("c__exact"));
-        assert!(post.contains("qlink.score_batch_node"));
+        assert!(post.contains("libqlink.score_batch_node"));
         assert!(post.contains("c__sem"));
         assert!(contrib.order_by.iter().any(|(k, _)| k.contains("c__exact + c__sem")));
     }

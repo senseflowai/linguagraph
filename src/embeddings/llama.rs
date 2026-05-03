@@ -7,25 +7,49 @@
 //! Compiled only when the `llama` feature is enabled — keeps the default
 //! build dependency-free.
 
-use std::num::NonZeroU32;
-use std::sync::Mutex;
-
+use super::{EmbedError, Embedder};
+use anyhow::Context;
 use llama_cpp_2::context::params::{LlamaContextParams, LlamaPoolingType};
 use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::{AddBos, LlamaModel};
+use llama_cpp_2::token::LlamaToken;
+use llama_cpp_2::{send_logs_to_tracing, LogOptions};
 use once_cell::sync::OnceCell;
-
-use super::{EmbedError, Embedder};
+use std::num::NonZeroU32;
+use std::sync::Mutex;
 
 /// Process-global llama backend. Calling `LlamaBackend::init()` more
 /// than once returns an error from llama.cpp.
 static BACKEND: OnceCell<LlamaBackend> = OnceCell::new();
 
 fn backend() -> Result<&'static LlamaBackend, EmbedError> {
-    BACKEND
-        .get_or_try_init(|| LlamaBackend::init().map_err(|e| EmbedError::Backend(e.to_string())))
+    BACKEND.get_or_try_init(|| {
+        send_logs_to_tracing(LogOptions::default().with_logs_enabled(false));
+        LlamaBackend::init().map_err(|e| EmbedError::Backend(e.to_string()))
+    })
+}
+
+pub struct LLamaTokenizer {
+    pub tokens: Vec<LlamaToken>,
+}
+
+impl LLamaTokenizer {
+    pub fn new() -> Self {
+        Self { tokens: Vec::new() }
+    }
+
+    pub fn tokenize(
+        &mut self,
+        model: &LlamaModel,
+        prompt: &str,
+    ) -> anyhow::Result<&Vec<LlamaToken>> {
+        self.tokens = model
+            .str_to_token(prompt, AddBos::Always)
+            .with_context(|| format!("failed to tokenize {prompt}"))?;
+        Ok(&self.tokens)
+    }
 }
 
 #[derive(Debug)]
@@ -50,7 +74,62 @@ impl LlamaEmbedder {
         // collection is created lazily so a wrong guess only manifests
         // on the first insert.
         let dim = model_dim(&model);
-        Ok(Self { model: Mutex::new(model), dim, n_ctx: 4096 })
+        Ok(Self {
+            model: Mutex::new(model),
+            dim,
+            n_ctx: 4096,
+        })
+    }
+
+    fn tokenize_prompt(model: &LlamaModel, prompt: &str) -> anyhow::Result<LLamaTokenizer> {
+        let mut tokenizer = LLamaTokenizer::new();
+
+        let tokens = tokenizer.tokenize(model, prompt)?;
+        let mut decoder = encoding_rs::UTF_8.new_decoder();
+
+        for token in tokens {
+            model.token_to_piece(*token, &mut decoder, true, None)?;
+        }
+
+        Ok(tokenizer)
+    }
+
+    fn split_into_batches(
+        tokenizers: Vec<LLamaTokenizer>,
+        max_tokens: usize,
+    ) -> Vec<Vec<LLamaTokenizer>> {
+        let mut batches: Vec<Vec<LLamaTokenizer>> = Vec::new();
+        let mut current_batch: Vec<LLamaTokenizer> = Vec::new();
+        let mut current_tokens = 0;
+
+        for tokenizer in tokenizers {
+            let len = tokenizer.tokens.len();
+
+            if len > max_tokens {
+                if !current_batch.is_empty() {
+                    batches.push(current_batch);
+                    current_batch = Vec::new();
+                    current_tokens = 0;
+                }
+                batches.push(vec![tokenizer]);
+                continue;
+            }
+
+            if current_tokens + len > max_tokens {
+                batches.push(current_batch);
+                current_batch = Vec::new();
+                current_tokens = 0;
+            }
+
+            current_tokens += len;
+            current_batch.push(tokenizer);
+        }
+
+        if !current_batch.is_empty() {
+            batches.push(current_batch);
+        }
+
+        batches
     }
 
     fn embed_locked(
@@ -61,9 +140,9 @@ impl LlamaEmbedder {
         let backend = backend()?;
         let ctx_params = LlamaContextParams::default()
             .with_n_ctx(NonZeroU32::new(n_ctx))
-            .with_n_seq_max(texts.len().max(1) as u32)
+            // .with_n_seq_max(texts.len().max(1) as u32)
             .with_embeddings(true)
-            .with_pooling_type(LlamaPoolingType::Mean);
+            .with_pooling_type(LlamaPoolingType::Unspecified);
         let mut ctx = model
             .new_context(backend, ctx_params)
             .map_err(|e| EmbedError::Backend(e.to_string()))?;
@@ -75,45 +154,64 @@ impl LlamaEmbedder {
             .map_err(|e| EmbedError::Backend(format!("tokenize: {e}")))?;
 
         let max_tokens = 512;
-        let mut batch = LlamaBatch::new(max_tokens, token_lines.len() as i32);
-        let mut output: Vec<Vec<f32>> = Vec::with_capacity(token_lines.len());
-        let mut seq_id: i32 = 0;
 
-        for tokens in &token_lines {
-            if (batch.n_tokens() as usize + tokens.len()) > max_tokens {
-                flush(&mut ctx, &mut batch, seq_id, &mut output)?;
-                seq_id = 0;
-                batch.clear();
-            }
-            batch
-                .add_sequence(tokens, seq_id, false)
-                .map_err(|e| EmbedError::Backend(e.to_string()))?;
-            seq_id += 1;
+        let mut tokenizers: Vec<LLamaTokenizer> = Vec::new();
+
+        for prompt in texts {
+            let tokenizer = Self::tokenize_prompt(model, prompt)
+                .map_err(|e| EmbedError::Backend(format!("tokenize: {e}")))?;
+            tokenizers.push(tokenizer);
         }
-        flush(&mut ctx, &mut batch, seq_id, &mut output)?;
+
+        let tokenizers_batches = Self::split_into_batches(tokenizers, ctx.n_ctx() as usize);
+
+        let mut output: Vec<Vec<f32>> = Vec::with_capacity(token_lines.len());
+
+        ctx.clear_kv_cache();
+
+        for tokenizer_batch in tokenizers_batches {
+            for (_, tokenizer) in tokenizer_batch.iter().enumerate() {
+                if tokenizer.tokens.len() <= max_tokens {
+                    let mut batch = LlamaBatch::new(tokenizer.tokens.len(), 1);
+                    batch
+                        .add_sequence(&tokenizer.tokens, 0, false)
+                        .map_err(|e| EmbedError::Backend(e.to_string()))?;
+                    ctx.decode(&mut batch)
+                        .map_err(|e| EmbedError::Backend(e.to_string()))?;
+                    let emb = ctx
+                        .embeddings_seq_ith(0)
+                        .map_err(|e| EmbedError::Backend(e.to_string()))?;
+                    output.push(l2_normalise(emb));
+                    batch.clear();
+                } else {
+                    let mut batches = Vec::new();
+                    for chunk in tokenizer.tokens.chunks(max_tokens) {
+                        let mut batch = LlamaBatch::new(chunk.len(), 1);
+                        batch
+                            .add_sequence(&chunk, 0, false)
+                            .map_err(|e| EmbedError::Backend(e.to_string()))?;
+                        batches.push(batch);
+                    }
+
+                    for batch in &mut batches {
+                        ctx.decode(batch)
+                            .map_err(|e| EmbedError::Backend(e.to_string()))?;
+                    }
+
+                    let emb = ctx
+                        .embeddings_seq_ith(0)
+                        .map_err(|e| EmbedError::Backend(e.to_string()))?;
+                    output.push(l2_normalise(emb));
+
+                    for batch in &mut batches {
+                        batch.clear();
+                    }
+                }
+            }
+        }
+
         Ok(output)
     }
-}
-
-fn flush(
-    ctx: &mut llama_cpp_2::context::LlamaContext<'_>,
-    batch: &mut LlamaBatch,
-    n_seqs: i32,
-    output: &mut Vec<Vec<f32>>,
-) -> Result<(), EmbedError> {
-    if n_seqs == 0 {
-        return Ok(());
-    }
-    ctx.clear_kv_cache();
-    ctx.decode(batch).map_err(|e| EmbedError::Backend(e.to_string()))?;
-    for i in 0..n_seqs {
-        let emb = ctx
-            .embeddings_seq_ith(i)
-            .map_err(|e| EmbedError::Backend(e.to_string()))?;
-        output.push(l2_normalise(emb));
-    }
-    batch.clear();
-    Ok(())
 }
 
 fn l2_normalise(v: &[f32]) -> Vec<f32> {

@@ -136,7 +136,7 @@ async fn semantic_ingest_runs_qlink_insert_after_memgraph_batches() {
     assert_eq!(captured.len(), 2);
     let qlink_batch = &captured[1];
     assert!(
-        qlink_batch.text.contains("CALL qlink.insert($coll, id(n), row.vec)"),
+        qlink_batch.text.contains("CALL libqlink.insert($coll, id(n), row.vec)"),
         "expected qlink.insert in side-effect batch; got:\n{}",
         qlink_batch.text
     );
@@ -204,15 +204,15 @@ fn semantic_search_compiles_to_qlink_search_call() {
     let lines: Vec<&str> = cypher.text.lines().collect();
     let qlink_idx = lines
         .iter()
-        .position(|l| l.contains("qlink.search"))
-        .expect("expected qlink.search in cypher");
+        .position(|l| l.contains("libqlink.search"))
+        .expect("expected libqlink.search in cypher");
     let match_idx = lines
         .iter()
         .position(|l| l.starts_with("MATCH"))
         .expect("expected MATCH");
     assert!(
         qlink_idx < match_idx,
-        "qlink.search prelude must run before the MATCH; got:\n{}",
+        "libqlink.search prelude must run before the MATCH; got:\n{}",
         cypher.text
     );
 

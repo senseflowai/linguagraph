@@ -21,6 +21,7 @@
 //! embedding_model = "models/bge-small.gguf"
 //! collection      = "companies"
 //! top_k           = 20
+//! threshold       = 0.8
 //! ```
 
 use std::collections::BTreeMap;
@@ -36,6 +37,11 @@ use crate::types::{
     TypeId, TypedOp, TypedPredicate,
 };
 
+/// Default minimum similarity score for `libqlink.search` hits. A
+/// modest 0.8 keeps obvious near-duplicates in and aggressively prunes
+/// the long tail; raise it for small corpora, lower it for noisy ones.
+pub const DEFAULT_SEARCH_THRESHOLD: f64 = 0.8;
+
 /// Configuration for [`SemanticTextHandler`].
 #[derive(Debug, Clone)]
 pub struct SemanticTextConfig {
@@ -49,6 +55,9 @@ pub struct SemanticTextConfig {
     pub collection: String,
     /// Number of results returned by `qlink.search`.
     pub top_k: u32,
+    /// Minimum similarity score required for a `libqlink.search` hit
+    /// to survive. Defaults to [`DEFAULT_SEARCH_THRESHOLD`].
+    pub threshold: f64,
 }
 
 impl SemanticTextConfig {
@@ -57,6 +66,7 @@ impl SemanticTextConfig {
             embedding_model: t.embedding_model.clone(),
             collection: t.collection.clone().unwrap_or_else(|| "semantic_text".into()),
             top_k: t.top_k.unwrap_or(20),
+            threshold: t.threshold.unwrap_or(DEFAULT_SEARCH_THRESHOLD),
         })
     }
 }
@@ -199,6 +209,10 @@ impl TypeHandler for SemanticTextHandler {
             "top_k".to_string(),
             Literal::Int(self.config.top_k as i64),
         );
+        params.insert(
+            "threshold".to_string(),
+            Literal::Float(self.config.threshold),
+        );
 
         Ok(TypedPredicate {
             type_id: ctx.type_id.clone(),
@@ -234,9 +248,13 @@ impl TypeHandler for SemanticTextHandler {
             }
             // ── Pure vector search ─────────────────────────────────────
             //
-            // Layout: a CALL qlink.search runs *before* MATCH and yields
-            // `(qid, score)`. The MATCH then constrains to nodes whose
-            // id equals that qid, and we ORDER BY the score.
+            // Layout: a CALL libqlink.search runs *before* MATCH and
+            // yields `(qid, score)`. We immediately filter the yield by
+            // `score >= $threshold` via a WITH clause so low-confidence
+            // hits never reach the MATCH (which keeps the join cheap
+            // for noisy embedders). The MATCH then constrains to nodes
+            // whose id equals the surviving qid, and we ORDER BY the
+            // score.
             TypedOp::Search => {
                 let alias = pred.field.alias.as_str();
                 let coll = pred
@@ -254,13 +272,26 @@ impl TypeHandler for SemanticTextHandler {
                     .get("top_k")
                     .cloned()
                     .unwrap_or(Literal::Int(20));
+                let threshold = pred
+                    .params
+                    .get("threshold")
+                    .cloned()
+                    .unwrap_or(Literal::Float(DEFAULT_SEARCH_THRESHOLD));
 
                 let coll_p = ctx.bind(coll);
                 let emb_p = ctx.bind(emb);
                 let topk_p = ctx.bind(top_k);
+                let thr_p = ctx.bind(threshold);
 
+                // The threshold is enforced inline in a WITH right after
+                // the YIELD so under-threshold hits don't get joined to
+                // the graph. Doing it here (instead of in the WHERE) also
+                // means a downstream user-supplied WHERE clause AND-s
+                // against the already-filtered set rather than re-filtering
+                // dropped rows.
                 ctx.push_pre_match(format!(
-                    "CALL libqlink.search({coll_p}, {emb_p}, {topk_p}) YIELD id AS {alias}__qid, score AS {alias}__score"
+                    "CALL libqlink.search({coll_p}, {emb_p}, {topk_p}) YIELD id AS {alias}__qid, score AS {alias}__score\n\
+                     WITH {alias}__qid, {alias}__score WHERE {alias}__score >= {thr_p}"
                 ));
                 ctx.set_where(format!("id({alias}) = {alias}__qid"));
                 ctx.contribution_mut()
@@ -372,11 +403,16 @@ mod tests {
     use std::sync::Arc;
 
     fn handler() -> SemanticTextHandler {
+        handler_with_threshold(DEFAULT_SEARCH_THRESHOLD)
+    }
+
+    fn handler_with_threshold(threshold: f64) -> SemanticTextHandler {
         SemanticTextHandler::new(
             SemanticTextConfig {
                 embedding_model: None,
                 collection: "test".into(),
                 top_k: 10,
+                threshold,
             },
             Arc::new(MockEmbedder::new(8)),
         )
@@ -438,10 +474,16 @@ mod tests {
         assert!(pred.params.contains_key("embedding"));
         assert!(pred.params.contains_key("collection"));
         assert!(pred.params.contains_key("top_k"));
+        assert!(pred.params.contains_key("threshold"));
         match pred.params.get("embedding").unwrap() {
             Literal::List(items) => assert_eq!(items.len(), 8),
             _ => panic!("embedding should be a List"),
         }
+        // Default threshold from config flows through unchanged.
+        assert_eq!(
+            pred.params.get("threshold").unwrap(),
+            &Literal::Float(DEFAULT_SEARCH_THRESHOLD)
+        );
     }
 
     #[test]
@@ -489,9 +531,58 @@ mod tests {
         );
         assert!(pre.contains("c__qid"));
         assert!(pre.contains("c__score"));
+        // Threshold filter is spliced right after the YIELD so under-
+        // threshold hits never reach the MATCH.
+        assert!(
+            pre.contains("WITH c__qid, c__score WHERE c__score >="),
+            "pre_match should filter by score >= threshold; got {pre}"
+        );
         assert_eq!(contrib.where_inline.as_deref(), Some("id(c) = c__qid"));
         assert_eq!(contrib.order_by.len(), 1);
         assert_eq!(contrib.order_by[0].0, "c__score");
+    }
+
+    #[test]
+    fn emit_search_threshold_is_bound_as_parameter() {
+        // A non-default threshold lands in the bound params so the
+        // value is parameterised, not inlined into the Cypher text.
+        let h = handler_with_threshold(0.42);
+        let field = pref("c", "name");
+        let value = serde_json::json!("apple");
+        let mut lower = LC {
+            raw: RawTypedFilter {
+                field: &field,
+                op: TypedOp::Search,
+                value: &value,
+            },
+            type_id: TypeId::new(SemanticTextHandler::TYPE_ID),
+        };
+        let pred = h.lower(&mut lower).unwrap();
+
+        let mut contrib = CypherContribution::default();
+        let mut binder = CountingBinder { next: 0, params: Default::default() };
+        let mut emit = EmitCtx::new(&mut contrib, &mut binder);
+        h.emit(&mut emit, &pred).unwrap();
+
+        // Bound params order: collection, embedding, top_k, threshold.
+        // Find whichever placeholder maps to a Float — that's the
+        // threshold — and assert it carries the configured value.
+        let threshold_value = binder
+            .params
+            .values()
+            .find_map(|v| match v {
+                Literal::Float(f) => Some(*f),
+                _ => None,
+            })
+            .expect("threshold should be bound as a Float param");
+        assert!(
+            (threshold_value - 0.42).abs() < 1e-9,
+            "expected threshold 0.42, got {threshold_value}"
+        );
+        // And the threshold must NOT appear inline.
+        let pre = contrib.pre_match.join("\n");
+        assert!(!pre.contains("0.42"), "threshold leaked inline: {pre}");
+        assert!(pre.contains("WHERE c__score >= $"));
     }
 
     #[test]

@@ -40,6 +40,10 @@ fn cfg_with_semantic_text() -> Config {
             embedding_model: None,
             collection: Some("companies".into()),
             top_k: Some(10),
+            // Pin threshold to a recognisable value so the
+            // end-to-end tests can assert it flows through
+            // unchanged from config to bound parameter.
+            threshold: Some(0.75),
             embedding_dim: Some(8),
             extra: Default::default(),
         },
@@ -231,6 +235,23 @@ fn semantic_search_compiles_to_qlink_search_call() {
         .any(|v| matches!(v, Literal::List(items) if items.len() == 8));
     assert!(has_embedding, "expected an 8-dim embedding parameter");
     assert!(!cypher.text.contains("[0."), "embedding leaked into cypher text");
+
+    // The configured threshold (0.75 in cfg_with_semantic_text) is
+    // bound as a Float param and filters the qlink yield before MATCH.
+    assert!(
+        cypher.text.contains("WITH c__qid, c__score WHERE c__score >= $"),
+        "expected score-threshold filter on the libqlink.search yield; got:\n{}",
+        cypher.text
+    );
+    let has_threshold = cypher
+        .params
+        .values()
+        .any(|v| matches!(v, Literal::Float(f) if (*f - 0.75).abs() < 1e-9));
+    assert!(
+        has_threshold,
+        "expected configured threshold 0.75 to flow through as a bound Float param; params: {:?}",
+        cypher.params
+    );
 }
 
 #[test]

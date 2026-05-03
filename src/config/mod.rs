@@ -139,6 +139,11 @@ pub struct TypeConfig {
     /// Top-K to request from vector search.
     #[serde(default)]
     pub top_k: Option<u32>,
+    /// Minimum similarity score required for a vector-search hit to
+    /// survive. Used by the SemanticText handler to filter
+    /// `libqlink.search` results before they reach the MATCH.
+    #[serde(default)]
+    pub threshold: Option<f64>,
     /// Embedding dimension hint, used when no real model is loaded
     /// (e.g. for the mock embedder in tests).
     #[serde(default)]

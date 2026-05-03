@@ -1,0 +1,22 @@
+{
+  "companies": [
+    {
+      "id": "c1",
+      "name": "Apple Inc.",
+      "industry": "tech",
+      "description": "Designs, manufactures, and markets smartphones, personal computers, tablets, wearables, and accessories."
+    },
+    {
+      "id": "c2",
+      "name": "Banana Republic",
+      "industry": "retail",
+      "description": "American clothing and accessories retailer owned by Gap Inc."
+    },
+    {
+      "id": "c3",
+      "name": "Cherry Robotics",
+      "industry": "tech",
+      "description": "Builds autonomous fruit-picking robots for orchards and large-scale farms."
+    }
+  ]
+}

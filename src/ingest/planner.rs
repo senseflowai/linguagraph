@@ -20,6 +20,8 @@ use crate::ast::query::{
     InsertQuery, Literal, NodeBatch, NodeRow, RelationBatch, RelationRow,
 };
 use crate::mapper::{Extracted, ExtractedEntity, Mapping};
+use crate::types::context::IngestCtx;
+use crate::types::{SideEffectQueue, TypeId, TypeRegistry};
 
 use super::dsl::{InsertPlan, NodeData, NodePlan, RelationData, RelationPlan};
 use super::IngestError;
@@ -39,25 +41,120 @@ impl Default for PlannerOptions {
     }
 }
 
-/// Convenience: extract → plan with default options.
+/// Convenience: extract → plan with default options and no type
+/// handlers.
 pub fn plan(mapping: &Mapping, extracted: Extracted) -> Result<InsertQuery, IngestError> {
     plan_with_options(mapping, extracted, PlannerOptions::default())
 }
 
 /// Build the [`InsertPlan`] (internal DSL) and lower it directly into an
-/// [`InsertQuery`] in one pass. We expose both so callers that want to
-/// inspect or persist the intermediate plan can do so.
+/// [`InsertQuery`] in one pass.
 pub fn plan_with_options(
     mapping: &Mapping,
     extracted: Extracted,
     opts: PlannerOptions,
 ) -> Result<InsertQuery, IngestError> {
+    let registry = TypeRegistry::empty();
+    let mut effects = SideEffectQueue::new();
+    plan_with_registry(mapping, extracted, opts, &registry, &mut effects)
+}
+
+/// Plan ingestion routing typed properties through `registry`. Side
+/// effects (e.g. embedding tasks) accumulate in `effects`, drained by
+/// the pipeline after the Memgraph batches succeed.
+pub fn plan_with_registry(
+    mapping: &Mapping,
+    mut extracted: Extracted,
+    opts: PlannerOptions,
+    registry: &TypeRegistry,
+    effects: &mut SideEffectQueue,
+) -> Result<InsertQuery, IngestError> {
     if opts.max_batch_size == 0 {
         return Err(IngestError::InvalidBatchSize);
     }
 
+    apply_type_handlers(mapping, &mut extracted, registry, effects)?;
+
     let plan = build_plan(mapping, &extracted)?;
     Ok(lower_plan(plan, opts))
+}
+
+/// For each entity row, look up properties whose mapping has a `type`
+/// tag and run them through the registered handler. The handler may:
+///
+/// * rewrite the literal value (`set_value`),
+/// * drop the property entirely (`skip`), or
+/// * push side effects (e.g. embedding tasks).
+///
+/// Untyped properties pass through untouched.
+fn apply_type_handlers(
+    mapping: &Mapping,
+    extracted: &mut Extracted,
+    registry: &TypeRegistry,
+    effects: &mut SideEffectQueue,
+) -> Result<(), IngestError> {
+    use crate::mapper::EntityMapping;
+
+    // Cache (label → field-name → type-id) so the per-row loop is just
+    // map lookups.
+    let typed_by_label: HashMap<&str, HashMap<&str, &str>> = mapping
+        .entities
+        .iter()
+        .map(|e: &EntityMapping| {
+            let inner: HashMap<&str, &str> = e
+                .properties
+                .iter()
+                .filter_map(|p| p.field_type.as_deref().map(|t| (p.name.as_str(), t)))
+                .collect();
+            (e.kind.as_str(), inner)
+        })
+        .collect();
+
+    for ent in &mut extracted.entities {
+        let typed_props = match typed_by_label.get(ent.label.as_str()) {
+            Some(m) if !m.is_empty() => m,
+            _ => continue,
+        };
+        for row in &mut ent.rows {
+            // Snapshot the keys we'll mutate to keep the borrow checker
+            // happy across the inner loop.
+            let pending: Vec<(String, String)> = typed_props
+                .iter()
+                .map(|(name, ty)| ((*name).to_string(), (*ty).to_string()))
+                .collect();
+            for (field_name, type_name) in pending {
+                let raw = match row.raw_typed.get(&field_name) {
+                    Some(v) => v.clone(),
+                    None => continue, // missing values are tolerated
+                };
+                let id_clone = row.id.clone();
+                let mut ctx = IngestCtx::new(
+                    ent.label.as_str(),
+                    ent.primary_key_field.as_str(),
+                    &id_clone,
+                    &field_name,
+                    &raw,
+                    effects,
+                );
+                let handler = registry
+                    .get(&TypeId::new(&type_name))
+                    .map_err(|e| IngestError::Type(e.to_string()))?;
+                handler
+                    .on_ingest(&mut ctx)
+                    .map_err(|e| IngestError::Type(e.to_string()))?;
+                match ctx.finish() {
+                    None => { /* handler did nothing — keep the default literal */ }
+                    Some(Some(lit)) => {
+                        row.properties.insert(field_name.clone(), lit);
+                    }
+                    Some(None) => {
+                        row.properties.remove(&field_name);
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Assemble the internal DSL from the extracted rows.

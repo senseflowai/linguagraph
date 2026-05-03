@@ -13,26 +13,45 @@ pub(super) fn write_return(cur: &mut Cursor, q: &ReadQuery) {
     cur.buf.push_str(&parts.join(", "));
 }
 
+#[allow(dead_code)]
 pub(super) fn write_order_by(cur: &mut Cursor, sort: &[SortKey]) {
     if sort.is_empty() {
         return;
     }
     cur.buf.push_str("\nORDER BY ");
-    let parts: Vec<String> = sort
-        .iter()
-        .map(|s| {
-            let key = match &s.key {
-                SortRef::Projected(name) => name.clone(),
-                SortRef::Property(p) => render_property(p),
-            };
-            let dir = match s.order {
-                SortOrder::Asc => "ASC",
-                SortOrder::Desc => "DESC",
-            };
-            format!("{key} {dir}")
-        })
-        .collect();
+    let parts: Vec<String> = sort.iter().map(format_sort_key).collect();
     cur.buf.push_str(&parts.join(", "));
+}
+
+/// Like [`write_order_by`] but also flushes any handler-contributed
+/// `extra_order_by` keys, *after* the user's explicit sort. This means
+/// an explicit `sort` clause in the DSL is always respected first;
+/// type-handler sorts (semantic score, geo distance) act as
+/// tie-breakers.
+pub(super) fn write_order_by_with_extra(cur: &mut Cursor, sort: &[SortKey]) {
+    let extras: Vec<(String, crate::types::context::OrderDir)> =
+        cur.extra_order_by.drain(..).collect();
+    if sort.is_empty() && extras.is_empty() {
+        return;
+    }
+    cur.buf.push_str("\nORDER BY ");
+    let mut parts: Vec<String> = sort.iter().map(format_sort_key).collect();
+    for (key, dir) in extras {
+        parts.push(format!("{key} {}", dir.as_str()));
+    }
+    cur.buf.push_str(&parts.join(", "));
+}
+
+fn format_sort_key(s: &SortKey) -> String {
+    let key = match &s.key {
+        SortRef::Projected(name) => name.clone(),
+        SortRef::Property(p) => render_property(p),
+    };
+    let dir = match s.order {
+        SortOrder::Asc => "ASC",
+        SortOrder::Desc => "DESC",
+    };
+    format!("{key} {dir}")
 }
 
 pub(super) fn write_limit(cur: &mut Cursor, limit: u32) {

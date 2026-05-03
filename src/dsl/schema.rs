@@ -78,16 +78,32 @@ pub struct DepthRange {
 /// A single filter predicate. The DSL keeps this flat — boolean composition
 /// across multiple filters is implicit AND. This is enough for the queries an
 /// LLM emits in practice and keeps the schema small.
+///
+/// Filters come in two shapes:
+///
+/// * **Plain**: untyped equality/range/containment over scalar properties.
+/// * **Typed**: tagged with a registered `type` (e.g. `"SemanticText"`),
+///   in which case the operator + value semantics are delegated to the
+///   matching [`crate::types::TypeHandler`]. This is how custom field
+///   types plug new ops (`search`, `hybrid_search`, `near`, …) in
+///   without touching the core parser.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Filter {
     /// Qualified property reference, e.g. `"p.age"`.
     pub field: String,
-    pub op: FilterOp,
+    /// Operator name. For plain filters this maps onto [`FilterOp`]; for
+    /// typed filters it is whatever the type handler accepts (kept as a
+    /// string here so the DSL surface stays open-ended).
+    pub op: String,
     pub value: serde_json::Value,
+    /// Optional field-type tag. When present, the type handler decides
+    /// how to validate the op + value and how to compile the predicate.
+    #[serde(default, rename = "type", skip_serializing_if = "Option::is_none")]
+    pub field_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum FilterOp {
     Eq,
     Neq,
@@ -99,6 +115,27 @@ pub enum FilterOp {
     Contains,
     StartsWith,
     EndsWith,
+}
+
+impl FilterOp {
+    /// Parse the string form used in the DSL `op` field. Returns `None`
+    /// when the op is not one of the built-in plain ops; the caller
+    /// then tries to interpret it as a typed op.
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "eq" => FilterOp::Eq,
+            "neq" => FilterOp::Neq,
+            "gt" => FilterOp::Gt,
+            "gte" => FilterOp::Gte,
+            "lt" => FilterOp::Lt,
+            "lte" => FilterOp::Lte,
+            "in" => FilterOp::In,
+            "contains" => FilterOp::Contains,
+            "starts_with" => FilterOp::StartsWith,
+            "ends_with" => FilterOp::EndsWith,
+            _ => return None,
+        })
+    }
 }
 
 /// One projected column. Either a plain field or an aggregation.

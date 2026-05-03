@@ -38,6 +38,9 @@ pub enum DslError {
 
     #[error("`return` clause must contain at least one item")]
     EmptyReturn,
+
+    #[error("unknown plain filter op '{0}'; if this is a typed op, set the filter's `type` field")]
+    UnknownOp(String),
 }
 
 /// Parse and validate a DSL document from a file path.
@@ -81,6 +84,25 @@ fn validate(q: &DslQuery) -> Result<(), DslError> {
 
     for f in &q.filters {
         check_field_ref(&f.field)?;
+        // Untyped filters must use one of the built-in ops. Typed
+        // filters defer op validation to the registered handler at
+        // lowering time — the parser only checks the op is a non-empty
+        // identifier-shaped string.
+        match &f.field_type {
+            None => {
+                if FilterOp::parse(&f.op).is_none() {
+                    return Err(DslError::UnknownOp(f.op.clone()));
+                }
+            }
+            Some(ty) => {
+                check_identifier(ty)?;
+                if f.op.is_empty()
+                    || !f.op.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                {
+                    return Err(DslError::UnknownOp(f.op.clone()));
+                }
+            }
+        }
     }
 
     if q.return_.is_empty() {

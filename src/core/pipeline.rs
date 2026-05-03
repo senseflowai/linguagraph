@@ -4,20 +4,22 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use crate::ast::{from_dsl, query::ReadQuery, query::InsertQuery};
+use crate::ast::{from_dsl, query::ReadQuery, query::InsertQuery, query::Literal};
 use crate::builder::{self, CypherQuery};
 use crate::config::Config;
 use crate::db::{GraphClient, QueryResult};
 use crate::dsl::DslQuery;
+use crate::embeddings::SharedEmbedder;
 use crate::error::Result;
-use crate::ingest::{self, PlannerOptions};
+use crate::ingest::{self, IngestError, PlannerOptions};
 use crate::mapper::{self, Mapping};
 use crate::metadata::{self, MetadataStore};
+use crate::types::{SharedRegistry, SideEffect, SideEffectQueue, TypeRegistry};
 
 /// High-level entrypoint used by the CLI and library consumers.
 ///
-/// The pipeline is cheap to clone — its only state is an `Arc<dyn GraphClient>`
-/// and a snapshot of the relevant config knobs.
+/// The pipeline is cheap to clone — its only state is a few `Arc`s and a
+/// snapshot of the relevant config knobs.
 #[derive(Clone)]
 pub struct Pipeline {
     client: Arc<dyn GraphClient>,
@@ -25,6 +27,15 @@ pub struct Pipeline {
     default_limit: u32,
     ingest_batch_size: usize,
     metadata_store: Option<Arc<dyn MetadataStore>>,
+    /// Registry of [`crate::types::TypeHandler`] instances. Defaults to
+    /// an empty registry so plain (untyped) DSL queries don't need any
+    /// configuration; the CLI / library callers register handlers via
+    /// [`Self::with_registry`].
+    registry: SharedRegistry,
+    /// Embedder used by side-effect drainage (e.g. the SemanticText
+    /// pipeline). Optional: when not configured, queries that reference
+    /// types requiring an embedder fail at lowering time, not at ingest.
+    embedder: Option<SharedEmbedder>,
 }
 
 impl std::fmt::Debug for Pipeline {
@@ -34,6 +45,8 @@ impl std::fmt::Debug for Pipeline {
             .field("default_limit", &self.default_limit)
             .field("ingest_batch_size", &self.ingest_batch_size)
             .field("metadata_store", &self.metadata_store.is_some())
+            .field("registry", &self.registry)
+            .field("embedder", &self.embedder.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -44,6 +57,10 @@ pub struct IngestSummary {
     pub batches_executed: usize,
     pub node_rows: usize,
     pub relation_rows: usize,
+    /// Number of side-effect batches executed (e.g. embedding upserts).
+    pub side_effect_batches: usize,
+    /// Number of side-effect rows applied (vectors inserted).
+    pub side_effect_rows: usize,
 }
 
 impl Pipeline {
@@ -54,6 +71,8 @@ impl Pipeline {
             default_limit: config.query.default_limit,
             ingest_batch_size: 1000,
             metadata_store: None,
+            registry: Arc::new(TypeRegistry::empty()),
+            embedder: None,
         }
     }
 
@@ -75,11 +94,32 @@ impl Pipeline {
         self.metadata_store.as_ref()
     }
 
+    /// Attach a type-handler registry. Without one, typed DSL filters
+    /// fail with `UnknownType` and properties tagged with a `type` are
+    /// stored verbatim.
+    pub fn with_registry(mut self, registry: SharedRegistry) -> Self {
+        self.registry = registry;
+        self
+    }
+
+    pub fn registry(&self) -> &SharedRegistry {
+        &self.registry
+    }
+
+    /// Attach an embedder. Required only when ingestion produces
+    /// embedding side effects (the SemanticText pipeline) — for
+    /// query-only workloads the registry's handlers carry their own
+    /// embedder reference.
+    pub fn with_embedder(mut self, embedder: SharedEmbedder) -> Self {
+        self.embedder = Some(embedder);
+        self
+    }
+
     // ── Read path ───────────────────────────────────────────────────────────
 
     /// Lower a DSL document to the typed AST. Pure; no I/O.
     pub fn lower(&self, dsl: DslQuery) -> Result<ReadQuery> {
-        let mut q = from_dsl::lower(dsl, self.max_depth)?;
+        let mut q = from_dsl::lower_with_registry(dsl, self.max_depth, &self.registry)?;
         if q.limit.is_none() {
             q.limit = Some(self.default_limit);
         }
@@ -89,7 +129,7 @@ impl Pipeline {
     /// Compile a DSL document all the way to a parameterized Cypher query.
     pub fn compile(&self, dsl: DslQuery) -> Result<CypherQuery> {
         let ast = self.lower(dsl)?;
-        Ok(builder::build_read(&ast)?)
+        Ok(builder::build_read_with(&ast, &self.registry)?)
     }
 
     /// Compile and execute against the configured graph client.
@@ -101,19 +141,39 @@ impl Pipeline {
     // ── Insert path ─────────────────────────────────────────────────────────
 
     /// Compile a `(data, mapping)` pair into one Cypher batch per
-    /// node/relation group. Pure; no I/O.
+    /// node/relation group. Pure; no I/O. Drops side effects on the
+    /// floor — use [`Self::lower_insert_with_effects`] when you need
+    /// them.
     pub fn compile_insert(&self, mapping: &Mapping, data: &Value) -> Result<Vec<CypherQuery>> {
-        let extracted = mapper::extract(mapping, data)?;
-        let opts = PlannerOptions { max_batch_size: self.ingest_batch_size };
-        let insert = ingest::plan_with_options(mapping, extracted, opts)?;
+        let (insert, _effects) = self.lower_insert_with_effects(mapping, data)?;
         Ok(builder::build_insert(&insert)?)
     }
 
-    /// Lower a `(data, mapping)` pair into the typed [`InsertQuery`] AST.
+    /// Lower a `(data, mapping)` pair into the typed [`InsertQuery`] AST,
+    /// dropping any queued side effects.
     pub fn lower_insert(&self, mapping: &Mapping, data: &Value) -> Result<InsertQuery> {
+        Ok(self.lower_insert_with_effects(mapping, data)?.0)
+    }
+
+    /// Lower a `(data, mapping)` pair, returning both the [`InsertQuery`]
+    /// and the queue of side effects that must run after the Memgraph
+    /// batches succeed.
+    pub fn lower_insert_with_effects(
+        &self,
+        mapping: &Mapping,
+        data: &Value,
+    ) -> Result<(InsertQuery, SideEffectQueue)> {
         let extracted = mapper::extract(mapping, data)?;
         let opts = PlannerOptions { max_batch_size: self.ingest_batch_size };
-        Ok(ingest::plan_with_options(mapping, extracted, opts)?)
+        let mut effects = SideEffectQueue::new();
+        let insert = ingest::plan_with_registry(
+            mapping,
+            extracted,
+            opts,
+            &self.registry,
+            &mut effects,
+        )?;
+        Ok((insert, effects))
     }
 
     /// Compile and execute the full ingestion pipeline.
@@ -124,7 +184,7 @@ impl Pipeline {
     /// runs before any relationship MERGE, so the planner's ordering
     /// guarantees that when relations execute, both endpoints exist.
     pub async fn ingest(&self, mapping: &Mapping, data: &Value) -> Result<IngestSummary> {
-        let insert = self.lower_insert(mapping, data)?;
+        let (insert, effects) = self.lower_insert_with_effects(mapping, data)?;
         let node_rows: usize = insert
             .node_batches
             .iter()
@@ -142,6 +202,12 @@ impl Pipeline {
             let _ = self.client.execute(batch).await?;
         }
 
+        // Side effects run after the Memgraph batches land. For
+        // [`SideEffect::EmbedAndStore`], that means: embed all queued
+        // texts in one call, then issue *one* `qlink.insert_batch` per
+        // (collection, label) group — never per-row.
+        let (se_batches, se_rows) = self.drain_side_effects(effects).await?;
+
         // Refresh property metadata from the mapping. This runs after the
         // graph writes succeed so a failed ingest doesn't leave the cache
         // describing data that never landed.
@@ -156,9 +222,144 @@ impl Pipeline {
             batches_executed: total,
             node_rows,
             relation_rows,
+            side_effect_batches: se_batches,
+            side_effect_rows: se_rows,
         })
     }
+
+    /// Drain the side-effect queue. Currently handles
+    /// [`SideEffect::EmbedAndStore`]: groups effects by collection,
+    /// runs the embedder once per group, and issues a single
+    /// `qlink.insert_batch` Cypher call per group.
+    ///
+    /// Returns `(batches_run, rows_inserted)`.
+    async fn drain_side_effects(
+        &self,
+        mut effects: SideEffectQueue,
+    ) -> Result<(usize, usize)> {
+        if effects.is_empty() {
+            return Ok((0, 0));
+        }
+
+        // Bucket effects per collection. The label is part of the
+        // group key but we still group by collection for the actual
+        // gRPC call — qlink accepts a single collection per insert.
+        let mut by_coll: std::collections::BTreeMap<String, Vec<SideEffect>> =
+            std::collections::BTreeMap::new();
+        for eff in effects.drain() {
+            match &eff {
+                SideEffect::EmbedAndStore { collection, .. } => {
+                    by_coll.entry(collection.clone()).or_default().push(eff);
+                }
+            }
+        }
+
+        let embedder = self.embedder.as_ref().ok_or_else(|| {
+            crate::error::Error::Ingest(IngestError::Type(
+                "ingestion produced embedding side effects but no embedder is configured \
+                 (call Pipeline::with_embedder)"
+                    .into(),
+            ))
+        })?;
+
+        let mut batches_run = 0usize;
+        let mut rows_inserted = 0usize;
+        for (collection, group) in by_coll {
+            let texts: Vec<&str> = group
+                .iter()
+                .map(|e| match e {
+                    SideEffect::EmbedAndStore { text, .. } => text.as_str(),
+                })
+                .collect();
+            let vectors = embedder.embed_batch(&texts).map_err(|e| {
+                crate::error::Error::Ingest(IngestError::Type(format!("embed_batch: {e}")))
+            })?;
+
+            let cypher = build_qlink_insert_batch(&collection, &group, &vectors)?;
+            let _ = self.client.execute(&cypher).await?;
+            batches_run += 1;
+            rows_inserted += group.len();
+        }
+        let _ = embedder.dim(); // assert the embedder was usable
+        Ok((batches_run, rows_inserted))
+    }
 }
+
+/// Render a single `UNWIND … MATCH … qlink.insert(...)` batch.
+///
+/// We can't use `qlink.insert_batch` directly because each row has a
+/// node-id we need to look up by `(label, key)` — the embeddings come
+/// from outside Memgraph. The shape is therefore an `UNWIND` over rows
+/// containing `{key, vec}`, with one `qlink.insert` call per row inside
+/// the same statement. That's still **one** Cypher batch (one round
+/// trip) — the per-row work happens inside Memgraph.
+fn build_qlink_insert_batch(
+    collection: &str,
+    effects: &[SideEffect],
+    vectors: &[Vec<f32>],
+) -> Result<CypherQuery> {
+    use std::collections::BTreeMap;
+    if effects.len() != vectors.len() {
+        return Err(crate::error::Error::Ingest(IngestError::Type(format!(
+            "embedder returned {} vectors for {} inputs",
+            vectors.len(),
+            effects.len()
+        ))));
+    }
+
+    // Validate all effects share the same label/key_field; otherwise
+    // we'd need different MATCH patterns. The grouping key is
+    // (collection, label) so this should always hold.
+    let (label, key_field) = match effects.first().expect("non-empty") {
+        SideEffect::EmbedAndStore { label, key_field, .. } => (label.clone(), key_field.clone()),
+    };
+    if !is_valid_ident(&label) {
+        return Err(crate::error::Error::Ingest(IngestError::Type(format!(
+            "invalid label '{label}' in side effect"
+        ))));
+    }
+    if !is_valid_ident(&key_field) {
+        return Err(crate::error::Error::Ingest(IngestError::Type(format!(
+            "invalid key field '{key_field}' in side effect"
+        ))));
+    }
+
+    let mut rows: Vec<Literal> = Vec::with_capacity(effects.len());
+    for (eff, vec) in effects.iter().zip(vectors) {
+        let SideEffect::EmbedAndStore { key_value, .. } = eff;
+        let mut row: BTreeMap<String, Literal> = BTreeMap::new();
+        row.insert("key".to_string(), key_value.clone());
+        row.insert(
+            "vec".to_string(),
+            Literal::List(vec.iter().map(|f| Literal::Float(*f as f64)).collect()),
+        );
+        rows.push(Literal::Object(row));
+    }
+
+    let mut params: BTreeMap<String, Literal> = BTreeMap::new();
+    params.insert("rows".to_string(), Literal::List(rows));
+    params.insert("coll".to_string(), Literal::String(collection.to_string()));
+
+    let text = format!(
+        "UNWIND $rows AS row\n\
+         MATCH (n:{label} {{{key_field}: row.key}})\n\
+         CALL qlink.insert($coll, id(n), row.vec) YIELD success\n\
+         RETURN count(success) AS inserted",
+    );
+    Ok(CypherQuery::new(text, params))
+}
+
+fn is_valid_ident(s: &str) -> bool {
+    let mut chars = s.chars();
+    let first = chars.next();
+    matches!(first, Some(c) if c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Marker re-export so the embedder trait can be referenced via
+/// `pipeline::Embedder` in the README/tests without exposing the whole
+/// `embeddings` path.
+pub use crate::embeddings::Embedder as _Embedder;
 
 #[cfg(test)]
 mod tests {
@@ -183,6 +384,7 @@ mod tests {
             llm: LlmConfig::default(),
             query: QueryConfig::default(),
             metadata: MetadataConfig::default(),
+            types: Default::default(),
         }
     }
 

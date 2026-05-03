@@ -11,6 +11,8 @@ use thiserror::Error;
 
 use crate::ast::query::*;
 use crate::dsl::schema as d;
+use crate::types::context::{LowerCtx, RawTypedFilter};
+use crate::types::{TypeError, TypeRegistry, TypeId, TypedOp};
 
 #[derive(Debug, Error)]
 pub enum AstError {
@@ -34,13 +36,35 @@ pub enum AstError {
 
     #[error("traversal depth {got} exceeds configured max {max}")]
     DepthTooLarge { got: u32, max: u32 },
+
+    #[error("unknown plain filter op '{0}'")]
+    UnknownPlainOp(String),
+
+    #[error("typed op '{op}' is not supported by type '{ty}'")]
+    UnsupportedTypedOp { ty: String, op: String },
+
+    #[error("type system error: {0}")]
+    Type(#[from] TypeError),
 }
 
 /// Lower a validated DSL query into the AST.
 ///
 /// `max_depth` is enforced here so the AST itself can advertise that any
 /// traversal it carries is within limits; downstream code never has to check.
+///
+/// Backwards-compatible alias for [`lower_with_registry`] using an empty
+/// registry. Use this only when the DSL is known not to contain typed
+/// filters.
 pub fn lower(dsl: d::DslQuery, max_depth: u32) -> Result<ReadQuery, AstError> {
+    lower_with_registry(dsl, max_depth, &TypeRegistry::empty())
+}
+
+/// Lower a DSL query, dispatching typed filters through `registry`.
+pub fn lower_with_registry(
+    dsl: d::DslQuery,
+    max_depth: u32,
+    registry: &TypeRegistry,
+) -> Result<ReadQuery, AstError> {
     let mut bound: HashMap<String, ()> = HashMap::new();
     bound.insert(dsl.start.alias.clone(), ());
 
@@ -81,7 +105,7 @@ pub fn lower(dsl: d::DslQuery, max_depth: u32) -> Result<ReadQuery, AstError> {
         });
     }
 
-    let filter = lower_filters(&dsl.filters, &bound)?;
+    let filter = lower_filters(&dsl.filters, &bound, registry)?;
     let returns = lower_returns(&dsl.return_, &bound)?;
 
     let action = match dsl.action {
@@ -122,17 +146,54 @@ fn lower_direction(d: d::Direction) -> Direction {
 fn lower_filters(
     filters: &[d::Filter],
     bound: &HashMap<String, ()>,
+    registry: &TypeRegistry,
 ) -> Result<Option<FilterExpression>, AstError> {
     if filters.is_empty() {
         return Ok(None);
     }
     let mut preds = Vec::with_capacity(filters.len());
     for f in filters {
-        preds.push(FilterExpression::Predicate(Predicate {
-            field: resolve_property(&f.field, bound)?,
-            op: lower_op(f.op),
-            value: Literal::from_json(&f.value).ok_or(AstError::UnsupportedLiteral)?,
-        }));
+        let field = resolve_property(&f.field, bound)?;
+        match &f.field_type {
+            // Plain (untyped) predicate: parse the op and convert the
+            // value into the typed AST literal.
+            None => {
+                let op = d::FilterOp::parse(&f.op)
+                    .ok_or_else(|| AstError::UnknownPlainOp(f.op.clone()))?;
+                preds.push(FilterExpression::Predicate(Predicate {
+                    field,
+                    op: lower_op(op),
+                    value: Literal::from_json(&f.value).ok_or(AstError::UnsupportedLiteral)?,
+                }));
+            }
+            // Typed predicate: route through the registered handler.
+            Some(ty_name) => {
+                let type_id = TypeId::new(ty_name);
+                let handler = registry.get(&type_id)?;
+                let typed_op = parse_typed_op(&f.op).ok_or_else(|| {
+                    AstError::UnsupportedTypedOp {
+                        ty: ty_name.clone(),
+                        op: f.op.clone(),
+                    }
+                })?;
+                if !handler.supported_ops().contains(&typed_op) {
+                    return Err(AstError::UnsupportedTypedOp {
+                        ty: ty_name.clone(),
+                        op: f.op.clone(),
+                    });
+                }
+                let mut ctx = LowerCtx {
+                    raw: RawTypedFilter {
+                        field: &field,
+                        op: typed_op,
+                        value: &f.value,
+                    },
+                    type_id: type_id.clone(),
+                };
+                let typed = handler.lower(&mut ctx)?;
+                preds.push(FilterExpression::Typed(typed));
+            }
+        }
     }
     Ok(Some(if preds.len() == 1 {
         preds.pop().expect("len checked")
@@ -154,6 +215,28 @@ fn lower_op(op: d::FilterOp) -> ComparisonOp {
         d::FilterOp::StartsWith => ComparisonOp::StartsWith,
         d::FilterOp::EndsWith => ComparisonOp::EndsWith,
     }
+}
+
+/// Parse a typed-op string. Supports the snake_case form used in the
+/// DSL (`search`, `hybrid_search`, `near`, …) as well as the plain ops
+/// — handlers can opt into reusing them.
+fn parse_typed_op(s: &str) -> Option<TypedOp> {
+    Some(match s {
+        "eq" => TypedOp::Eq,
+        "neq" => TypedOp::Neq,
+        "gt" => TypedOp::Gt,
+        "gte" => TypedOp::Gte,
+        "lt" => TypedOp::Lt,
+        "lte" => TypedOp::Lte,
+        "in" => TypedOp::In,
+        "contains" => TypedOp::Contains,
+        "starts_with" => TypedOp::StartsWith,
+        "ends_with" => TypedOp::EndsWith,
+        "search" => TypedOp::Search,
+        "hybrid_search" | "hybrid" => TypedOp::HybridSearch,
+        "near" => TypedOp::Near,
+        _ => return None,
+    })
 }
 
 fn lower_returns(

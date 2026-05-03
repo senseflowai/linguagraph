@@ -18,6 +18,7 @@ fn cfg() -> Config {
             uri: "bolt://test".into(),
             user: "u".into(),
             password: "p".into(),
+            database: "memgraph".into(),
             max_connections: 1,
             query_timeout_secs: 5,
         },
@@ -26,6 +27,8 @@ fn cfg() -> Config {
             max_traversal_depth: 4,
             default_limit: 50,
         },
+        metadata: Default::default(),
+        types: Default::default(),
     }
 }
 

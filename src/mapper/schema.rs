@@ -50,6 +50,12 @@ pub struct PropertyMapping {
     pub source_path: String,
     #[serde(default)]
     pub description: Option<String>,
+    /// Optional type tag matching a registered [`crate::types::TypeHandler`]
+    /// (e.g. `"SemanticText"`). When present, ingestion delegates the
+    /// property to the handler — which may rewrite the value, drop it,
+    /// or queue side effects (embeddings, geo indexing, …).
+    #[serde(default, rename = "type", skip_serializing_if = "Option::is_none")]
+    pub field_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

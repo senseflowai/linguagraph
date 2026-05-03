@@ -3,9 +3,11 @@
 use thiserror::Error;
 
 use crate::ast::query::*;
+use crate::types::TypeRegistry;
 
 use super::cursor::{Cursor, CypherQuery};
 use super::insert::{build_insert, InsertError};
+use super::where_part::WhereError;
 use super::{match_part, return_part, where_part};
 
 #[derive(Debug, Error)]
@@ -15,44 +17,85 @@ pub enum BuilderError {
 
     #[error("insert builder error: {0}")]
     Insert(#[from] InsertError),
+
+    #[error("where clause error: {0}")]
+    Where(#[from] WhereError),
 }
 
-/// Compile a [`ReadQuery`] into a single parameterized [`CypherQuery`].
+/// Compile a [`ReadQuery`] into a single parameterized [`CypherQuery`]
+/// without any registered type handlers. Suitable for queries that are
+/// known to be untyped.
 pub fn build_read(query: &ReadQuery) -> Result<CypherQuery, BuilderError> {
+    build_read_with(query, &TypeRegistry::empty())
+}
+
+/// Compile a [`ReadQuery`] using `registry` to resolve typed
+/// predicates. The registry is consulted exactly once per
+/// [`FilterExpression::Typed`] node.
+pub fn build_read_with(
+    query: &ReadQuery,
+    registry: &TypeRegistry,
+) -> Result<CypherQuery, BuilderError> {
     if query.returns.is_empty() {
         return Err(BuilderError::EmptyReturn);
     }
 
     let mut cur = Cursor::new();
 
+    // ── Phase 1: MATCH + WHERE (collects type contributions). ─────────
     match_part::write_match(&mut cur, query);
     if let Some(filter) = &query.filter {
-        where_part::write_where(&mut cur, filter);
+        where_part::write_where(&mut cur, filter, registry)?;
     }
+
+    // ── Phase 2: post-match handler fragments. Spliced after WHERE
+    //    so they can reference the matched aliases (e.g. CASE WHEN
+    //    n.name = $q THEN 1.0 ELSE 0.0 ; CALL qlink.score_batch_node).
+    if !cur.post_match.is_empty() {
+        let frags = cur.post_match.drain(..).collect::<Vec<_>>();
+        cur.buf.push('\n');
+        cur.buf.push_str(&frags.join("\n"));
+    }
+
+    // ── Phase 3: RETURN. ──────────────────────────────────────────────
     return_part::write_return(&mut cur, query);
-    return_part::write_order_by(&mut cur, &query.sort);
+
+    // ── Phase 4: ORDER BY (user's keys first, then handler extras). ──
+    return_part::write_order_by_with_extra(&mut cur, &query.sort);
+
+    // ── Phase 5: LIMIT. ───────────────────────────────────────────────
     if let Some(limit) = query.limit {
         return_part::write_limit(&mut cur, limit);
+    }
+
+    // ── Phase 6: pre-match. Spliced at the very top so it runs
+    //    before MATCH (e.g. `CALL qlink.search(...) YIELD id, score`).
+    if !cur.pre_match.is_empty() {
+        let mut pre = cur.pre_match.drain(..).collect::<Vec<_>>().join("\n");
+        pre.push('\n');
+        cur.buf = format!("{pre}{}", cur.buf);
     }
 
     Ok(cur.finish())
 }
 
 /// Backwards-compatible alias for [`build_read`].
-///
-/// Existing call sites that operate on the read AST continue to compile;
-/// new code that holds a [`Query`] enum should use [`build`].
 pub fn build(query: &ReadQuery) -> Result<CypherQuery, BuilderError> {
     build_read(query)
 }
 
-/// Compile any [`Query`] variant.
-///
-/// Reads return a single batch; inserts return one batch per node-/relation-
-/// batch in the [`InsertQuery`].
+/// Compile any [`Query`] variant with no registered handlers.
 pub fn compile(query: &Query) -> Result<Vec<CypherQuery>, BuilderError> {
+    compile_with(query, &TypeRegistry::empty())
+}
+
+/// Compile any [`Query`] variant using `registry`.
+pub fn compile_with(
+    query: &Query,
+    registry: &TypeRegistry,
+) -> Result<Vec<CypherQuery>, BuilderError> {
     match query {
-        Query::Read(r) => Ok(vec![build_read(r)?]),
+        Query::Read(r) => Ok(vec![build_read_with(r, registry)?]),
         Query::Insert(i) => Ok(build_insert(i)?),
     }
 }

@@ -14,5 +14,6 @@ mod return_part;
 mod where_part;
 
 pub use cursor::CypherQuery;
-pub use cypher::{build, build_read, compile, BuilderError};
+pub use cypher::{build, build_read, build_read_with, compile, compile_with, BuilderError};
 pub use insert::{build_insert, InsertError};
+pub use where_part::WhereError;

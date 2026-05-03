@@ -4,6 +4,8 @@ mod loader;
 
 pub use loader::{load, load_from_str, ConfigError};
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,6 +17,12 @@ pub struct Config {
     pub query: QueryConfig,
     #[serde(default)]
     pub metadata: MetadataConfig,
+    /// Per-type configuration. Each `[types.<TypeId>]` block becomes one
+    /// entry in this map and is read by the corresponding handler at
+    /// registry-build time. The map is open-ended on purpose —
+    /// adding a new type does not require touching this struct.
+    #[serde(default)]
+    pub types: BTreeMap<String, TypeConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,11 +30,16 @@ pub struct DatabaseConfig {
     pub uri: String,
     pub user: String,
     pub password: String,
+    #[serde(default = "default_database_name")]
     pub database: String,
     #[serde(default = "default_max_connections")]
     pub max_connections: u32,
     #[serde(default = "default_query_timeout")]
     pub query_timeout_secs: u64,
+}
+
+fn default_database_name() -> String {
+    "memgraph".into()
 }
 
 fn default_max_connections() -> u32 {
@@ -107,4 +120,30 @@ impl Default for MetadataConfig {
 
 fn default_metadata_path() -> String {
     ".linguagraph/property_metadata.json".into()
+}
+
+/// Open-ended per-type configuration block.
+///
+/// Handlers read whichever fields they care about and ignore the rest;
+/// `extra` collects unknown fields so handlers added later can still
+/// pick up values from the same TOML file without a config-schema bump.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TypeConfig {
+    /// Path to a model file (used by the SemanticText handler for the
+    /// embedding model, available to others as needed).
+    #[serde(default)]
+    pub embedding_model: Option<String>,
+    /// Default qlink/Qdrant collection name.
+    #[serde(default)]
+    pub collection: Option<String>,
+    /// Top-K to request from vector search.
+    #[serde(default)]
+    pub top_k: Option<u32>,
+    /// Embedding dimension hint, used when no real model is loaded
+    /// (e.g. for the mock embedder in tests).
+    #[serde(default)]
+    pub embedding_dim: Option<usize>,
+    /// Anything else the handler wants to read.
+    #[serde(flatten, default)]
+    pub extra: BTreeMap<String, toml::Value>,
 }

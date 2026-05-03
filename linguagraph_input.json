@@ -4,25 +4,20 @@
     "label": "Company",
     "alias": "c"
   },
+  "traversals": [],
   "filters": [
     {
       "field": "c.name",
-      "op": "eq",
-      "value": "Apple"
+      "type": "SemanticText",
+      "op": "search",
+      "value": "Черри Роботикс"
     }
   ],
   "return": [
     {
-      "field": "c.name",
-      "alias": "name"
-    },
-    {
       "field": "c.description",
       "alias": "description"
-    },
-    {
-      "field": "c.industry",
-      "alias": "industry"
     }
-  ]
+  ],
+  "limit": 1
 }

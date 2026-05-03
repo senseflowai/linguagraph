@@ -398,7 +398,7 @@ fn untyped_dsl_filter_auto_resolves_to_semantic_text_via_metadata() {
     .unwrap();
     let cypher = pipeline.compile(dsl_query).unwrap();
     assert!(
-        cypher.text.contains("CALL qlink.search"),
+        cypher.text.contains("libqlink.search"),
         "auto-resolved SemanticText should compile to qlink.search; got:\n{}",
         cypher.text
     );
@@ -493,7 +493,7 @@ fn metadata_lookup_keys_off_label_not_alias() {
         }"#,
     )
     .unwrap();
-    assert!(pipeline.compile(q).unwrap().text.contains("qlink.search"));
+    assert!(pipeline.compile(q).unwrap().text.contains("libqlink.search"));
 
     // Filter on Person.name -> plain (and `search` is not a valid plain
     // op, so this must error rather than silently routing to a wrong
@@ -546,7 +546,7 @@ async fn ingest_refreshes_in_memory_metadata_snapshot() {
         }"#,
     )
     .unwrap();
-    assert!(pipeline.compile(q).unwrap().text.contains("qlink.search"));
+    assert!(pipeline.compile(q).unwrap().text.contains("libqlink.search"));
 }
 
 #[test]

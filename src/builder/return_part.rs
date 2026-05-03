@@ -51,7 +51,14 @@ fn render_return(item: &ReturnClause) -> String {
         ReturnClause::Aggregate { func, field, alias } => {
             let inner = render_property(field);
             let call = match func {
-                AggregateFn::Count => format!("count({inner})"),
+                // AggregateFn::Count => {
+                //     let v = inner.split('.').next();
+                //     format!("count({})", v.unwrap_or(inner.as_str()))
+                // },
+                AggregateFn::Count => {
+                    let v = inner.split('.').next();
+                    format!("count({})", v.unwrap_or(inner.as_str()))
+                },
                 AggregateFn::Sum => format!("sum({inner})"),
                 AggregateFn::Avg => format!("avg({inner})"),
                 AggregateFn::Min => format!("min({inner})"),

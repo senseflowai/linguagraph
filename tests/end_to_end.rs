@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use linguagraph::config::{Config, DatabaseConfig, LlmConfig, QueryConfig};
+use linguagraph::config::{Config, DatabaseConfig, LlmConfig, MetadataConfig, QueryConfig};
 use linguagraph::core::Pipeline;
 use linguagraph::db::{MockClient, QueryResult, Row, Value};
 use linguagraph::dsl;
@@ -14,6 +14,7 @@ fn test_config() -> Config {
             uri: "bolt://test".into(),
             user: "u".into(),
             password: "p".into(),
+            database: "memgraph".into(),
             max_connections: 1,
             query_timeout_secs: 5,
         },
@@ -22,6 +23,7 @@ fn test_config() -> Config {
             max_traversal_depth: 4,
             default_limit: 50,
         },
+        metadata: MetadataConfig::default()
     }
 }
 

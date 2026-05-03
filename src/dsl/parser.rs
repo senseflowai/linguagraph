@@ -84,24 +84,20 @@ fn validate(q: &DslQuery) -> Result<(), DslError> {
 
     for f in &q.filters {
         check_field_ref(&f.field)?;
-        // Untyped filters must use one of the built-in ops. Typed
-        // filters defer op validation to the registered handler at
-        // lowering time — the parser only checks the op is a non-empty
-        // identifier-shaped string.
-        match &f.field_type {
-            None => {
-                if FilterOp::parse(&f.op).is_none() {
-                    return Err(DslError::UnknownOp(f.op.clone()));
-                }
-            }
-            Some(ty) => {
-                check_identifier(ty)?;
-                if f.op.is_empty()
-                    || !f.op.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-                {
-                    return Err(DslError::UnknownOp(f.op.clone()));
-                }
-            }
+        // Op validation is deferred to the lowering step, which has
+        // both the registry and the property metadata at hand. The
+        // parser only checks the op is identifier-shaped — anything
+        // beyond that requires knowing whether the filter ends up
+        // typed (handler ops) or untyped (plain ops). The lowerer
+        // returns a precise `UnknownPlainOp` / `UnsupportedTypedOp`
+        // when the resolved op is invalid.
+        if f.op.is_empty()
+            || !f.op.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            return Err(DslError::UnknownOp(f.op.clone()));
+        }
+        if let Some(ty) = &f.field_type {
+            check_identifier(ty)?;
         }
     }
 

@@ -159,11 +159,25 @@ fn render_props(
     let inner: Vec<String> = props
         .iter()
         .map(|p| {
-            let base = format!("{}: {}", p.name, format_ty(p.ty));
-            match meta.and_then(|m| m.get(&format!("{owner}.{}", p.name))) {
-                Some(d) => format!("{base} /* {d} */"),
-                None => base,
+            let key = format!("{owner}.{}", p.name);
+            let info = meta.and_then(|m| m.info(&key));
+            // Property header shape:
+            //   <name>: <scalar-ty>                       (untyped, undocumented)
+            //   <name>: <scalar-ty> @<FieldType>           (typed, e.g. SemanticText)
+            //   <name>: <scalar-ty> /* description */      (documented only)
+            //   <name>: <scalar-ty> @<FieldType> /* … */   (both)
+            //
+            // The `@SemanticText` marker tells the LLM it can omit the
+            // explicit `"type"` tag in DSL filters — the lowering step
+            // will resolve the handler from the same metadata.
+            let mut base = format!("{}: {}", p.name, format_ty(p.ty));
+            if let Some(ty) = info.and_then(|i| i.field_type.as_deref()) {
+                base = format!("{base} @{ty}");
             }
+            if let Some(desc) = info.and_then(|i| i.description.as_deref()) {
+                base = format!("{base} /* {desc} */");
+            }
+            base
         })
         .collect();
     format!(" {{ {} }}", inner.join(", "))

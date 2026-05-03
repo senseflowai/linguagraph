@@ -13,8 +13,10 @@ use crate::embeddings::SharedEmbedder;
 use crate::error::Result;
 use crate::ingest::{self, IngestError, PlannerOptions};
 use crate::mapper::{self, Mapping};
-use crate::metadata::{self, MetadataStore};
+use crate::metadata::{self, MetadataStore, PropertyMetadata};
 use crate::types::{SharedRegistry, SideEffect, SideEffectQueue, TypeRegistry};
+
+use std::sync::RwLock;
 
 /// High-level entrypoint used by the CLI and library consumers.
 ///
@@ -36,6 +38,12 @@ pub struct Pipeline {
     /// pipeline). Optional: when not configured, queries that reference
     /// types requiring an embedder fail at lowering time, not at ingest.
     embedder: Option<SharedEmbedder>,
+    /// In-memory snapshot of [`PropertyMetadata`] consulted by
+    /// [`Self::lower`] to auto-resolve filter types when the DSL omits
+    /// `"type"`. Wrapped in an `RwLock` so a successful [`Self::ingest`]
+    /// can refresh it without taking `&mut self` (the pipeline is
+    /// passed around as `&self` everywhere).
+    metadata: Arc<RwLock<Option<Arc<PropertyMetadata>>>>,
 }
 
 impl std::fmt::Debug for Pipeline {
@@ -73,6 +81,7 @@ impl Pipeline {
             metadata_store: None,
             registry: Arc::new(TypeRegistry::empty()),
             embedder: None,
+            metadata: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -115,11 +124,47 @@ impl Pipeline {
         self
     }
 
+    /// Pre-load the metadata snapshot used to auto-resolve filter
+    /// types. Pass a snapshot you already have (typically obtained via
+    /// `MetadataStore::load` at startup); pairs cleanly with
+    /// [`Self::with_metadata_store`] for the write-back side.
+    pub fn with_metadata(self, meta: Arc<PropertyMetadata>) -> Self {
+        *self.metadata.write().expect("metadata lock poisoned") = Some(meta);
+        self
+    }
+
+    /// Eagerly load the metadata snapshot from the configured store.
+    /// No-op when no store is set. Intended to be called at startup so
+    /// the first query benefits from auto-typed filters.
+    pub async fn load_metadata(&self) -> Result<()> {
+        if let Some(store) = &self.metadata_store {
+            let m = store.load().await?;
+            *self.metadata.write().expect("metadata lock poisoned") = Some(Arc::new(m));
+        }
+        Ok(())
+    }
+
+    /// Snapshot of the metadata currently informing query lowering.
+    pub fn metadata(&self) -> Option<Arc<PropertyMetadata>> {
+        self.metadata.read().expect("metadata lock poisoned").clone()
+    }
+
     // ── Read path ───────────────────────────────────────────────────────────
 
     /// Lower a DSL document to the typed AST. Pure; no I/O.
+    ///
+    /// When a [`PropertyMetadata`] snapshot is loaded, filters that
+    /// omit `"type"` are auto-resolved against it: if the property's
+    /// type is `SemanticText`, the SemanticText handler is selected
+    /// without any DSL change.
     pub fn lower(&self, dsl: DslQuery) -> Result<ReadQuery> {
-        let mut q = from_dsl::lower_with_registry(dsl, self.max_depth, &self.registry)?;
+        let meta_snapshot = self.metadata();
+        let mut q = from_dsl::lower_full(
+            dsl,
+            self.max_depth,
+            &self.registry,
+            meta_snapshot.as_deref(),
+        )?;
         if q.limit.is_none() {
             q.limit = Some(self.default_limit);
         }
@@ -208,14 +253,28 @@ impl Pipeline {
         // (collection, label) group — never per-row.
         let (se_batches, se_rows) = self.drain_side_effects(effects).await?;
 
-        // Refresh property metadata from the mapping. This runs after the
-        // graph writes succeed so a failed ingest doesn't leave the cache
-        // describing data that never landed.
-        if let Some(store) = &self.metadata_store {
-            let incoming = metadata::collect_from_mapping(mapping);
-            if !incoming.is_empty() {
-                store.update(&incoming).await?;
-            }
+        // Refresh property metadata from the mapping. This runs after
+        // the graph writes succeed so a failed ingest doesn't leave the
+        // cache describing data that never landed.
+        //
+        // The persisted snapshot is also re-mirrored into the
+        // pipeline's in-memory cache so subsequent queries auto-resolve
+        // typed filters against the freshest mapping without an extra
+        // `load_metadata()` call.
+        let incoming = metadata::collect_from_mapping(mapping);
+        if !incoming.is_empty() {
+            let merged = if let Some(store) = &self.metadata_store {
+                store.update(&incoming).await?
+            } else {
+                // No persistent store: still keep an in-memory snapshot
+                // by merging into whatever was previously loaded so
+                // subsequent queries see typed-property hints.
+                let mut current = self.metadata().map(|a| (*a).clone()).unwrap_or_default();
+                current.merge(&incoming);
+                current
+            };
+            *self.metadata.write().expect("metadata lock poisoned") =
+                Some(Arc::new(merged));
         }
 
         Ok(IngestSummary {

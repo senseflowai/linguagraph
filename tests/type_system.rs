@@ -26,6 +26,7 @@ use linguagraph::db::MockClient;
 use linguagraph::dsl;
 use linguagraph::embeddings::{MockEmbedder, SharedEmbedder};
 use linguagraph::mapper::Mapping;
+use linguagraph::metadata::{collect_from_mapping, PropertyMetadata};
 use linguagraph::types::{
     handlers::{SemanticTextConfig, SemanticTextHandler},
     RegistryBuilder, SharedRegistry, TypeId, TypeRegistry,
@@ -334,4 +335,248 @@ fn plain_filters_remain_untyped_and_compile_without_registry() {
     let cypher = pipeline.compile(dsl_query).unwrap();
     assert!(cypher.text.contains("WHERE c.industry = $p0"));
     assert!(!cypher.text.contains("qlink"));
+}
+
+// ─── Auto-resolution from PropertyMetadata ──────────────────────────────
+//
+// When the DSL omits `"type"` but the property metadata declares one,
+// the lowering step should pick up the type from the metadata snapshot
+// and route the filter through the matching handler.
+
+fn semantic_mapping() -> Mapping {
+    serde_json::from_value(json!({
+        "entities": [{
+            "type": "Company",
+            "source_path": "$.companies[*]",
+            "primary_key": "$.companies[*].id",
+            "properties": [
+                {"name": "id",   "source_path": "$.companies[*].id"},
+                {
+                    "name": "name",
+                    "source_path": "$.companies[*].name",
+                    "type": "SemanticText",
+                    "description": "the company name"
+                },
+                {"name": "industry", "source_path": "$.companies[*].industry"}
+            ]
+        }]
+    }))
+    .unwrap()
+}
+
+#[test]
+fn metadata_round_trips_field_types() {
+    let mapping = semantic_mapping();
+    let meta = collect_from_mapping(&mapping);
+    assert_eq!(meta.get_type("Company.name"), Some("SemanticText"));
+    assert_eq!(meta.get("Company.name"), Some("the company name"));
+    assert_eq!(meta.get_type("Company.industry"), None);
+}
+
+#[test]
+fn untyped_dsl_filter_auto_resolves_to_semantic_text_via_metadata() {
+    let cfg = cfg_with_semantic_text();
+    let (registry, embedder) = registry_and_embedder();
+    let meta = Arc::new(collect_from_mapping(&semantic_mapping()));
+    let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg)
+        .with_registry(registry)
+        .with_embedder(embedder)
+        .with_metadata(meta);
+
+    // Notice the DSL has NO `"type"` field — the handler is selected
+    // from PropertyMetadata.
+    let dsl_query = dsl::parse_str(
+        r#"{
+            "action": "find",
+            "start": { "label": "Company", "alias": "c" },
+            "filters": [
+                { "field": "c.name", "op": "search", "value": "apple" }
+            ],
+            "return": [{ "field": "c.name", "alias": "name" }]
+        }"#,
+    )
+    .unwrap();
+    let cypher = pipeline.compile(dsl_query).unwrap();
+    assert!(
+        cypher.text.contains("CALL qlink.search"),
+        "auto-resolved SemanticText should compile to qlink.search; got:\n{}",
+        cypher.text
+    );
+}
+
+#[test]
+fn explicit_dsl_type_overrides_metadata() {
+    // The mapping doesn't tag `c.industry` with any type, but the DSL
+    // does — explicit always wins over the inferred metadata value.
+    // Conversely, when an explicit type *is* set we must not silently
+    // fall back to the metadata's type for the same field.
+    let cfg = cfg_with_semantic_text();
+    let (registry, embedder) = registry_and_embedder();
+    let mut meta = collect_from_mapping(&semantic_mapping());
+    // Pretend metadata thought industry was Keyword (a non-registered
+    // type) — DSL explicit `SemanticText` should win.
+    meta.insert_type("Company.industry", "Keyword");
+    let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg)
+        .with_registry(registry)
+        .with_embedder(embedder)
+        .with_metadata(Arc::new(meta));
+
+    let dsl_query = dsl::parse_str(
+        r#"{
+            "action": "find",
+            "start": { "label": "Company", "alias": "c" },
+            "filters": [
+                { "field": "c.industry", "type": "SemanticText",
+                  "op": "eq", "value": "tech" }
+            ],
+            "return": [{ "field": "c.industry" }]
+        }"#,
+    )
+    .unwrap();
+    // Compiles cleanly via the explicit SemanticText handler.
+    let cypher = pipeline.compile(dsl_query).unwrap();
+    assert!(cypher.text.contains("c.industry = $p0"));
+}
+
+#[test]
+fn untyped_field_without_metadata_stays_plain() {
+    let cfg = cfg_with_semantic_text();
+    let (registry, embedder) = registry_and_embedder();
+    let meta = Arc::new(collect_from_mapping(&semantic_mapping()));
+    let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg)
+        .with_registry(registry)
+        .with_embedder(embedder)
+        .with_metadata(meta);
+
+    // industry has no type tag in the mapping — should compile as a
+    // plain WHERE clause, never touch qlink.
+    let dsl_query = dsl::parse_str(
+        r#"{
+            "action": "find",
+            "start": { "label": "Company", "alias": "c" },
+            "filters": [
+                { "field": "c.industry", "op": "eq", "value": "tech" }
+            ],
+            "return": [{ "field": "c.name" }]
+        }"#,
+    )
+    .unwrap();
+    let cypher = pipeline.compile(dsl_query).unwrap();
+    assert!(cypher.text.contains("WHERE c.industry = $p0"));
+    assert!(!cypher.text.contains("qlink"));
+}
+
+#[test]
+fn metadata_lookup_keys_off_label_not_alias() {
+    // Same property name on different labels must resolve independently.
+    // Here `c` is bound to `Company` and `p` to `Person`. Only
+    // `Company.name` is SemanticText.
+    let cfg = cfg_with_semantic_text();
+    let (registry, embedder) = registry_and_embedder();
+    let mut meta = PropertyMetadata::new();
+    meta.insert_type("Company.name", "SemanticText");
+    // Person.name is left plain.
+    let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg)
+        .with_registry(registry)
+        .with_embedder(embedder)
+        .with_metadata(Arc::new(meta));
+
+    // Filter on Company.name -> auto SemanticText.
+    let q = dsl::parse_str(
+        r#"{
+            "action": "find",
+            "start": { "label": "Company", "alias": "c" },
+            "filters": [
+                { "field": "c.name", "op": "search", "value": "apple" }
+            ],
+            "return": [{ "field": "c.name" }]
+        }"#,
+    )
+    .unwrap();
+    assert!(pipeline.compile(q).unwrap().text.contains("qlink.search"));
+
+    // Filter on Person.name -> plain (and `search` is not a valid plain
+    // op, so this must error rather than silently routing to a wrong
+    // handler).
+    let q = dsl::parse_str(
+        r#"{
+            "action": "find",
+            "start": { "label": "Person", "alias": "p" },
+            "filters": [
+                { "field": "p.name", "op": "search", "value": "apple" }
+            ],
+            "return": [{ "field": "p.name" }]
+        }"#,
+    )
+    .unwrap();
+    let err = pipeline.compile(q).unwrap_err();
+    let msg = format!("{err}");
+    assert!(msg.contains("UnknownPlainOp") || msg.contains("search"));
+}
+
+#[tokio::test]
+async fn ingest_refreshes_in_memory_metadata_snapshot() {
+    // Before ingest the pipeline has no metadata snapshot — so a typed
+    // DSL without `"type"` falls through to plain ops. After ingest it
+    // *does* have one, and the same DSL auto-resolves.
+    let cfg = cfg_with_semantic_text();
+    let (registry, embedder) = registry_and_embedder();
+    let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg)
+        .with_registry(registry)
+        .with_embedder(embedder);
+
+    let mapping = semantic_mapping();
+    let data = json!({
+        "companies": [{"id": "c1", "name": "Apple Inc.", "industry": "tech"}]
+    });
+    pipeline.ingest(&mapping, &data).await.unwrap();
+
+    // Now the in-memory snapshot has `Company.name → SemanticText`.
+    let meta = pipeline.metadata().expect("snapshot refreshed by ingest");
+    assert_eq!(meta.get_type("Company.name"), Some("SemanticText"));
+
+    let q = dsl::parse_str(
+        r#"{
+            "action": "find",
+            "start": { "label": "Company", "alias": "c" },
+            "filters": [
+                { "field": "c.name", "op": "search", "value": "apple" }
+            ],
+            "return": [{ "field": "c.name" }]
+        }"#,
+    )
+    .unwrap();
+    assert!(pipeline.compile(q).unwrap().text.contains("qlink.search"));
+}
+
+#[test]
+fn prompt_surfaces_field_type_marker() {
+    use linguagraph::prompt::{
+        generate_system_prompt, GraphSchema, NodeKind, Property, PromptOptions, PropertyType,
+    };
+    let schema = GraphSchema {
+        nodes: vec![NodeKind {
+            label: "Company".into(),
+            properties: vec![
+                Property { name: "id".into(), ty: PropertyType::String },
+                Property { name: "name".into(), ty: PropertyType::String },
+            ],
+        }],
+        relationships: vec![],
+    };
+    let mut meta = PropertyMetadata::new();
+    meta.insert("Company.name", "the company name");
+    meta.insert_type("Company.name", "SemanticText");
+    let prompt = generate_system_prompt(
+        &schema,
+        &PromptOptions {
+            property_metadata: Some(meta),
+            include_examples: false,
+            ..Default::default()
+        },
+    );
+    assert!(
+        prompt.contains("name: string @SemanticText /* the company name */"),
+        "prompt should annotate typed properties; got:\n{prompt}"
+    );
 }

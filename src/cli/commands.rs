@@ -176,11 +176,19 @@ async fn cmd_dsl(path: PathBuf) -> Result<()> {
 async fn cmd_cypher(config_path: &std::path::Path, path: PathBuf) -> Result<()> {
     let cfg = load_config_or_default(config_path).await;
     let (registry, embedder) = build_registry(&cfg)?;
+    // Load the metadata snapshot so a DSL filter like
+    // `{"field": "c.name", "op": "search", ...}` resolves to the
+    // SemanticText handler automatically when the cached mapping
+    // tagged `Company.name` as such — no `"type"` needed in the DSL.
+    let meta_store: Arc<dyn MetadataStore> =
+        Arc::new(FileMetadataStore::new(&cfg.metadata.cache_path));
     let mut pipeline = Pipeline::new(Arc::new(crate::db::MockClient::new()), &cfg)
-        .with_registry(registry);
+        .with_registry(registry)
+        .with_metadata_store(meta_store);
     if let Some(e) = embedder {
         pipeline = pipeline.with_embedder(e);
     }
+    pipeline.load_metadata().await?;
     let dsl_query = dsl::parse(&path).await?;
     let cypher = pipeline.compile(dsl_query)?;
     println!("-- Cypher --\n{}", cypher.text);
@@ -201,10 +209,15 @@ async fn cmd_run(config_path: &std::path::Path, path: PathBuf) -> Result<()> {
     let cfg = config::load(config_path).await?;
     let client = MemgraphClient::connect(&cfg.database).await?;
     let (registry, embedder) = build_registry(&cfg)?;
-    let mut pipeline = Pipeline::new(Arc::new(client), &cfg).with_registry(registry);
+    let meta_store: Arc<dyn MetadataStore> =
+        Arc::new(FileMetadataStore::new(&cfg.metadata.cache_path));
+    let mut pipeline = Pipeline::new(Arc::new(client), &cfg)
+        .with_registry(registry)
+        .with_metadata_store(meta_store);
     if let Some(e) = embedder {
         pipeline = pipeline.with_embedder(e);
     }
+    pipeline.load_metadata().await?;
     let dsl_query = dsl::parse(&path).await?;
     let result = pipeline.run(dsl_query).await?;
     println!("{}", serde_json::to_string_pretty(&result)?);

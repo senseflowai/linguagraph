@@ -188,6 +188,7 @@ const DSL_RULES: &str = r#"Output a single JSON object with this shape:
   "start":  { "label": <NodeLabel>, "alias": <ident> },
   "traversals": [
     {
+      "from":   <ident>,
       "edge":   { "label": <RelLabel>, "alias": <ident>, "direction": "out"|"in"|"both" },
       "target": { "label": <NodeLabel>, "alias": <ident> },
       "depth":  { "min": <int>, "max": <int> }   // optional
@@ -213,6 +214,7 @@ Constraints:
 - "aggregate" queries that mix aggregated and non-aggregated columns must list the
   non-aggregated columns in `group_by`.
 - Never embed user-supplied values in identifiers; values go in `filters[*].value`.
+- Explicitly specify in `traversals[*].from` where the relation should be created .
 "#;
 
 const EXAMPLES: &str = r#"User: "Show me people over 30 who know someone in Berlin."
@@ -238,7 +240,8 @@ Assistant:
   "action": "aggregate",
   "start": { "label": "Customer", "alias": "c" },
   "traversals": [
-    { "edge": { "label": "PLACED", "alias": "po", "direction": "out" },
+    { "from": "c",
+      "edge": { "label": "PLACED", "alias": "po", "direction": "out" },
       "target": { "label": "Order", "alias": "o" } }
   ],
   "filters": [{ "field": "o.status", "op": "eq", "value": "completed" }],

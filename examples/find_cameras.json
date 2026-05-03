@@ -3,15 +3,19 @@
   "start": { "label": "Camera", "alias": "c" },
   "traversals": [
     {
-      "edge": { "label": "HAS_SOURCE", "alias": "hs", "direction": "out" },
-      "target": { "label": "Source", "alias": "s" }
+      "edge": { "label": "LOCATED_IN", "alias": "loc", "direction": "out" },
+      "target": { "label": "Place", "alias": "p" }
+    },
+    {
+      "edge": { "label": "LOCATED_IN", "alias": "loc2", "direction": "out" },
+      "target": { "label": "Location", "alias": "l" }
     }
   ],
   "filters": [
-    { "field": "c.name", "op": "eq", "value": "zTargetAI - 324 RoomFace" }
+    { "field": "l.name", "op": "eq", "value": "Алмата" }
   ],
   "return": [
-    { "field": "s.url", "alias": "url" }
-  ],
-  "limit": 1
+    { "field": "c.id", "alias": "camera_id" },
+    { "field": "c.name", "alias": "camera_name" }
+  ]
 }

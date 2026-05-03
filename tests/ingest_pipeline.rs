@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use linguagraph::ast::query::Literal;
-use linguagraph::config::{Config, DatabaseConfig, LlmConfig, QueryConfig};
+use linguagraph::config::{Config, DatabaseConfig, LlmConfig, MetadataConfig, QueryConfig};
 use linguagraph::core::Pipeline;
 use linguagraph::db::MockClient;
 use linguagraph::ingest;

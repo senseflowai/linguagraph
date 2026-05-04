@@ -234,6 +234,7 @@ fn lower_filters(
                         op: f.op.clone(),
                     });
                 }
+                let field_label = alias_labels.get(field.alias.as_str()).map(String::as_str);
                 let mut ctx = LowerCtx {
                     raw: RawTypedFilter {
                         field: &field,
@@ -241,6 +242,7 @@ fn lower_filters(
                         value: &f.value,
                     },
                     type_id: type_id.clone(),
+                    field_label,
                 };
                 let typed = handler.lower(&mut ctx)?;
                 preds.push(FilterExpression::Typed(typed));

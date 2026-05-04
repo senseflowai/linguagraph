@@ -40,10 +40,11 @@ fn cfg_with_semantic_text() -> Config {
             embedding_model: None,
             collection: Some("companies".into()),
             top_k: Some(10),
-            // Pin threshold to a recognisable value so the
-            // end-to-end tests can assert it flows through
+            // Pin both thresholds to recognisable values so the
+            // end-to-end tests can assert they flow through
             // unchanged from config to bound parameter.
-            threshold: Some(0.75),
+            threshold: Some(0.75),           // cosine, stage 1
+            reranker_threshold: Some(0.42),  // reranker, stage 2
             embedding_dim: Some(8),
             extra: Default::default(),
         },
@@ -138,12 +139,14 @@ async fn semantic_ingest_runs_qlink_insert_after_memgraph_batches() {
     assert_eq!(summary.side_effect_rows, 2);
 
     let captured = client.captured.lock().unwrap();
-    // [0] = Company MERGE, [1..=2] = one qlink.insert per node.
+    // [0] = Company MERGE, [1..=2] = one qlink.insert_labeled per node.
     assert_eq!(captured.len(), 3);
     for qlink_batch in &captured[1..] {
         assert!(
-            qlink_batch.text.contains("CALL libqlink.insert($coll, id(n), $vec)"),
-            "expected per-node qlink.insert; got:\n{}",
+            qlink_batch.text.contains(
+                "CALL libqlink.insert_labeled($coll, id(n), $vec, $label)"
+            ),
+            "expected per-node libqlink.insert_labeled; got:\n{}",
             qlink_batch.text
         );
         assert!(qlink_batch.text.contains("MATCH (n:Company {id: $key})"));
@@ -158,6 +161,12 @@ async fn semantic_ingest_runs_qlink_insert_after_memgraph_batches() {
             qlink_batch.params.get("coll"),
             Some(&Literal::String("companies__name".into())),
             // Per-field collection scope: <configured>__<field_name>.
+        );
+        // The Qdrant payload label matches the Cypher node label,
+        // so search_reranked can filter by it.
+        assert_eq!(
+            qlink_batch.params.get("label"),
+            Some(&Literal::String("Company".into()))
         );
     }
     // Each company gets its own batch, addressed by its own primary key.
@@ -218,26 +227,32 @@ fn semantic_search_compiles_to_qlink_search_call() {
     .unwrap();
     let cypher = pipeline.compile(dsl_query).unwrap();
 
-    // Prelude must come before MATCH and call qlink.search.
+    // Prelude must come before MATCH and call libqlink.search_reranked.
     let lines: Vec<&str> = cypher.text.lines().collect();
     let qlink_idx = lines
         .iter()
-        .position(|l| l.contains("libqlink.search"))
-        .expect("expected libqlink.search in cypher");
+        .position(|l| l.contains("libqlink.search_reranked"))
+        .expect("expected libqlink.search_reranked in cypher");
     let match_idx = lines
         .iter()
         .position(|l| l.starts_with("MATCH"))
         .expect("expected MATCH");
     assert!(
         qlink_idx < match_idx,
-        "libqlink.search prelude must run before the MATCH; got:\n{}",
+        "libqlink.search_reranked prelude must run before the MATCH; got:\n{}",
         cypher.text
     );
 
-    // ORDER BY surfaces the score so closer hits come first.
+    // ORDER BY surfaces the reranker score so closer hits come first.
     assert!(
         cypher.text.contains("ORDER BY") && cypher.text.contains("c__score DESC"),
         "expected ORDER BY c__score DESC; got:\n{}",
+        cypher.text
+    );
+    // search_reranked filters internally — no extra `WHERE c__score >=` slip-in.
+    assert!(
+        !cypher.text.contains("WHERE c__score"),
+        "reranker handles filtering itself; we must not double-filter; got:\n{}",
         cypher.text
     );
 
@@ -249,20 +264,35 @@ fn semantic_search_compiles_to_qlink_search_call() {
     assert!(has_embedding, "expected an 8-dim embedding parameter");
     assert!(!cypher.text.contains("[0."), "embedding leaked into cypher text");
 
-    // The configured threshold (0.75 in cfg_with_semantic_text) is
-    // bound as a Float param and filters the qlink yield before MATCH.
-    assert!(
-        cypher.text.contains("WITH c__qid, c__score WHERE c__score >= $"),
-        "expected score-threshold filter on the libqlink.search yield; got:\n{}",
-        cypher.text
-    );
-    let has_threshold = cypher
+    // The natural-language query is bound as `query_str` for the
+    // reranker — it should round-trip the DSL `value` verbatim.
+    let has_query_str = cypher
         .params
         .values()
-        .any(|v| matches!(v, Literal::Float(f) if (*f - 0.75).abs() < 1e-9));
+        .any(|v| matches!(v, Literal::String(s) if s == "apple"));
+    assert!(has_query_str, "expected 'apple' bound as query_str; params: {:?}", cypher.params);
+    // Label flows through as a Qdrant payload filter.
+    let has_label = cypher
+        .params
+        .values()
+        .any(|v| matches!(v, Literal::String(s) if s == "Company"));
+    assert!(has_label, "expected 'Company' bound as label; params: {:?}", cypher.params);
+
+    // Both configured thresholds (0.75 cosine, 0.42 reranker) flow
+    // through as bound Float params.
+    let floats: Vec<f64> = cypher
+        .params
+        .values()
+        .filter_map(|v| if let Literal::Float(f) = v { Some(*f) } else { None })
+        .collect();
     assert!(
-        has_threshold,
-        "expected configured threshold 0.75 to flow through as a bound Float param; params: {:?}",
+        floats.iter().any(|f| (f - 0.75).abs() < 1e-9),
+        "expected configured search_threshold 0.75; params: {:?}",
+        cypher.params
+    );
+    assert!(
+        floats.iter().any(|f| (f - 0.42).abs() < 1e-9),
+        "expected configured reranker_threshold 0.42; params: {:?}",
         cypher.params
     );
 }
@@ -304,10 +334,9 @@ fn aggregate_with_semantic_search_drops_handler_order_by() {
     .unwrap();
     let cypher = pipeline.compile(dsl_query).unwrap();
 
-    // The `libqlink.search` prelude and the threshold filter still
-    // appear — only the score-based ORDER BY is suppressed.
-    assert!(cypher.text.contains("CALL libqlink.search"));
-    assert!(cypher.text.contains("p__score >= $"));
+    // The `libqlink.search_reranked` prelude is still emitted; only
+    // the score-based ORDER BY is suppressed for aggregates.
+    assert!(cypher.text.contains("CALL libqlink.search_reranked"));
     assert!(
         !cypher.text.contains("ORDER BY p__score"),
         "aggregate queries must not order by an unprojected score column; \

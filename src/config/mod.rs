@@ -139,11 +139,17 @@ pub struct TypeConfig {
     /// Top-K to request from vector search.
     #[serde(default)]
     pub top_k: Option<u32>,
-    /// Minimum similarity score required for a vector-search hit to
-    /// survive. Used by the SemanticText handler to filter
-    /// `libqlink.search` results before they reach the MATCH.
+    /// Minimum cosine similarity required for a vector-search hit
+    /// to survive stage 1 of `libqlink.search_reranked` (the KNN
+    /// pre-filter). Used by the SemanticText handler.
     #[serde(default)]
     pub threshold: Option<f64>,
+    /// Minimum reranker score required for a candidate to appear in
+    /// the final result set of `libqlink.search_reranked`. Reranker
+    /// scores are sigmoid-bounded to `[0, 1]`; sensible defaults sit
+    /// around `0.3`.
+    #[serde(default)]
+    pub reranker_threshold: Option<f64>,
     /// Embedding dimension hint, used when no real model is loaded
     /// (e.g. for the mock embedder in tests).
     #[serde(default)]

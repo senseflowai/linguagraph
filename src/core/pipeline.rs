@@ -375,6 +375,7 @@ fn build_qlink_insert_one(eff: &SideEffect, vec: &[f32]) -> Result<CypherQuery> 
         label,
         key_field,
         key_value,
+        payload_label,
         ..
     } = eff;
 
@@ -397,11 +398,25 @@ fn build_qlink_insert_one(eff: &SideEffect, vec: &[f32]) -> Result<CypherQuery> 
         Literal::List(vec.iter().map(|f| Literal::Float(*f as f64)).collect()),
     );
 
-    let text = format!(
-        "MATCH (n:{label} {{{key_field}: $key}})\n\
-         CALL libqlink.insert($coll, id(n), $vec) YIELD success\n\
-         RETURN count(success) AS inserted",
-    );
+    // When the side effect carries a payload label, use
+    // `libqlink.insert_labeled` so the vector is tagged on the Qdrant
+    // side and downstream `search_reranked` calls can filter by it.
+    // Falling back to plain `libqlink.insert` keeps the path open for
+    // future handlers that don't care about labels.
+    let text = if let Some(plabel) = payload_label {
+        params.insert("label".to_string(), Literal::String(plabel.clone()));
+        format!(
+            "MATCH (n:{label} {{{key_field}: $key}})\n\
+             CALL libqlink.insert_labeled($coll, id(n), $vec, $label) YIELD success\n\
+             RETURN count(success) AS inserted",
+        )
+    } else {
+        format!(
+            "MATCH (n:{label} {{{key_field}: $key}})\n\
+             CALL libqlink.insert($coll, id(n), $vec) YIELD success\n\
+             RETURN count(success) AS inserted",
+        )
+    };
     Ok(CypherQuery::new(text, params))
 }
 

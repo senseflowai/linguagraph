@@ -116,10 +116,18 @@ pub struct RawTypedFilter<'a> {
 }
 
 /// Context for [`super::TypeHandler::lower`].
+///
+/// `field_label` is the graph label of the alias the filter applies
+/// to (e.g. `"Company"` for `c.name` when `c` was bound as
+/// `(c:Company)`). The lowering step looks this up from the AST's
+/// alias→label map. Handlers like SemanticText use it as the qlink
+/// payload filter for `libqlink.search_reranked` so a single
+/// embedding collection can host multiple node labels safely.
 #[derive(Debug)]
 pub struct LowerCtx<'a> {
     pub raw: RawTypedFilter<'a>,
     pub type_id: TypeId,
+    pub field_label: Option<&'a str>,
 }
 
 // ─── Stage 3: AST → Cypher ──────────────────────────────────────────

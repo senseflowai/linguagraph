@@ -18,11 +18,26 @@
 //!
 //! ```toml
 //! [types.SemanticText]
-//! embedding_model = "models/bge-small.gguf"
-//! collection      = "companies"
-//! top_k           = 20
-//! threshold       = 0.8
+//! embedding_model    = "models/bge-small.gguf"
+//! collection         = "companies"
+//! top_k              = 20
+//! threshold          = 0.8   # cosine cutoff for stage-1 KNN retrieval
+//! reranker_threshold = 0.3   # final reranker score cutoff
 //! ```
+//!
+//! ## qlink procedures used
+//!
+//! * **Ingest** — `libqlink.insert_labeled` so each vector carries the
+//!   originating Cypher node label as a Qdrant payload tag. That lets a
+//!   single embedding collection host multiple node labels safely while
+//!   still being addressable by label at query time.
+//! * **Search** — `libqlink.search_reranked` does a label-filtered KNN
+//!   pre-filter (cosine ≥ `search_threshold`), looks up each surviving
+//!   id as a Memgraph node, runs a cross-encoder reranker locally,
+//!   and emits hits whose reranker score is ≥ `reranker_threshold`,
+//!   sorted descending. We hand it the raw natural-language query
+//!   (the DSL filter `value`) and the embedded vector — qlink does
+//!   the rest.
 
 use std::collections::BTreeMap;
 
@@ -37,10 +52,17 @@ use crate::types::{
     TypeId, TypedOp, TypedPredicate,
 };
 
-/// Default minimum similarity score for `libqlink.search` hits. A
-/// modest 0.8 keeps obvious near-duplicates in and aggressively prunes
-/// the long tail; raise it for small corpora, lower it for noisy ones.
+/// Default cosine cutoff for stage-1 retrieval inside
+/// `libqlink.search_reranked`. A modest 0.8 keeps obvious near-
+/// duplicates in and aggressively prunes the long tail; raise it
+/// for small corpora, lower it for noisy ones.
 pub const DEFAULT_SEARCH_THRESHOLD: f64 = 0.8;
+
+/// Default reranker score cutoff for stage-2 of
+/// `libqlink.search_reranked`. Reranker scores are sigmoid-bounded
+/// to `[0, 1]`; values around 0.3 keep recall sane on out-of-the-
+/// box BGE rerankers.
+pub const DEFAULT_RERANKER_THRESHOLD: f64 = 0.3;
 
 /// Configuration for [`SemanticTextHandler`].
 #[derive(Debug, Clone)]
@@ -53,11 +75,17 @@ pub struct SemanticTextConfig {
     /// SemanticText property may override this in its mapping by
     /// providing `collection: <str>` in the type params.
     pub collection: String,
-    /// Number of results returned by `qlink.search`.
+    /// Number of results to fan out from stage-1 KNN. Currently
+    /// informational only — `libqlink.search_reranked` hard-codes
+    /// the stage-1 fan-out internally — but kept on the config so
+    /// the field-types prompt block can still advertise it.
     pub top_k: u32,
-    /// Minimum similarity score required for a `libqlink.search` hit
-    /// to survive. Defaults to [`DEFAULT_SEARCH_THRESHOLD`].
-    pub threshold: f64,
+    /// Cosine threshold for stage-1 KNN retrieval. Defaults to
+    /// [`DEFAULT_SEARCH_THRESHOLD`].
+    pub search_threshold: f64,
+    /// Reranker threshold applied to the cross-encoder score in
+    /// stage 2. Defaults to [`DEFAULT_RERANKER_THRESHOLD`].
+    pub reranker_threshold: f64,
 }
 
 impl SemanticTextConfig {
@@ -66,7 +94,12 @@ impl SemanticTextConfig {
             embedding_model: t.embedding_model.clone(),
             collection: t.collection.clone().unwrap_or_else(|| "semantic_text".into()),
             top_k: t.top_k.unwrap_or(20),
-            threshold: t.threshold.unwrap_or(DEFAULT_SEARCH_THRESHOLD),
+            // `threshold` in TOML refers to the cosine cutoff —
+            // matches what was historically the only knob.
+            search_threshold: t.threshold.unwrap_or(DEFAULT_SEARCH_THRESHOLD),
+            reranker_threshold: t
+                .reranker_threshold
+                .unwrap_or(DEFAULT_RERANKER_THRESHOLD),
         })
     }
 }
@@ -199,19 +232,34 @@ impl TypeHandler for SemanticTextHandler {
             .map_err(|e| TypeError::Embedder(e.to_string()))?;
         let lit_vec = Literal::List(vec.into_iter().map(|f| Literal::Float(f as f64)).collect());
 
+        // The reranker needs both the textual query (used to build the
+        // cross-encoder prompt) AND its embedding (used for stage-1
+        // KNN). The Cypher node label is the qlink payload filter,
+        // matching what `on_ingest` wrote via `insert_labeled`.
+        let label = ctx.field_label.ok_or_else(|| TypeError::Handler(
+            "SemanticText: cannot resolve graph label for field; \
+             alias is not bound to a node/edge in the AST".into(),
+        ))?;
+
         let mut params = BTreeMap::new();
         params.insert("embedding".to_string(), lit_vec);
         params.insert(
             "collection".to_string(),
             Literal::String(collection_for(self, &ctx.raw.field)),
         );
+        params.insert("query_str".to_string(), Literal::String(text.to_string()));
+        params.insert("label".to_string(), Literal::String(label.to_string()));
         params.insert(
             "top_k".to_string(),
             Literal::Int(self.config.top_k as i64),
         );
         params.insert(
-            "threshold".to_string(),
-            Literal::Float(self.config.threshold),
+            "search_threshold".to_string(),
+            Literal::Float(self.config.search_threshold),
+        );
+        params.insert(
+            "reranker_threshold".to_string(),
+            Literal::Float(self.config.reranker_threshold),
         );
 
         Ok(TypedPredicate {
@@ -246,15 +294,19 @@ impl TypeHandler for SemanticTextHandler {
                 ));
                 Ok(())
             }
-            // ── Pure vector search ─────────────────────────────────────
+            // ── Pure vector search via libqlink.search_reranked ───────
             //
-            // Layout: a CALL libqlink.search runs *before* MATCH and
-            // yields `(qid, score)`. We immediately filter the yield by
-            // `score >= $threshold` via a WITH clause so low-confidence
-            // hits never reach the MATCH (which keeps the join cheap
-            // for noisy embedders). The MATCH then constrains to nodes
-            // whose id equals the surviving qid, and we ORDER BY the
-            // score.
+            // qlink owns the two-stage pipeline:
+            //
+            //   1. KNN pre-filter: label-filtered Qdrant search for
+            //      `$emb`, keep top-10 hits with cosine ≥ `$search_threshold`.
+            //   2. Cross-encoder rerank: format `<$query_str> a <$label>`
+            //      and rank surviving candidates by reranker score,
+            //      keeping those ≥ `$reranker_threshold`.
+            //
+            // The yield is the surviving (id, reranker_score) pairs in
+            // descending order, so we don't need our own threshold
+            // filter or WITH gate. The MATCH then joins by id.
             TypedOp::Search => {
                 let alias = pred.field.alias.as_str();
                 let coll = pred
@@ -267,31 +319,37 @@ impl TypeHandler for SemanticTextHandler {
                     .get("embedding")
                     .cloned()
                     .ok_or_else(|| TypeError::Handler("missing 'embedding' param".into()))?;
-                let top_k = pred
+                let query_str = pred
                     .params
-                    .get("top_k")
+                    .get("query_str")
                     .cloned()
-                    .unwrap_or(Literal::Int(20));
-                let threshold = pred
+                    .ok_or_else(|| TypeError::Handler("missing 'query_str' param".into()))?;
+                let label = pred
                     .params
-                    .get("threshold")
+                    .get("label")
+                    .cloned()
+                    .ok_or_else(|| TypeError::Handler("missing 'label' param".into()))?;
+                let search_thr = pred
+                    .params
+                    .get("search_threshold")
                     .cloned()
                     .unwrap_or(Literal::Float(DEFAULT_SEARCH_THRESHOLD));
+                let rerank_thr = pred
+                    .params
+                    .get("reranker_threshold")
+                    .cloned()
+                    .unwrap_or(Literal::Float(DEFAULT_RERANKER_THRESHOLD));
 
                 let coll_p = ctx.bind(coll);
+                let q_p = ctx.bind(query_str);
                 let emb_p = ctx.bind(emb);
-                let topk_p = ctx.bind(top_k);
-                let thr_p = ctx.bind(threshold);
+                let label_p = ctx.bind(label);
+                let s_thr_p = ctx.bind(search_thr);
+                let r_thr_p = ctx.bind(rerank_thr);
 
-                // The threshold is enforced inline in a WITH right after
-                // the YIELD so under-threshold hits don't get joined to
-                // the graph. Doing it here (instead of in the WHERE) also
-                // means a downstream user-supplied WHERE clause AND-s
-                // against the already-filtered set rather than re-filtering
-                // dropped rows.
                 ctx.push_pre_match(format!(
-                    "CALL libqlink.search({coll_p}, {emb_p}, {topk_p}) YIELD id AS {alias}__qid, score AS {alias}__score\n\
-                     WITH {alias}__qid, {alias}__score WHERE {alias}__score >= {thr_p}"
+                    "CALL libqlink.search_reranked({coll_p}, {q_p}, {emb_p}, {label_p}, {s_thr_p}, {r_thr_p}) \
+                     YIELD id AS {alias}__qid, score AS {alias}__score"
                 ));
                 ctx.set_where(format!("id({alias}) = {alias}__qid"));
                 ctx.contribution_mut()
@@ -403,19 +461,40 @@ mod tests {
     use std::sync::Arc;
 
     fn handler() -> SemanticTextHandler {
-        handler_with_threshold(DEFAULT_SEARCH_THRESHOLD)
+        handler_with_thresholds(DEFAULT_SEARCH_THRESHOLD, DEFAULT_RERANKER_THRESHOLD)
     }
 
-    fn handler_with_threshold(threshold: f64) -> SemanticTextHandler {
+    fn handler_with_thresholds(
+        search_threshold: f64,
+        reranker_threshold: f64,
+    ) -> SemanticTextHandler {
         SemanticTextHandler::new(
             SemanticTextConfig {
                 embedding_model: None,
                 collection: "test".into(),
                 top_k: 10,
-                threshold,
+                search_threshold,
+                reranker_threshold,
             },
             Arc::new(MockEmbedder::new(8)),
         )
+    }
+
+    /// Helper to build a `LowerCtx` for the unit tests. The
+    /// production path always populates `field_label` (the AST
+    /// resolves the alias before the handler runs); the tests do the
+    /// same so they exercise the same code path.
+    fn lc<'a>(
+        field: &'a PropertyRef,
+        op: TypedOp,
+        value: &'a Value,
+        label: &'a str,
+    ) -> LC<'a> {
+        LC {
+            raw: RawTypedFilter { field, op, value },
+            type_id: TypeId::new(SemanticTextHandler::TYPE_ID),
+            field_label: Some(label),
+        }
     }
 
     fn pref(alias: &str, prop: &str) -> PropertyRef {
@@ -458,7 +537,49 @@ mod tests {
     }
 
     #[test]
-    fn lower_search_embeds_query_into_params() {
+    fn lower_search_embeds_query_and_records_label_and_thresholds() {
+        let h = handler();
+        let field = pref("c", "name");
+        let value = serde_json::json!("apple");
+        let mut ctx = lc(&field, TypedOp::Search, &value, "Company");
+        let pred = h.lower(&mut ctx).unwrap();
+
+        // Everything search_reranked needs is in params.
+        for key in [
+            "embedding",
+            "collection",
+            "query_str",
+            "label",
+            "top_k",
+            "search_threshold",
+            "reranker_threshold",
+        ] {
+            assert!(pred.params.contains_key(key), "missing '{key}' in params");
+        }
+        match pred.params.get("embedding").unwrap() {
+            Literal::List(items) => assert_eq!(items.len(), 8),
+            _ => panic!("embedding should be a List"),
+        }
+        assert_eq!(
+            pred.params.get("query_str").unwrap(),
+            &Literal::String("apple".into())
+        );
+        assert_eq!(
+            pred.params.get("label").unwrap(),
+            &Literal::String("Company".into())
+        );
+        assert_eq!(
+            pred.params.get("search_threshold").unwrap(),
+            &Literal::Float(DEFAULT_SEARCH_THRESHOLD)
+        );
+        assert_eq!(
+            pred.params.get("reranker_threshold").unwrap(),
+            &Literal::Float(DEFAULT_RERANKER_THRESHOLD)
+        );
+    }
+
+    #[test]
+    fn lower_search_without_field_label_errors_loudly() {
         let h = handler();
         let field = pref("c", "name");
         let value = serde_json::json!("apple");
@@ -469,20 +590,12 @@ mod tests {
                 value: &value,
             },
             type_id: TypeId::new(SemanticTextHandler::TYPE_ID),
+            field_label: None,
         };
-        let pred = h.lower(&mut ctx).unwrap();
-        assert!(pred.params.contains_key("embedding"));
-        assert!(pred.params.contains_key("collection"));
-        assert!(pred.params.contains_key("top_k"));
-        assert!(pred.params.contains_key("threshold"));
-        match pred.params.get("embedding").unwrap() {
-            Literal::List(items) => assert_eq!(items.len(), 8),
-            _ => panic!("embedding should be a List"),
-        }
-        // Default threshold from config flows through unchanged.
-        assert_eq!(
-            pred.params.get("threshold").unwrap(),
-            &Literal::Float(DEFAULT_SEARCH_THRESHOLD)
+        let err = h.lower(&mut ctx).unwrap_err();
+        assert!(
+            matches!(err, TypeError::Handler(msg) if msg.contains("graph label")),
+            "expected handler-error about missing label"
         );
     }
 
@@ -491,32 +604,18 @@ mod tests {
         let h = handler();
         let field = pref("c", "name");
         let value = serde_json::json!("apple");
-        let mut ctx = LC {
-            raw: RawTypedFilter {
-                field: &field,
-                op: TypedOp::Eq,
-                value: &value,
-            },
-            type_id: TypeId::new(SemanticTextHandler::TYPE_ID),
-        };
+        let mut ctx = lc(&field, TypedOp::Eq, &value, "Company");
         let pred = h.lower(&mut ctx).unwrap();
         assert!(pred.params.is_empty());
         assert_eq!(pred.value, Literal::String("apple".into()));
     }
 
     #[test]
-    fn emit_search_renders_qlink_call_and_orders_by_score() {
+    fn emit_search_calls_search_reranked_and_orders_by_score() {
         let h = handler();
         let field = pref("c", "name");
         let value = serde_json::json!("apple");
-        let mut lower = LC {
-            raw: RawTypedFilter {
-                field: &field,
-                op: TypedOp::Search,
-                value: &value,
-            },
-            type_id: TypeId::new(SemanticTextHandler::TYPE_ID),
-        };
+        let mut lower = lc(&field, TypedOp::Search, &value, "Company");
         let pred = h.lower(&mut lower).unwrap();
 
         let mut contrib = CypherContribution::default();
@@ -526,16 +625,15 @@ mod tests {
 
         let pre = contrib.pre_match.join("\n");
         assert!(
-            pre.contains("CALL libqlink.search"),
-            "pre_match should contain qlink.search; got {pre}"
+            pre.contains("CALL libqlink.search_reranked("),
+            "pre_match should call libqlink.search_reranked; got {pre}"
         );
-        assert!(pre.contains("c__qid"));
-        assert!(pre.contains("c__score"));
-        // Threshold filter is spliced right after the YIELD so under-
-        // threshold hits never reach the MATCH.
+        assert!(pre.contains("YIELD id AS c__qid, score AS c__score"));
+        // Reranker handles the threshold itself, so we MUST NOT emit
+        // an extra `WHERE score >=` filter on top.
         assert!(
-            pre.contains("WITH c__qid, c__score WHERE c__score >="),
-            "pre_match should filter by score >= threshold; got {pre}"
+            !pre.contains("WHERE c__score"),
+            "reranker already filters by threshold; we must not double-filter; got {pre}"
         );
         assert_eq!(contrib.where_inline.as_deref(), Some("id(c) = c__qid"));
         assert_eq!(contrib.order_by.len(), 1);
@@ -543,20 +641,13 @@ mod tests {
     }
 
     #[test]
-    fn emit_search_threshold_is_bound_as_parameter() {
-        // A non-default threshold lands in the bound params so the
-        // value is parameterised, not inlined into the Cypher text.
-        let h = handler_with_threshold(0.42);
+    fn emit_search_thresholds_are_bound_as_parameters() {
+        // Non-default thresholds land in the bound params, never
+        // inlined into the Cypher text.
+        let h = handler_with_thresholds(0.42, 0.17);
         let field = pref("c", "name");
         let value = serde_json::json!("apple");
-        let mut lower = LC {
-            raw: RawTypedFilter {
-                field: &field,
-                op: TypedOp::Search,
-                value: &value,
-            },
-            type_id: TypeId::new(SemanticTextHandler::TYPE_ID),
-        };
+        let mut lower = lc(&field, TypedOp::Search, &value, "Company");
         let pred = h.lower(&mut lower).unwrap();
 
         let mut contrib = CypherContribution::default();
@@ -564,25 +655,22 @@ mod tests {
         let mut emit = EmitCtx::new(&mut contrib, &mut binder);
         h.emit(&mut emit, &pred).unwrap();
 
-        // Bound params order: collection, embedding, top_k, threshold.
-        // Find whichever placeholder maps to a Float — that's the
-        // threshold — and assert it carries the configured value.
-        let threshold_value = binder
+        let floats: Vec<f64> = binder
             .params
             .values()
-            .find_map(|v| match v {
-                Literal::Float(f) => Some(*f),
-                _ => None,
-            })
-            .expect("threshold should be bound as a Float param");
+            .filter_map(|v| if let Literal::Float(f) = v { Some(*f) } else { None })
+            .collect();
         assert!(
-            (threshold_value - 0.42).abs() < 1e-9,
-            "expected threshold 0.42, got {threshold_value}"
+            floats.iter().any(|f| (f - 0.42).abs() < 1e-9),
+            "search_threshold 0.42 not bound; floats={floats:?}"
         );
-        // And the threshold must NOT appear inline.
+        assert!(
+            floats.iter().any(|f| (f - 0.17).abs() < 1e-9),
+            "reranker_threshold 0.17 not bound; floats={floats:?}"
+        );
         let pre = contrib.pre_match.join("\n");
-        assert!(!pre.contains("0.42"), "threshold leaked inline: {pre}");
-        assert!(pre.contains("WHERE c__score >= $"));
+        assert!(!pre.contains("0.42"), "thresholds leaked inline: {pre}");
+        assert!(!pre.contains("0.17"), "thresholds leaked inline: {pre}");
     }
 
     #[test]
@@ -609,14 +697,7 @@ mod tests {
         let h = handler();
         let field = pref("c", "name");
         let value = serde_json::json!("apple");
-        let mut lower = LC {
-            raw: RawTypedFilter {
-                field: &field,
-                op: TypedOp::HybridSearch,
-                value: &value,
-            },
-            type_id: TypeId::new(SemanticTextHandler::TYPE_ID),
-        };
+        let mut lower = lc(&field, TypedOp::HybridSearch, &value, "Company");
         let pred = h.lower(&mut lower).unwrap();
         let mut contrib = CypherContribution::default();
         let mut binder = CountingBinder { next: 0, params: Default::default() };

@@ -287,9 +287,18 @@ impl Pipeline {
     }
 
     /// Drain the side-effect queue. Currently handles
-    /// [`SideEffect::EmbedAndStore`]: groups effects by collection,
-    /// runs the embedder once per group, and issues a single
-    /// `qlink.insert_batch` Cypher call per group.
+    /// [`SideEffect::EmbedAndStore`].
+    ///
+    /// One embedder call (`embed_batch`) generates *all* vectors in a
+    /// single shot — that's the only place batching is safe today. We
+    /// then issue **one Cypher statement per side effect**: nodes
+    /// across queued effects can share a label, and Memgraph's
+    /// `MATCH (n:Label {key: ...})` would then return more than the
+    /// intended row, with `qlink.insert(id(n), ...)` writing the
+    /// embedding to every match. Until qlink grows a way to
+    /// disambiguate (so an `UNWIND` over many rows is safe again),
+    /// we stay pessimistic and run one `MATCH ... CALL libqlink.insert
+    /// ...` per node.
     ///
     /// Returns `(batches_run, rows_inserted)`.
     async fn drain_side_effects(
@@ -300,18 +309,9 @@ impl Pipeline {
             return Ok((0, 0));
         }
 
-        // Bucket effects per collection. The label is part of the
-        // group key but we still group by collection for the actual
-        // gRPC call — qlink accepts a single collection per insert.
-        let mut by_coll: std::collections::BTreeMap<String, Vec<SideEffect>> =
-            std::collections::BTreeMap::new();
-        for eff in effects.drain() {
-            match &eff {
-                SideEffect::EmbedAndStore { collection, .. } => {
-                    by_coll.entry(collection.clone()).or_default().push(eff);
-                }
-            }
-        }
+        // Snapshot the queue. We keep the original ordering so the
+        // generated Cypher is deterministic for snapshot tests.
+        let queue: Vec<SideEffect> = effects.drain().collect();
 
         let embedder = self.embedder.as_ref().ok_or_else(|| {
             crate::error::Error::Ingest(IngestError::Type(
@@ -321,88 +321,85 @@ impl Pipeline {
             ))
         })?;
 
+        // Embed all texts in one shot. This is still a major win over
+        // per-row inference (the embedder may amortise model warm-up
+        // and tokenizer cost across the batch) and is independent of
+        // how we drive the qlink upserts.
+        let texts: Vec<&str> = queue
+            .iter()
+            .map(|e| match e {
+                SideEffect::EmbedAndStore { text, .. } => text.as_str(),
+            })
+            .collect();
+        let vectors = embedder.embed_batch(&texts).map_err(|e| {
+            crate::error::Error::Ingest(IngestError::Type(format!("embed_batch: {e}")))
+        })?;
+        if vectors.len() != queue.len() {
+            return Err(crate::error::Error::Ingest(IngestError::Type(format!(
+                "embedder returned {} vectors for {} inputs",
+                vectors.len(),
+                queue.len()
+            ))));
+        }
+
         let mut batches_run = 0usize;
         let mut rows_inserted = 0usize;
-        for (collection, group) in by_coll {
-            let texts: Vec<&str> = group
-                .iter()
-                .map(|e| match e {
-                    SideEffect::EmbedAndStore { text, .. } => text.as_str(),
-                })
-                .collect();
-            let vectors = embedder.embed_batch(&texts).map_err(|e| {
-                crate::error::Error::Ingest(IngestError::Type(format!("embed_batch: {e}")))
-            })?;
-
-            let cypher = build_qlink_insert_batch(&collection, &group, &vectors)?;
+        for (eff, vec) in queue.iter().zip(vectors.iter()) {
+            let cypher = build_qlink_insert_one(eff, vec)?;
             let _ = self.client.execute(&cypher).await?;
             batches_run += 1;
-            rows_inserted += group.len();
+            rows_inserted += 1;
         }
         let _ = embedder.dim(); // assert the embedder was usable
         Ok((batches_run, rows_inserted))
     }
 }
 
-/// Render a single `UNWIND … MATCH … qlink.insert(...)` batch.
+/// Render a single-node `MATCH ... CALL libqlink.insert(...)` Cypher
+/// statement for one [`SideEffect::EmbedAndStore`].
 ///
-/// We can't use `qlink.insert_batch` directly because each row has a
-/// node-id we need to look up by `(label, key)` — the embeddings come
-/// from outside Memgraph. The shape is therefore an `UNWIND` over rows
-/// containing `{key, vec}`, with one `qlink.insert` call per row inside
-/// the same statement. That's still **one** Cypher batch (one round
-/// trip) — the per-row work happens inside Memgraph.
-fn build_qlink_insert_batch(
-    collection: &str,
-    effects: &[SideEffect],
-    vectors: &[Vec<f32>],
-) -> Result<CypherQuery> {
+/// Why one query per node instead of an `UNWIND` batch: a single
+/// Memgraph `MATCH (n:Label {key: row.key})` may return more than the
+/// row whose vector we are inserting if multiple nodes share the same
+/// `(label, key)` pair (which can happen across mappings or when the
+/// merge key is non-unique by mistake). `libqlink.insert(coll, id(n),
+/// row.vec)` would then write the same vector under every matched
+/// node id. Issuing one query per side effect contains the blast
+/// radius — a misidentified node only corrupts its own embedding
+/// slot, never a sibling's. This also keeps `key_value` bound as a
+/// scalar parameter rather than ferried through a row object.
+fn build_qlink_insert_one(eff: &SideEffect, vec: &[f32]) -> Result<CypherQuery> {
     use std::collections::BTreeMap;
-    if effects.len() != vectors.len() {
-        return Err(crate::error::Error::Ingest(IngestError::Type(format!(
-            "embedder returned {} vectors for {} inputs",
-            vectors.len(),
-            effects.len()
-        ))));
-    }
+    let SideEffect::EmbedAndStore {
+        collection,
+        label,
+        key_field,
+        key_value,
+        ..
+    } = eff;
 
-    // Validate all effects share the same label/key_field; otherwise
-    // we'd need different MATCH patterns. The grouping key is
-    // (collection, label) so this should always hold.
-    let (label, key_field) = match effects.first().expect("non-empty") {
-        SideEffect::EmbedAndStore { label, key_field, .. } => (label.clone(), key_field.clone()),
-    };
-    if !is_valid_ident(&label) {
+    if !is_valid_ident(label) {
         return Err(crate::error::Error::Ingest(IngestError::Type(format!(
             "invalid label '{label}' in side effect"
         ))));
     }
-    if !is_valid_ident(&key_field) {
+    if !is_valid_ident(key_field) {
         return Err(crate::error::Error::Ingest(IngestError::Type(format!(
             "invalid key field '{key_field}' in side effect"
         ))));
     }
 
-    let mut rows: Vec<Literal> = Vec::with_capacity(effects.len());
-    for (eff, vec) in effects.iter().zip(vectors) {
-        let SideEffect::EmbedAndStore { key_value, .. } = eff;
-        let mut row: BTreeMap<String, Literal> = BTreeMap::new();
-        row.insert("key".to_string(), key_value.clone());
-        row.insert(
-            "vec".to_string(),
-            Literal::List(vec.iter().map(|f| Literal::Float(*f as f64)).collect()),
-        );
-        rows.push(Literal::Object(row));
-    }
-
     let mut params: BTreeMap<String, Literal> = BTreeMap::new();
-    params.insert("rows".to_string(), Literal::List(rows));
-    params.insert("coll".to_string(), Literal::String(collection.to_string()));
+    params.insert("coll".to_string(), Literal::String(collection.clone()));
+    params.insert("key".to_string(), key_value.clone());
+    params.insert(
+        "vec".to_string(),
+        Literal::List(vec.iter().map(|f| Literal::Float(*f as f64)).collect()),
+    );
 
     let text = format!(
-        "UNWIND $rows AS row\n\
-         MATCH (n:{label} {{{key_field}: row.key}})\n\
-         CALL libqlink.insert($coll, id(n), row.vec) YIELD success\n\
+        "MATCH (n:{label} {{{key_field}: $key}})\n\
+         CALL libqlink.insert($coll, id(n), $vec) YIELD success\n\
          RETURN count(success) AS inserted",
     );
     Ok(CypherQuery::new(text, params))

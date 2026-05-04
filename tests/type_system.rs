@@ -132,28 +132,41 @@ async fn semantic_ingest_runs_qlink_insert_after_memgraph_batches() {
     assert_eq!(summary.batches_executed, 1);
     assert_eq!(summary.node_rows, 2);
     assert_eq!(summary.relation_rows, 0);
-    // Then exactly one qlink.insert batch (one collection).
-    assert_eq!(summary.side_effect_batches, 1);
+    // One qlink.insert query per side effect — no grouping by
+    // collection (see Pipeline::drain_side_effects for the why).
+    assert_eq!(summary.side_effect_batches, 2);
     assert_eq!(summary.side_effect_rows, 2);
 
     let captured = client.captured.lock().unwrap();
-    // [0] = Company MERGE, [1] = qlink.insert batch.
-    assert_eq!(captured.len(), 2);
-    let qlink_batch = &captured[1];
-    assert!(
-        qlink_batch.text.contains("CALL libqlink.insert($coll, id(n), row.vec)"),
-        "expected qlink.insert in side-effect batch; got:\n{}",
-        qlink_batch.text
-    );
-    assert!(qlink_batch.text.contains("MATCH (n:Company {id: row.key})"));
-    let rows = qlink_batch.params.get("rows").expect("rows param");
-    match rows {
-        Literal::List(items) => assert_eq!(items.len(), 2),
-        _ => panic!("rows should be a list"),
+    // [0] = Company MERGE, [1..=2] = one qlink.insert per node.
+    assert_eq!(captured.len(), 3);
+    for qlink_batch in &captured[1..] {
+        assert!(
+            qlink_batch.text.contains("CALL libqlink.insert($coll, id(n), $vec)"),
+            "expected per-node qlink.insert; got:\n{}",
+            qlink_batch.text
+        );
+        assert!(qlink_batch.text.contains("MATCH (n:Company {id: $key})"));
+        // Single-node Cypher: $key is bound as a scalar, not as part of
+        // an UNWIND row object.
+        assert!(matches!(
+            qlink_batch.params.get("key"),
+            Some(Literal::String(_))
+        ));
+        assert!(matches!(qlink_batch.params.get("vec"), Some(Literal::List(_))));
+        assert_eq!(
+            qlink_batch.params.get("coll"),
+            Some(&Literal::String("companies__name".into())),
+            // Per-field collection scope: <configured>__<field_name>.
+        );
     }
-    let coll = qlink_batch.params.get("coll").expect("coll param");
-    // Per-field collection scope: <configured>__<field_name>.
-    assert_eq!(coll, &Literal::String("companies__name".into()));
+    // Each company gets its own batch, addressed by its own primary key.
+    let keys: Vec<_> = captured[1..]
+        .iter()
+        .map(|b| b.params.get("key").cloned().unwrap())
+        .collect();
+    assert!(keys.contains(&Literal::String("c1".into())));
+    assert!(keys.contains(&Literal::String("c2".into())));
 }
 
 #[tokio::test]

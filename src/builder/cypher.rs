@@ -61,6 +61,17 @@ pub fn build_read_with(
     return_part::write_return(&mut cur, query);
 
     // ── Phase 4: ORDER BY (user's keys first, then handler extras). ──
+    //
+    // Handler-contributed ORDER BY keys (e.g. SemanticText's
+    // `<alias>__score`) are dropped for aggregate queries: those
+    // collapse rows via `count`/`sum`/etc., and the score column is
+    // neither aggregated nor part of `group_by`, so referencing it
+    // here is illegal Cypher. The vector candidate set is already
+    // pruned by `libqlink.search`'s `top_k` and threshold, so the
+    // ordering is implicit anyway.
+    if matches!(query.action, Action::Aggregate) {
+        cur.extra_order_by.clear();
+    }
     return_part::write_order_by_with_extra(&mut cur, &query.sort);
 
     // ── Phase 5: LIMIT. ───────────────────────────────────────────────

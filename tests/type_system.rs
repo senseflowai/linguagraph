@@ -267,6 +267,56 @@ fn semantic_search_compiles_to_qlink_search_call() {
     );
 }
 
+/// Regression: an aggregate query whose filters include a typed
+/// vector search must not emit `ORDER BY <alias>__score` — the score
+/// column isn't projected through the aggregation, and Memgraph would
+/// reject the query as `Unbound variable`. The `libqlink.search`
+/// candidate set is already top-k'd and threshold-filtered before
+/// MATCH, so the implicit ordering is good enough.
+#[test]
+fn aggregate_with_semantic_search_drops_handler_order_by() {
+    let cfg = cfg_with_semantic_text();
+    let (registry, embedder) = registry_and_embedder();
+    let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg)
+        .with_registry(registry)
+        .with_embedder(embedder);
+
+    // "How many cameras are at each Place that semantically matches
+    // 'office'?" — find Places via libqlink.search, traverse to
+    // Camera, count.
+    let dsl_query = dsl::parse_str(
+        r#"{
+            "action": "aggregate",
+            "start": { "label": "Place", "alias": "p" },
+            "traversals": [
+                { "edge": { "label": "LOCATED_IN", "alias": "loc", "direction": "in" },
+                  "target": { "label": "Camera", "alias": "c" } }
+            ],
+            "filters": [
+                { "field": "p.name", "type": "SemanticText",
+                  "op": "search", "value": "office" }
+            ],
+            "return": [
+                { "aggregate": "count", "field": "c.id", "alias": "camera_count" }
+            ]
+        }"#,
+    )
+    .unwrap();
+    let cypher = pipeline.compile(dsl_query).unwrap();
+
+    // The `libqlink.search` prelude and the threshold filter still
+    // appear — only the score-based ORDER BY is suppressed.
+    assert!(cypher.text.contains("CALL libqlink.search"));
+    assert!(cypher.text.contains("p__score >= $"));
+    assert!(
+        !cypher.text.contains("ORDER BY p__score"),
+        "aggregate queries must not order by an unprojected score column; \
+         got:\n{}",
+        cypher.text
+    );
+    assert!(cypher.text.contains("RETURN count(c) AS camera_count"));
+}
+
 #[test]
 fn hybrid_search_combines_exact_and_semantic_signals() {
     let cfg = cfg_with_semantic_text();

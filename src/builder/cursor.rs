@@ -46,6 +46,7 @@ pub(super) struct Cursor {
     pub post_match: Vec<String>,
     pub extra_order_by: Vec<(String, crate::types::context::OrderDir)>,
     next_id: usize,
+    next_var_id: usize,
 }
 
 impl Cursor {
@@ -57,7 +58,17 @@ impl Cursor {
             post_match: Vec::new(),
             extra_order_by: Vec::new(),
             next_id: 0,
+            next_var_id: 0,
         }
+    }
+
+    /// Hand out a fresh integer suffix for handler-emitted variable
+    /// names. Independent of the parameter counter so the two namespaces
+    /// can evolve separately.
+    pub fn fresh_var_id(&mut self) -> usize {
+        let id = self.next_var_id;
+        self.next_var_id += 1;
+        id
     }
 
     /// Bind `value` to a fresh `$pN` placeholder and return the placeholder
@@ -105,5 +116,9 @@ impl Cursor {
 impl ParamBinder for Cursor {
     fn bind(&mut self, value: Literal) -> String {
         Cursor::bind(self, value)
+    }
+
+    fn fresh_id(&mut self) -> usize {
+        Cursor::fresh_var_id(self)
     }
 }

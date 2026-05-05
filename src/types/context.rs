@@ -208,6 +208,15 @@ impl<'a> EmitCtx<'a> {
         self.binder.bind(value)
     }
 
+    /// Allocate a fresh integer suffix for handler-emitted variable
+    /// names (e.g. `c__qid_0`, `c__qid_1`). Multiple calls within a
+    /// single query are guaranteed to return distinct values, so
+    /// handlers can disambiguate variables they introduce when the
+    /// same alias appears in more than one contribution.
+    pub fn fresh_id(&mut self) -> usize {
+        self.binder.fresh_id()
+    }
+
     pub fn contribution_mut(&mut self) -> &mut CypherContribution {
         self.contribution
     }
@@ -231,6 +240,12 @@ impl<'a> EmitCtx<'a> {
 /// `Cursor`. Anything that can hand out fresh `$pN` placeholders fits.
 pub trait ParamBinder {
     fn bind(&mut self, value: Literal) -> String;
+
+    /// Return a fresh integer that handlers can use to disambiguate
+    /// variable names they introduce into the generated Cypher (yield
+    /// targets, intermediate aliases, …). Implementations must return a
+    /// value distinct from every prior call within the same query.
+    fn fresh_id(&mut self) -> usize;
 }
 
 // ─── Stage 4: prompt advertisement ──────────────────────────────────

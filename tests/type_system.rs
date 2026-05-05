@@ -246,8 +246,8 @@ fn semantic_search_compiles_to_qlink_search_call() {
 
     // ORDER BY surfaces the reranker score so closer hits come first.
     assert!(
-        cypher.text.contains("ORDER BY") && cypher.text.contains("c__score DESC"),
-        "expected ORDER BY c__score DESC; got:\n{}",
+        cypher.text.contains("ORDER BY") && cypher.text.contains("c__score_0 DESC"),
+        "expected ORDER BY c__score_<n> DESC; got:\n{}",
         cypher.text
     );
     // search_reranked filters internally — no extra `WHERE c__score >=` slip-in.
@@ -294,6 +294,71 @@ fn semantic_search_compiles_to_qlink_search_call() {
         "expected configured reranker_threshold 0.42; params: {:?}",
         cypher.params
     );
+}
+
+/// Regression: when a query carries two `SemanticText` filters on the
+/// same alias, each `libqlink.search_reranked` call must yield into
+/// distinct variables — Memgraph rejects `Redeclaring variable: c__qid`
+/// otherwise. We disambiguate by appending a fresh integer suffix
+/// allocated from the cursor's variable-name counter.
+#[test]
+fn multiple_semantic_searches_on_same_alias_yield_distinct_variables() {
+    let cfg = cfg_with_semantic_text();
+    let (registry, embedder) = registry_and_embedder();
+    let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg)
+        .with_registry(registry)
+        .with_embedder(embedder);
+
+    let dsl_query = dsl::parse_str(
+        r#"{
+            "action": "find",
+            "start": { "label": "Camera", "alias": "c" },
+            "filters": [
+                { "field": "c.origin_place_description", "type": "SemanticText",
+                  "op": "contains", "value": "Mangilik 55" },
+                { "field": "c.name", "type": "SemanticText",
+                  "op": "contains", "value": "TargetAI" }
+            ],
+            "return": [
+                { "field": "c.name", "alias": "name" },
+                { "field": "c.origin_place_description", "alias": "address" }
+            ],
+            "limit": 25
+        }"#,
+    )
+    .unwrap();
+    let cypher = pipeline.compile(dsl_query).unwrap();
+
+    // Two `libqlink.search_reranked` calls, each yielding into its
+    // own pair of variables.
+    let qid_count = cypher.text.matches("AS c__qid_").count();
+    let score_count = cypher.text.matches("AS c__score_").count();
+    assert_eq!(
+        qid_count, 2,
+        "expected two distinct c__qid_<n> yields; got:\n{}",
+        cypher.text
+    );
+    assert_eq!(
+        score_count, 2,
+        "expected two distinct c__score_<n> yields; got:\n{}",
+        cypher.text
+    );
+
+    // The bare `c__qid` / `c__score` names must NOT appear — they
+    // would collide if both calls used them.
+    assert!(
+        !cypher.text.contains("AS c__qid,") && !cypher.text.contains("AS c__qid\n"),
+        "bare c__qid collides across calls; got:\n{}",
+        cypher.text
+    );
+
+    // WHERE references both qid variables.
+    assert!(cypher.text.contains("id(c) = c__qid_0"));
+    assert!(cypher.text.contains("id(c) = c__qid_1"));
+
+    // ORDER BY mentions both score variables.
+    assert!(cypher.text.contains("c__score_0 DESC"));
+    assert!(cypher.text.contains("c__score_1 DESC"));
 }
 
 /// Regression: an aggregate query whose filters include a typed

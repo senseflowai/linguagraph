@@ -341,14 +341,20 @@ impl TypeHandler for SemanticTextHandler {
                 let label_p = ctx.bind(label);
                 let r_thr_p = ctx.bind(rerank_thr);
                 let prop = pred.field.property.clone().unwrap_or("name".to_string());
+                // Each call gets a unique suffix so multiple semantic
+                // searches against the same alias don't collide on
+                // `<alias>__qid` / `<alias>__score`.
+                let n = ctx.fresh_id();
+                let qid = format!("{alias}__qid_{n}");
+                let score = format!("{alias}__score_{n}");
                 ctx.push_pre_match(format!(
                     "CALL libqlink.search_reranked({coll_p}, {q_p}, {emb_p}, {label_p}, \"{prop}\", {r_thr_p}) \
-                     YIELD id AS {alias}__qid, score AS {alias}__score"
+                     YIELD id AS {qid}, score AS {score}"
                 ));
-                ctx.set_where(format!("id({alias}) = {alias}__qid"));
+                ctx.set_where(format!("id({alias}) = {qid}"));
                 ctx.contribution_mut()
                     .order_by
-                    .push((format!("{alias}__score"), OrderDir::Desc));
+                    .push((score, OrderDir::Desc));
                 Ok(())
             }
             // ── Hybrid (exact OR semantic, weighted by score) ─────────
@@ -500,6 +506,7 @@ mod tests {
 
     struct CountingBinder {
         next: usize,
+        next_var: usize,
         params: std::collections::BTreeMap<String, Literal>,
     }
     impl ParamBinder for CountingBinder {
@@ -508,6 +515,11 @@ mod tests {
             self.next += 1;
             self.params.insert(n.clone(), v);
             format!("${n}")
+        }
+        fn fresh_id(&mut self) -> usize {
+            let id = self.next_var;
+            self.next_var += 1;
+            id
         }
     }
 
@@ -626,7 +638,7 @@ mod tests {
         let pred = h.lower(&mut lower).unwrap();
 
         let mut contrib = CypherContribution::default();
-        let mut binder = CountingBinder { next: 0, params: Default::default() };
+        let mut binder = CountingBinder { next: 0, next_var: 0, params: Default::default() };
         let mut emit = EmitCtx::new(&mut contrib, &mut binder);
         h.emit(&mut emit, &pred).unwrap();
 
@@ -635,16 +647,16 @@ mod tests {
             pre.contains("CALL libqlink.search_reranked("),
             "pre_match should call libqlink.search_reranked; got {pre}"
         );
-        assert!(pre.contains("YIELD id AS c__qid, score AS c__score"));
+        assert!(pre.contains("YIELD id AS c__qid_0, score AS c__score_0"));
         // Reranker handles the threshold itself, so we MUST NOT emit
         // an extra `WHERE score >=` filter on top.
         assert!(
             !pre.contains("WHERE c__score"),
             "reranker already filters by threshold; we must not double-filter; got {pre}"
         );
-        assert_eq!(contrib.where_inline.as_deref(), Some("id(c) = c__qid"));
+        assert_eq!(contrib.where_inline.as_deref(), Some("id(c) = c__qid_0"));
         assert_eq!(contrib.order_by.len(), 1);
-        assert_eq!(contrib.order_by[0].0, "c__score");
+        assert_eq!(contrib.order_by[0].0, "c__score_0");
     }
 
     #[test]
@@ -660,7 +672,7 @@ mod tests {
         let pred = h.lower(&mut lower).unwrap();
 
         let mut contrib = CypherContribution::default();
-        let mut binder = CountingBinder { next: 0, params: Default::default() };
+        let mut binder = CountingBinder { next: 0, next_var: 0, params: Default::default() };
         let mut emit = EmitCtx::new(&mut contrib, &mut binder);
         h.emit(&mut emit, &pred).unwrap();
 
@@ -685,7 +697,7 @@ mod tests {
         let mut lower = lc(&field, TypedOp::HybridSearch, &value, "Company");
         let pred = h.lower(&mut lower).unwrap();
         let mut contrib = CypherContribution::default();
-        let mut binder = CountingBinder { next: 0, params: Default::default() };
+        let mut binder = CountingBinder { next: 0, next_var: 0, params: Default::default() };
         let mut emit = EmitCtx::new(&mut contrib, &mut binder);
         h.emit(&mut emit, &pred).unwrap();
 

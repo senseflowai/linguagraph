@@ -289,16 +289,24 @@ impl Pipeline {
     /// Drain the side-effect queue. Currently handles
     /// [`SideEffect::EmbedAndStore`].
     ///
-    /// One embedder call (`embed_batch`) generates *all* vectors in a
-    /// single shot — that's the only place batching is safe today. We
-    /// then issue **one Cypher statement per side effect**: nodes
-    /// across queued effects can share a label, and Memgraph's
-    /// `MATCH (n:Label {key: ...})` would then return more than the
-    /// intended row, with `qlink.insert(id(n), ...)` writing the
-    /// embedding to every match. Until qlink grows a way to
-    /// disambiguate (so an `UNWIND` over many rows is safe again),
-    /// we stay pessimistic and run one `MATCH ... CALL libqlink.insert
-    /// ...` per node.
+    /// Strategy:
+    ///
+    /// 1. Embed all texts in **one** `embed_batch` call — amortises
+    ///    model warm-up and tokenizer cost.
+    /// 2. Bucket effects by `(collection, payload_label, node_label,
+    ///    key_field)`. The bucket key carries enough context that
+    ///    every row inside a bucket shares the same MATCH pattern and
+    ///    targets the same Qdrant collection with the same label tag.
+    /// 3. For each bucket, emit **one** `UNWIND $rows … MATCH …
+    ///    CALL libqlink.insert_labeled(…)` Cypher batch.
+    ///
+    /// Why grouping by `(collection, payload_label)` is now safe (it
+    /// wasn't when we grouped by collection alone): with the label in
+    /// the key, every row inside a bucket has the same Cypher node
+    /// label. The MATCH pattern is therefore consistent across rows,
+    /// and the `merge_on` key is unique-per-label-by-construction (the
+    /// mapping author declared it as the entity's primary key). No
+    /// duplicate match, no cross-label vector clobbering.
     ///
     /// Returns `(batches_run, rows_inserted)`.
     async fn drain_side_effects(
@@ -321,10 +329,7 @@ impl Pipeline {
             ))
         })?;
 
-        // Embed all texts in one shot. This is still a major win over
-        // per-row inference (the embedder may amortise model warm-up
-        // and tokenizer cost across the batch) and is independent of
-        // how we drive the qlink upserts.
+        // ── 1. Embed everything in one shot. ─────────────────────────
         let texts: Vec<&str> = queue
             .iter()
             .map(|e| match e {
@@ -342,78 +347,121 @@ impl Pipeline {
             ))));
         }
 
+        // ── 2. Bucket. The 4-tuple key keeps every row in a bucket on
+        //    the same MATCH pattern and the same Qdrant collection.
+        //    `BTreeMap` keeps groups ordered for deterministic Cypher.
+        type GroupKey = (String, Option<String>, String, String);
+        let mut groups: std::collections::BTreeMap<GroupKey, Vec<(SideEffect, Vec<f32>)>> =
+            std::collections::BTreeMap::new();
+        for (eff, vec) in queue.into_iter().zip(vectors.into_iter()) {
+            let key = match &eff {
+                SideEffect::EmbedAndStore {
+                    collection,
+                    label,
+                    key_field,
+                    payload_label,
+                    ..
+                } => (
+                    collection.clone(),
+                    payload_label.clone(),
+                    label.clone(),
+                    key_field.clone(),
+                ),
+            };
+            groups.entry(key).or_default().push((eff, vec));
+        }
+
+        // ── 3. One UNWIND batch per group. ───────────────────────────
         let mut batches_run = 0usize;
         let mut rows_inserted = 0usize;
-        for (eff, vec) in queue.iter().zip(vectors.iter()) {
-            let cypher = build_qlink_insert_one(eff, vec)?;
+        for ((_coll, _plabel, _nlabel, _kfield), group) in groups {
+            let cypher = build_qlink_insert_batch(&group)?;
             let _ = self.client.execute(&cypher).await?;
             batches_run += 1;
-            rows_inserted += 1;
+            rows_inserted += group.len();
         }
         let _ = embedder.dim(); // assert the embedder was usable
         Ok((batches_run, rows_inserted))
     }
 }
 
-/// Render a single-node `MATCH ... CALL libqlink.insert(...)` Cypher
-/// statement for one [`SideEffect::EmbedAndStore`].
+/// Render an `UNWIND $rows AS row | MATCH ... CALL libqlink.insert_labeled
+/// ...` Cypher batch for one homogeneous group of side effects.
 ///
-/// Why one query per node instead of an `UNWIND` batch: a single
-/// Memgraph `MATCH (n:Label {key: row.key})` may return more than the
-/// row whose vector we are inserting if multiple nodes share the same
-/// `(label, key)` pair (which can happen across mappings or when the
-/// merge key is non-unique by mistake). `libqlink.insert(coll, id(n),
-/// row.vec)` would then write the same vector under every matched
-/// node id. Issuing one query per side effect contains the blast
-/// radius — a misidentified node only corrupts its own embedding
-/// slot, never a sibling's. This also keeps `key_value` bound as a
-/// scalar parameter rather than ferried through a row object.
-fn build_qlink_insert_one(eff: &SideEffect, vec: &[f32]) -> Result<CypherQuery> {
+/// All effects in `group` must share the same Cypher `label`, the same
+/// `key_field`, the same `collection`, and the same `payload_label`
+/// (the caller — `drain_side_effects` — keys the bucket by exactly
+/// these). The MATCH pattern is therefore consistent across rows; the
+/// only thing that varies per row is `key`/`vec` inside the row
+/// payload.
+///
+/// When the bucket has a `payload_label`, we use
+/// `libqlink.insert_labeled` so each vector lands in Qdrant tagged
+/// with the originating Cypher node label — that's what
+/// `libqlink.search_reranked` filters by at query time. When the
+/// bucket has no label we fall back to plain `libqlink.insert` so
+/// future handlers that don't care about labels still work.
+fn build_qlink_insert_batch(group: &[(SideEffect, Vec<f32>)]) -> Result<CypherQuery> {
     use std::collections::BTreeMap;
-    let SideEffect::EmbedAndStore {
-        collection,
-        label,
-        key_field,
-        key_value,
-        payload_label,
-        ..
-    } = eff;
+    debug_assert!(!group.is_empty(), "callers must not pass an empty group");
 
-    if !is_valid_ident(label) {
+    // All rows in `group` share these — see `drain_side_effects`.
+    let (collection, payload_label, label, key_field) = match &group[0].0 {
+        SideEffect::EmbedAndStore {
+            collection,
+            label,
+            key_field,
+            payload_label,
+            ..
+        } => (
+            collection.clone(),
+            payload_label.clone(),
+            label.clone(),
+            key_field.clone(),
+        ),
+    };
+
+    if !is_valid_ident(&label) {
         return Err(crate::error::Error::Ingest(IngestError::Type(format!(
             "invalid label '{label}' in side effect"
         ))));
     }
-    if !is_valid_ident(key_field) {
+    if !is_valid_ident(&key_field) {
         return Err(crate::error::Error::Ingest(IngestError::Type(format!(
             "invalid key field '{key_field}' in side effect"
         ))));
     }
 
-    let mut params: BTreeMap<String, Literal> = BTreeMap::new();
-    params.insert("coll".to_string(), Literal::String(collection.clone()));
-    params.insert("key".to_string(), key_value.clone());
-    params.insert(
-        "vec".to_string(),
-        Literal::List(vec.iter().map(|f| Literal::Float(*f as f64)).collect()),
-    );
+    // Build the row payload. Each row is `{key: <pk>, vec: <embedding>}`.
+    let mut rows: Vec<Literal> = Vec::with_capacity(group.len());
+    for (eff, vec) in group {
+        let SideEffect::EmbedAndStore { key_value, .. } = eff;
+        let mut row: BTreeMap<String, Literal> = BTreeMap::new();
+        row.insert("key".to_string(), key_value.clone());
+        row.insert(
+            "vec".to_string(),
+            Literal::List(vec.iter().map(|f| Literal::Float(*f as f64)).collect()),
+        );
+        rows.push(Literal::Object(row));
+    }
 
-    // When the side effect carries a payload label, use
-    // `libqlink.insert_labeled` so the vector is tagged on the Qdrant
-    // side and downstream `search_reranked` calls can filter by it.
-    // Falling back to plain `libqlink.insert` keeps the path open for
-    // future handlers that don't care about labels.
+    let mut params: BTreeMap<String, Literal> = BTreeMap::new();
+    params.insert("coll".to_string(), Literal::String(collection));
+    params.insert("rows".to_string(), Literal::List(rows));
+
     let text = if let Some(plabel) = payload_label {
-        params.insert("label".to_string(), Literal::String(plabel.clone()));
+        params.insert("label".to_string(), Literal::String(plabel));
         format!(
-            "MATCH (n:{label} {{{key_field}: $key}})\n\
-             CALL libqlink.insert_labeled($coll, id(n), $vec, $label) YIELD success\n\
+            "UNWIND $rows AS row\n\
+             MATCH (n:{label} {{{key_field}: row.key}})\n\
+             CALL libqlink.insert_labeled($coll, id(n), row.vec, $label) YIELD success\n\
              RETURN count(success) AS inserted",
         )
     } else {
         format!(
-            "MATCH (n:{label} {{{key_field}: $key}})\n\
-             CALL libqlink.insert($coll, id(n), $vec) YIELD success\n\
+            "UNWIND $rows AS row\n\
+             MATCH (n:{label} {{{key_field}: row.key}})\n\
+             CALL libqlink.insert($coll, id(n), row.vec) YIELD success\n\
              RETURN count(success) AS inserted",
         )
     };

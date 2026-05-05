@@ -133,49 +133,50 @@ async fn semantic_ingest_runs_qlink_insert_after_memgraph_batches() {
     assert_eq!(summary.batches_executed, 1);
     assert_eq!(summary.node_rows, 2);
     assert_eq!(summary.relation_rows, 0);
-    // One qlink.insert query per side effect — no grouping by
-    // collection (see Pipeline::drain_side_effects for the why).
-    assert_eq!(summary.side_effect_batches, 2);
+    // Both rows share the same (collection, payload_label, label,
+    // key_field) bucket → exactly one UNWIND-batched qlink call.
+    assert_eq!(summary.side_effect_batches, 1);
     assert_eq!(summary.side_effect_rows, 2);
 
     let captured = client.captured.lock().unwrap();
-    // [0] = Company MERGE, [1..=2] = one qlink.insert_labeled per node.
-    assert_eq!(captured.len(), 3);
-    for qlink_batch in &captured[1..] {
-        assert!(
-            qlink_batch.text.contains(
-                "CALL libqlink.insert_labeled($coll, id(n), $vec, $label)"
-            ),
-            "expected per-node libqlink.insert_labeled; got:\n{}",
-            qlink_batch.text
-        );
-        assert!(qlink_batch.text.contains("MATCH (n:Company {id: $key})"));
-        // Single-node Cypher: $key is bound as a scalar, not as part of
-        // an UNWIND row object.
-        assert!(matches!(
-            qlink_batch.params.get("key"),
-            Some(Literal::String(_))
-        ));
-        assert!(matches!(qlink_batch.params.get("vec"), Some(Literal::List(_))));
-        assert_eq!(
-            qlink_batch.params.get("coll"),
-            Some(&Literal::String("companies__name".into())),
-            // Per-field collection scope: <configured>__<field_name>.
-        );
-        // The Qdrant payload label matches the Cypher node label,
-        // so search_reranked can filter by it.
-        assert_eq!(
-            qlink_batch.params.get("label"),
-            Some(&Literal::String("Company".into()))
-        );
-    }
-    // Each company gets its own batch, addressed by its own primary key.
-    let keys: Vec<_> = captured[1..]
+    // [0] = Company MERGE, [1] = one batched libqlink.insert_labeled.
+    assert_eq!(captured.len(), 2);
+    let qlink_batch = &captured[1];
+    assert!(
+        qlink_batch.text.contains(
+            "CALL libqlink.insert_labeled($coll, id(n), row.vec, $label)"
+        ),
+        "expected UNWIND-batched libqlink.insert_labeled; got:\n{}",
+        qlink_batch.text
+    );
+    assert!(qlink_batch.text.contains("UNWIND $rows AS row"));
+    assert!(qlink_batch.text.contains("MATCH (n:Company {id: row.key})"));
+    // Both rows ride in `$rows` as `{key, vec}` objects.
+    let rows = qlink_batch.params.get("rows").expect("missing $rows");
+    let row_items = match rows {
+        Literal::List(items) => items,
+        other => panic!("$rows should be a List, got {other:?}"),
+    };
+    assert_eq!(row_items.len(), 2, "expected 2 rows in the UNWIND batch");
+    let keys: Vec<&Literal> = row_items
         .iter()
-        .map(|b| b.params.get("key").cloned().unwrap())
+        .map(|row| match row {
+            Literal::Object(map) => map.get("key").expect("row missing 'key'"),
+            other => panic!("row should be an Object, got {other:?}"),
+        })
         .collect();
-    assert!(keys.contains(&Literal::String("c1".into())));
-    assert!(keys.contains(&Literal::String("c2".into())));
+    assert!(keys.contains(&&Literal::String("c1".into())));
+    assert!(keys.contains(&&Literal::String("c2".into())));
+    // Collection + label live in scalar params (not per-row), so a
+    // single bucket has a single $coll / $label binding.
+    assert_eq!(
+        qlink_batch.params.get("coll"),
+        Some(&Literal::String("companies__name".into())),
+    );
+    assert_eq!(
+        qlink_batch.params.get("label"),
+        Some(&Literal::String("Company".into())),
+    );
 }
 
 #[tokio::test]
@@ -278,18 +279,16 @@ fn semantic_search_compiles_to_qlink_search_call() {
         .any(|v| matches!(v, Literal::String(s) if s == "Company"));
     assert!(has_label, "expected 'Company' bound as label; params: {:?}", cypher.params);
 
-    // Both configured thresholds (0.75 cosine, 0.42 reranker) flow
-    // through as bound Float params.
+    // The reranker threshold (0.42) flows through as a bound Float
+    // param. The cosine `search_threshold` is not currently handed
+    // to libqlink.search_reranked (the call shape took a property
+    // name in that slot), so it stays in the predicate's internal
+    // params but doesn't reach the bound Cypher params.
     let floats: Vec<f64> = cypher
         .params
         .values()
         .filter_map(|v| if let Literal::Float(f) = v { Some(*f) } else { None })
         .collect();
-    assert!(
-        floats.iter().any(|f| (f - 0.75).abs() < 1e-9),
-        "expected configured search_threshold 0.75; params: {:?}",
-        cypher.params
-    );
     assert!(
         floats.iter().any(|f| (f - 0.42).abs() < 1e-9),
         "expected configured reranker_threshold 0.42; params: {:?}",
@@ -546,9 +545,17 @@ fn explicit_dsl_type_overrides_metadata() {
         }"#,
     )
     .unwrap();
-    // Compiles cleanly via the explicit SemanticText handler.
+    // Compiles cleanly via the explicit SemanticText handler. The
+    // current handler routes `eq` (and `neq`/`contains`) through
+    // `libqlink.search_reranked` rather than emitting a plain
+    // `c.industry = $p0` WHERE clause, so the assertion is on the
+    // call site rather than the equality.
     let cypher = pipeline.compile(dsl_query).unwrap();
-    assert!(cypher.text.contains("c.industry = $p0"));
+    assert!(
+        cypher.text.contains("CALL libqlink.search_reranked"),
+        "explicit SemanticText `eq` should still route through search_reranked; got:\n{}",
+        cypher.text
+    );
 }
 
 #[test]

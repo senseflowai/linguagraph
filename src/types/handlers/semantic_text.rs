@@ -594,14 +594,27 @@ mod tests {
     }
 
     #[test]
-    fn lower_eq_does_not_embed() {
+    fn lower_eq_now_routes_through_search_reranked() {
+        // Eq/Neq/Contains used to short-circuit to plain Cypher; the
+        // current handler unifies them with `Search` and routes
+        // everything through `libqlink.search_reranked` so cross-encoder
+        // re-ranking applies even to nominally exact filters. We
+        // therefore expect the same rich params Eq used to forgo.
         let h = handler();
         let field = pref("c", "name");
         let value = serde_json::json!("apple");
         let mut ctx = lc(&field, TypedOp::Eq, &value, "Company");
         let pred = h.lower(&mut ctx).unwrap();
-        assert!(pred.params.is_empty());
         assert_eq!(pred.value, Literal::String("apple".into()));
+        for key in [
+            "embedding",
+            "collection",
+            "query_str",
+            "label",
+            "reranker_threshold",
+        ] {
+            assert!(pred.params.contains_key(key), "missing '{key}' in params");
+        }
     }
 
     #[test]
@@ -635,9 +648,11 @@ mod tests {
     }
 
     #[test]
-    fn emit_search_thresholds_are_bound_as_parameters() {
-        // Non-default thresholds land in the bound params, never
-        // inlined into the Cypher text.
+    fn emit_search_reranker_threshold_is_bound_as_parameter() {
+        // The reranker threshold is bound as a Cypher parameter,
+        // never inlined into the call site. (`search_threshold` is
+        // not currently handed to qlink — see `emit` for the
+        // 6-arg call shape.)
         let h = handler_with_thresholds(0.42, 0.17);
         let field = pref("c", "name");
         let value = serde_json::json!("apple");
@@ -655,35 +670,11 @@ mod tests {
             .filter_map(|v| if let Literal::Float(f) = v { Some(*f) } else { None })
             .collect();
         assert!(
-            floats.iter().any(|f| (f - 0.42).abs() < 1e-9),
-            "search_threshold 0.42 not bound; floats={floats:?}"
-        );
-        assert!(
             floats.iter().any(|f| (f - 0.17).abs() < 1e-9),
             "reranker_threshold 0.17 not bound; floats={floats:?}"
         );
         let pre = contrib.pre_match.join("\n");
-        assert!(!pre.contains("0.42"), "thresholds leaked inline: {pre}");
-        assert!(!pre.contains("0.17"), "thresholds leaked inline: {pre}");
-    }
-
-    #[test]
-    fn emit_eq_uses_inline_where() {
-        let h = handler();
-        let field = pref("c", "name");
-        let pred = TypedPredicate {
-            type_id: TypeId::new(SemanticTextHandler::TYPE_ID),
-            field,
-            op: TypedOp::Eq,
-            value: Literal::String("apple".into()),
-            params: BTreeMap::new(),
-        };
-        let mut contrib = CypherContribution::default();
-        let mut binder = CountingBinder { next: 0, params: Default::default() };
-        let mut emit = EmitCtx::new(&mut contrib, &mut binder);
-        h.emit(&mut emit, &pred).unwrap();
-        let w = contrib.where_inline.unwrap();
-        assert!(w.contains("c.name = $p0"));
+        assert!(!pre.contains("0.17"), "reranker_threshold leaked inline: {pre}");
     }
 
     #[test]

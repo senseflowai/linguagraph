@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use tokio::fs;
-
+use crate::ast::Literal;
 use crate::config::{self, Config};
 use crate::core::Pipeline;
 use crate::db::{introspect, GraphClient, MemgraphClient};
@@ -195,6 +195,18 @@ async fn cmd_cypher(config_path: &std::path::Path, path: PathBuf) -> Result<()> 
     println!("\n-- Parameters --");
     for (k, v) in &cypher.params {
         println!("${k} = {}", serde_json::to_string(v)?);
+        match v {
+            Literal::List(vec) => {
+                let emb: Vec<f32> = vec.iter()
+                    .filter_map(|value| match value {
+                        Literal::Float(f) => Some(*f as f32),
+                        _ => None,
+                    })
+                    .collect();
+                println!("{:?}", emb);
+            }
+            _ => {}
+        }
     }
     Ok(())
 }

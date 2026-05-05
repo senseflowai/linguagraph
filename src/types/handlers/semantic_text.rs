@@ -211,18 +211,18 @@ impl TypeHandler for SemanticTextHandler {
 
         // For non-vector ops we can short-circuit to the plain Cypher
         // path with no embedding work.
-        if matches!(
-            ctx.raw.op,
-            TypedOp::Eq | TypedOp::Neq | TypedOp::Contains
-        ) {
-            return Ok(TypedPredicate {
-                type_id: ctx.type_id.clone(),
-                field: ctx.raw.field.clone(),
-                op: ctx.raw.op,
-                value: Literal::String(text.to_string()),
-                params: BTreeMap::new(),
-            });
-        }
+        // if matches!(
+        //     ctx.raw.op,
+        //     TypedOp::Eq | TypedOp::Neq | TypedOp::Contains
+        // ) {
+        //     return Ok(TypedPredicate {
+        //         type_id: ctx.type_id.clone(),
+        //         field: ctx.raw.field.clone(),
+        //         op: ctx.raw.op,
+        //         value: Literal::String(text.to_string()),
+        //         params: BTreeMap::new(),
+        //     });
+        // }
 
         // Embed the query once at lowering time — emit() must remain
         // pure (no I/O) so the builder is testable in isolation.
@@ -272,28 +272,28 @@ impl TypeHandler for SemanticTextHandler {
     }
 
     fn emit(&self, ctx: &mut EmitCtx<'_>, pred: &TypedPredicate) -> Result<(), TypeError> {
-        let render_field = |p: &PropertyRef| match &p.property {
-            Some(prop) => format!("{}.{}", p.alias, prop),
-            None => p.alias.to_string(),
-        };
+        // let render_field = |p: &PropertyRef| match &p.property {
+        //     Some(prop) => format!("{}.{}", p.alias, prop),
+        //     None => p.alias.to_string(),
+        // };
 
         match pred.op {
             // ── Plain text ops route through standard Cypher. ─────────
-            TypedOp::Eq | TypedOp::Neq | TypedOp::Contains => {
-                let value = pred.value.clone();
-                let placeholder = ctx.bind(value);
-                let sym = match pred.op {
-                    TypedOp::Eq => "=",
-                    TypedOp::Neq => "<>",
-                    TypedOp::Contains => "CONTAINS",
-                    _ => unreachable!(),
-                };
-                ctx.set_where(format!(
-                    "{lhs} {sym} {placeholder}",
-                    lhs = render_field(&pred.field)
-                ));
-                Ok(())
-            }
+            // TypedOp::Eq | TypedOp::Neq | TypedOp::Contains => {
+            //     let value = pred.value.clone();
+            //     let placeholder = ctx.bind(value);
+            //     let sym = match pred.op {
+            //         TypedOp::Eq => "=",
+            //         TypedOp::Neq => "<>",
+            //         TypedOp::Contains => "CONTAINS",
+            //         _ => unreachable!(),
+            //     };
+            //     ctx.set_where(format!(
+            //         "{lhs} {sym} {placeholder}",
+            //         lhs = render_field(&pred.field)
+            //     ));
+            //     Ok(())
+            // }
             // ── Pure vector search via libqlink.search_reranked ───────
             //
             // qlink owns the two-stage pipeline:
@@ -307,7 +307,7 @@ impl TypeHandler for SemanticTextHandler {
             // The yield is the surviving (id, reranker_score) pairs in
             // descending order, so we don't need our own threshold
             // filter or WITH gate. The MATCH then joins by id.
-            TypedOp::Search => {
+            TypedOp::Eq | TypedOp::Neq | TypedOp::Contains | TypedOp::Search => {
                 let alias = pred.field.alias.as_str();
                 let coll = pred
                     .params
@@ -329,11 +329,6 @@ impl TypeHandler for SemanticTextHandler {
                     .get("label")
                     .cloned()
                     .ok_or_else(|| TypeError::Handler("missing 'label' param".into()))?;
-                let search_thr = pred
-                    .params
-                    .get("search_threshold")
-                    .cloned()
-                    .unwrap_or(Literal::Float(DEFAULT_SEARCH_THRESHOLD));
                 let rerank_thr = pred
                     .params
                     .get("reranker_threshold")
@@ -344,11 +339,10 @@ impl TypeHandler for SemanticTextHandler {
                 let q_p = ctx.bind(query_str);
                 let emb_p = ctx.bind(emb);
                 let label_p = ctx.bind(label);
-                let s_thr_p = ctx.bind(search_thr);
                 let r_thr_p = ctx.bind(rerank_thr);
-
+                let prop = pred.field.property.clone().unwrap_or("name".to_string());
                 ctx.push_pre_match(format!(
-                    "CALL libqlink.search_reranked({coll_p}, {q_p}, {emb_p}, {label_p}, {s_thr_p}, {r_thr_p}) \
+                    "CALL libqlink.search_reranked({coll_p}, {q_p}, {emb_p}, {label_p}, \"{prop}\", {r_thr_p}) \
                      YIELD id AS {alias}__qid, score AS {alias}__score"
                 ));
                 ctx.set_where(format!("id({alias}) = {alias}__qid"));

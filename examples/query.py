@@ -5,7 +5,7 @@ import os
 
 def main():
     # 1. Получаем текстовый вопрос от пользователя
-    user_query = "Что производит компания Черри Роботикс?"
+    user_query = "Покажи камеры с названием TargetAI - Openspace"
 
     # 2. Генерируем промпт для OpenAI
     # Используем команду linguagraph prompt для получения системного промпта
@@ -26,6 +26,9 @@ def main():
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_query}
     ]
+
+    print(system_prompt)
+    print(user_query)
 
     # 4. Отправляем запрос в OpenAI API (используем curl как в примере)
     # ВАЖНО: Замените YOUR_API_KEY на ваш реальный API ключ OpenAI
@@ -69,6 +72,7 @@ def main():
     # 7. Создаем JSON файл для linguagraph run
     # Предположим, что linguagraph run ожидает JSON с полем "query" или подобным
     # Вам нужно будет адаптировать эту часть под формат, который ожидает linguagraph run
+    print(assistant_message)
     linguagraph_input = json.loads(assistant_message)
 
     linguagraph_file = "linguagraph_input.json"

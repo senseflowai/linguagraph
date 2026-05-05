@@ -214,6 +214,47 @@ impl LlamaEmbedder {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::embeddings::Embedder;
+
+    fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+        a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
+    }
+
+    /// Requires a GGUF embedding model. Set `LLAMA_TEST_MODEL=/path/to/model.gguf`
+    /// then run with `cargo test -F llama similarity -- --nocapture`.
+    #[test]
+    fn similarity_similar_beats_dissimilar() {
+        let Some(path) = std::env::var("LLAMA_TEST_MODEL").ok() else {
+            eprintln!("LLAMA_TEST_MODEL not set — skipping llama similarity test");
+            return;
+        };
+
+        let embedder = LlamaEmbedder::load(&path).expect("failed to load model");
+
+        let similar_a = "Тараз".to_lowercase();
+        let similar_b = "Айтеке би 3 переулок, 200, Тараз".to_lowercase();
+        let dissimilar = "г Алмата".to_lowercase();
+
+        let vecs = embedder
+            .embed_batch(&[&similar_a, &similar_b, &dissimilar])
+            .expect("embed_batch failed");
+
+        let sim_score = cosine_similarity(&vecs[0], &vecs[1]);
+        let diff_score = cosine_similarity(&vecs[0], &vecs[2]);
+
+        eprintln!("similar    ({similar_a:?} / {similar_b:?}): {sim_score:.4}");
+        eprintln!("dissimilar ({similar_a:?} / {dissimilar:?}): {diff_score:.4}");
+
+        assert!(
+            sim_score > diff_score,
+            "expected similar pair ({sim_score:.4}) > dissimilar pair ({diff_score:.4})"
+        );
+    }
+}
+
 fn l2_normalise(v: &[f32]) -> Vec<f32> {
     let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
     if norm > 0.0 {

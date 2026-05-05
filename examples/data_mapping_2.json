@@ -13,6 +13,7 @@
         {
           "name": "name",
           "source_path": "$.cameras[*].name",
+          "type": "SemanticText",
           "description": "Human-readable name of the camera."
         },
         {
@@ -164,6 +165,7 @@
       "properties": [
         {
           "name": "name",
+          "type": "SemanticText",
           "source_path": "$.cameras[*].video_analytics.modules[*].module",
           "description": "Name of the analytics module."
         }
@@ -182,6 +184,7 @@
         },
         {
           "name": "name",
+          "type": "SemanticText",
           "source_path": "$.cameras[*].video_analytics.modules[*].config.roi[*].name",
           "description": "Name of the ROI."
         },
@@ -230,6 +233,7 @@
         },
         {
           "name": "name",
+          "type": "SemanticText",
           "source_path": "$.cameras[*].video_analytics.modules[*].config.lines[*].name",
           "description": "Name of the line."
         },
@@ -254,7 +258,7 @@
     {
       "type": "Place",
       "source_path": "$.cameras[*].origin",
-      "description": "A physical location where a camera is installed.",
+      "description": "",
       "properties": [
         {
           "name": "id",
@@ -263,13 +267,15 @@
         },
         {
           "name": "name",
+          "type": "SemanticText",
           "source_path": "$.cameras[*].origin.place_name",
           "description": "Name of the place."
         },
         {
-          "name": "description",
+          "name": "address",
+          "type": "SemanticText",
           "source_path": "$.cameras[*].origin.place_description",
-          "description": "Detailed description or address of the place."
+          "description": "Address of the place."
         },
         {
           "name": "latitude",
@@ -301,6 +307,7 @@
         },
         {
           "name": "name",
+          "type": "SemanticText",
           "source_path": "$.cameras[*].tags[*].name",
           "description": "Name of the tag."
         }

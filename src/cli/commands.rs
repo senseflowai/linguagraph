@@ -119,6 +119,25 @@ pub enum Command {
         /// Path to the DSL JSON file.
         path: PathBuf,
     },
+    /// Analyse an arbitrary JSON document and emit a prompt that
+    /// instructs an LLM to produce a linguagraph mapping JSON for it.
+    GeneratePrompt {
+        /// Path to the input JSON file.
+        path: PathBuf,
+        /// Free-form domain hints (repeatable). Rendered verbatim
+        /// under a "Domain hints" section.
+        #[arg(long = "hint")]
+        hints: Vec<String>,
+        /// Preferred field types (repeatable; ordered).
+        #[arg(long = "prefer")]
+        prefer: Vec<String>,
+        /// Skip the worked example block.
+        #[arg(long)]
+        no_examples: bool,
+        /// Skip the inferred-structure section.
+        #[arg(long)]
+        no_summary: bool,
+    },
 }
 
 pub async fn run(cli: Cli) -> Result<()> {
@@ -139,6 +158,9 @@ pub async fn run(cli: Cli) -> Result<()> {
             cmd_ingest_cypher(&cli.config, data, mapping, batch_size).await
         }
         Command::Query { path } => cmd_query(&cli.config, path).await,
+        Command::GeneratePrompt { path, hints, prefer, no_examples, no_summary } => {
+            cmd_generate_prompt(&cli.config, path, hints, prefer, no_examples, no_summary).await
+        }
     }
 }
 
@@ -215,6 +237,38 @@ async fn cmd_query(config_path: &std::path::Path, path: PathBuf) -> Result<()> {
     // Same as `cypher` today; kept as a separate command so future
     // natural-language pipelines can hang off the more obvious name.
     cmd_cypher(config_path, path).await
+}
+
+async fn cmd_generate_prompt(
+    config_path: &std::path::Path,
+    path: PathBuf,
+    hints: Vec<String>,
+    prefer: Vec<String>,
+    no_examples: bool,
+    no_summary: bool,
+) -> Result<()> {
+    use crate::promptgen::{generate_prompt, PromptGenOptions};
+
+    let raw = fs::read_to_string(&path).await?;
+    let value: serde_json::Value = serde_json::from_str(&raw)?;
+
+    // The registry is best-effort: when config is missing or wrong
+    // we still want the CLI to work, falling back to the bundled
+    // catalogue.
+    let cfg = load_config_or_default(config_path).await;
+    let registry = build_registry(&cfg).ok().map(|(r, _)| (*r).clone());
+
+    let opts = PromptGenOptions {
+        domain_hints: hints,
+        preferred_types: prefer,
+        include_examples: !no_examples,
+        include_inferred_summary: !no_summary,
+        registry,
+        ..PromptGenOptions::default()
+    };
+    let prompt = generate_prompt(&value, &opts);
+    print!("{prompt}");
+    Ok(())
 }
 
 async fn cmd_run(config_path: &std::path::Path, path: PathBuf) -> Result<()> {

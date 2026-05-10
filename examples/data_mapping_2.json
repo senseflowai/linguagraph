@@ -293,21 +293,31 @@
     {
       "type": "Place",
       "source_path": "$.cameras[*].origin",
+
       "description": "",
       "properties": [
         {
           "name": "id",
           "type": "Text",
+
+      "description": "A physical location where a camera is installed.",
+      "properties": [
+        {
+          "name": "id",
+
           "source_path": "$.cameras[*].origin.place_id",
           "description": "Unique identifier for the place."
         },
         {
           "name": "name",
+
           "type": "SemanticText",
+
           "source_path": "$.cameras[*].origin.place_name",
           "description": "Name of the place."
         },
         {
+
           "name": "address",
           "type": "SemanticText",
           "source_path": "$.cameras[*].origin.place_description",
@@ -316,6 +326,14 @@
         {
           "name": "latitude",
           "type": "Number",
+
+          "name": "description",
+          "source_path": "$.cameras[*].origin.place_description",
+          "description": "Detailed description or address of the place."
+        },
+        {
+          "name": "latitude",
+
           "source_path": "$.cameras[*].origin.place_latitude",
           "description": "Latitude coordinate."
         },

@@ -8,22 +8,24 @@
       "properties": [
         {
           "name": "id",
+          "type": "Text",
           "source_path": "$.companies[*].id"
         },
         {
           "name": "name",
-          "source_path": "$.companies[*].name",
           "type": "SemanticText",
+          "source_path": "$.companies[*].name",
           "description": "Free-text company name. Stored on the node for exact lookups and embedded into qlink/Qdrant for vector search."
         },
         {
           "name": "description",
-          "source_path": "$.companies[*].description",
           "type": "SemanticText",
+          "source_path": "$.companies[*].description",
           "description": "Long-form company description used for hybrid search."
         },
         {
           "name": "industry",
+          "type": "Text",
           "source_path": "$.companies[*].industry"
         }
       ]

@@ -11,6 +11,9 @@ use thiserror::Error;
 
 use crate::ast::query::*;
 use crate::dsl::schema as d;
+use crate::metadata::PropertyMetadata;
+use crate::types::context::{LowerCtx, RawTypedFilter};
+use crate::types::{TypeError, TypeRegistry, TypeId, TypedOp};
 
 #[derive(Debug, Error)]
 pub enum AstError {
@@ -34,15 +37,64 @@ pub enum AstError {
 
     #[error("traversal depth {got} exceeds configured max {max}")]
     DepthTooLarge { got: u32, max: u32 },
+
+    #[error("unknown plain filter op '{0}'")]
+    UnknownPlainOp(String),
+
+    #[error("typed op '{op}' is not supported by type '{ty}'")]
+    UnsupportedTypedOp { ty: String, op: String },
+
+    #[error("type system error: {0}")]
+    Type(#[from] TypeError),
 }
 
 /// Lower a validated DSL query into the AST.
 ///
 /// `max_depth` is enforced here so the AST itself can advertise that any
 /// traversal it carries is within limits; downstream code never has to check.
+///
+/// Backwards-compatible alias using an empty registry and no metadata.
+/// Use this only when the DSL is known not to contain typed filters.
 pub fn lower(dsl: d::DslQuery, max_depth: u32) -> Result<ReadQuery, AstError> {
+    lower_full(dsl, max_depth, &TypeRegistry::empty(), None)
+}
+
+/// Lower a DSL query, dispatching typed filters through `registry`.
+/// Equivalent to [`lower_full`] without a metadata snapshot.
+pub fn lower_with_registry(
+    dsl: d::DslQuery,
+    max_depth: u32,
+    registry: &TypeRegistry,
+) -> Result<ReadQuery, AstError> {
+    lower_full(dsl, max_depth, registry, None)
+}
+
+/// Lower a DSL query, dispatching typed filters through `registry`,
+/// and **auto-resolve** the type for filters that omit `"type"` by
+/// looking the field up in `metadata`.
+///
+/// The lookup key is `<node-label>.<property>` — the same shape
+/// [`crate::metadata::collect_from_mapping`] writes. Aliases bound to a
+/// node take their label from the MATCH pattern; aliases bound to an
+/// edge use the edge label.
+///
+/// This makes the DSL terser: an LLM can emit
+/// `{"field": "c.name", "op": "search", "value": "apple"}` and the
+/// SemanticText handler is selected automatically because the mapping
+/// declared `c.name` as `SemanticText`.
+pub fn lower_full(
+    dsl: d::DslQuery,
+    max_depth: u32,
+    registry: &TypeRegistry,
+    metadata: Option<&PropertyMetadata>,
+) -> Result<ReadQuery, AstError> {
     let mut bound: HashMap<String, ()> = HashMap::new();
     bound.insert(dsl.start.alias.clone(), ());
+
+    // Track which graph label each alias resolves to. Used to look up
+    // typed-property metadata as `<label>.<property>`.
+    let mut alias_labels: HashMap<String, String> = HashMap::new();
+    alias_labels.insert(dsl.start.alias.clone(), dsl.start.label.clone());
 
     let start = Node {
         label: dsl.start.label.clone(),
@@ -68,6 +120,8 @@ pub fn lower(dsl: d::DslQuery, max_depth: u32) -> Result<ReadQuery, AstError> {
 
         bound.insert(t.edge.alias.clone(), ());
         bound.insert(t.target.alias.clone(), ());
+        alias_labels.insert(t.edge.alias.clone(), t.edge.label.clone());
+        alias_labels.insert(t.target.alias.clone(), t.target.label.clone());
         traversals.push(EdgeTraversal {
             from_alias: Alias::new(from_name),
             edge_label: t.edge.label,
@@ -81,7 +135,7 @@ pub fn lower(dsl: d::DslQuery, max_depth: u32) -> Result<ReadQuery, AstError> {
         });
     }
 
-    let filter = lower_filters(&dsl.filters, &bound)?;
+    let filter = lower_filters(&dsl.filters, &bound, &alias_labels, registry, metadata)?;
     let returns = lower_returns(&dsl.return_, &bound)?;
 
     let action = match dsl.action {
@@ -122,23 +176,104 @@ fn lower_direction(d: d::Direction) -> Direction {
 fn lower_filters(
     filters: &[d::Filter],
     bound: &HashMap<String, ()>,
+    alias_labels: &HashMap<String, String>,
+    registry: &TypeRegistry,
+    metadata: Option<&PropertyMetadata>,
 ) -> Result<Option<FilterExpression>, AstError> {
     if filters.is_empty() {
         return Ok(None);
     }
     let mut preds = Vec::with_capacity(filters.len());
     for f in filters {
-        preds.push(FilterExpression::Predicate(Predicate {
-            field: resolve_property(&f.field, bound)?,
-            op: lower_op(f.op),
-            value: Literal::from_json(&f.value).ok_or(AstError::UnsupportedLiteral)?,
-        }));
+        let field = resolve_property(&f.field, bound)?;
+
+        // Effective type tag for this filter.
+        //
+        // Order of precedence:
+        //   1. Explicit `"type"` in the DSL (always wins; lets the LLM
+        //      override the mapping when it knows better).
+        //   2. The registered field-type from `PropertyMetadata`,
+        //      keyed on `<alias-label>.<property>`.
+        //   3. None — falls back to plain ops.
+        //
+        // Scenario (1) keeps the existing surface working unchanged;
+        // (2) is what makes typed filters terse for the LLM:
+        //     `{"field": "c.name", "op": "search", "value": "apple"}`
+        // resolves to `SemanticText` automatically when the mapping
+        // declared `Company.name` as such.
+        let effective_type = f
+            .field_type
+            .clone()
+            .or_else(|| infer_type(&field, alias_labels, metadata));
+
+        match effective_type {
+            // Plain (untyped) predicate: parse the op and convert the
+            // value into the typed AST literal.
+            None => {
+                let op = d::FilterOp::parse(&f.op)
+                    .ok_or_else(|| AstError::UnknownPlainOp(f.op.clone()))?;
+                preds.push(FilterExpression::Predicate(Predicate {
+                    field,
+                    op: lower_op(op),
+                    value: Literal::from_json(&f.value).ok_or(AstError::UnsupportedLiteral)?,
+                }));
+            }
+            // Typed predicate: route through the registered handler.
+            Some(ty_name) => {
+                let type_id = TypeId::new(&ty_name);
+                let handler = registry.get(&type_id)?;
+                let typed_op = parse_typed_op(&f.op).ok_or_else(|| {
+                    AstError::UnsupportedTypedOp {
+                        ty: ty_name.clone(),
+                        op: f.op.clone(),
+                    }
+                })?;
+                if !handler.supported_ops().contains(&typed_op) {
+                    return Err(AstError::UnsupportedTypedOp {
+                        ty: ty_name.clone(),
+                        op: f.op.clone(),
+                    });
+                }
+                let field_label = alias_labels.get(field.alias.as_str()).map(String::as_str);
+                let mut ctx = LowerCtx {
+                    raw: RawTypedFilter {
+                        field: &field,
+                        op: typed_op,
+                        value: &f.value,
+                    },
+                    type_id: type_id.clone(),
+                    field_label,
+                };
+                let typed = handler.lower(&mut ctx)?;
+                preds.push(FilterExpression::Typed(typed));
+            }
+        }
     }
     Ok(Some(if preds.len() == 1 {
         preds.pop().expect("len checked")
     } else {
         FilterExpression::And(preds)
     }))
+}
+
+/// Look up the registered type for `field` in `metadata`. Returns
+/// `None` when:
+///
+/// * the alias has no recorded label (shouldn't happen for valid
+///   queries — the lowering step binds every alias before filters
+///   run),
+/// * the field has no `.<property>` part (entity-level references
+///   never carry a type), or
+/// * the metadata snapshot has no entry for the resolved key.
+fn infer_type(
+    field: &PropertyRef,
+    alias_labels: &HashMap<String, String>,
+    metadata: Option<&PropertyMetadata>,
+) -> Option<String> {
+    let meta = metadata?;
+    let prop = field.property.as_deref()?;
+    let label = alias_labels.get(field.alias.as_str())?;
+    meta.get_type(&format!("{label}.{prop}")).map(str::to_string)
 }
 
 fn lower_op(op: d::FilterOp) -> ComparisonOp {
@@ -154,6 +289,28 @@ fn lower_op(op: d::FilterOp) -> ComparisonOp {
         d::FilterOp::StartsWith => ComparisonOp::StartsWith,
         d::FilterOp::EndsWith => ComparisonOp::EndsWith,
     }
+}
+
+/// Parse a typed-op string. Supports the snake_case form used in the
+/// DSL (`search`, `hybrid_search`, `near`, …) as well as the plain ops
+/// — handlers can opt into reusing them.
+fn parse_typed_op(s: &str) -> Option<TypedOp> {
+    Some(match s {
+        "eq" => TypedOp::Eq,
+        "neq" => TypedOp::Neq,
+        "gt" => TypedOp::Gt,
+        "gte" => TypedOp::Gte,
+        "lt" => TypedOp::Lt,
+        "lte" => TypedOp::Lte,
+        "in" => TypedOp::In,
+        "contains" => TypedOp::Contains,
+        "starts_with" => TypedOp::StartsWith,
+        "ends_with" => TypedOp::EndsWith,
+        "search" => TypedOp::Search,
+        "hybrid_search" | "hybrid" => TypedOp::HybridSearch,
+        "near" => TypedOp::Near,
+        _ => return None,
+    })
 }
 
 fn lower_returns(

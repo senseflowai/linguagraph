@@ -111,9 +111,15 @@ pub struct Depth {
 }
 
 /// Boolean expression tree. Simple enough today; ready to grow into NOT/OR.
+///
+/// `Typed` carries a fully-resolved predicate produced by a
+/// [`crate::types::TypeHandler`] during lowering. The Cypher builder
+/// dispatches `Typed` back through the handler at emit time — it never
+/// inspects the type id itself.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FilterExpression {
     Predicate(Predicate),
+    Typed(crate::types::TypedPredicate),
     And(Vec<FilterExpression>),
     Or(Vec<FilterExpression>),
     Not(Box<FilterExpression>),

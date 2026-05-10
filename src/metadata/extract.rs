@@ -1,15 +1,21 @@
-//! Pull description annotations out of a [`Mapping`] document.
+//! Pull description annotations and field-type tags out of a [`Mapping`]
+//! document.
 //!
 //! Keys are the property path in the *graph node*, not the JSONPath in the
 //! source document — `Camera.state`, not `$.cameras[*].state`. That's the
 //! shape the prompt generator and downstream consumers need.
+//!
+//! Field types travel alongside descriptions so that, at query time, the
+//! DSL lowerer can auto-resolve a [`crate::types::TypeHandler`] for a
+//! property without requiring the LLM-emitted DSL to repeat the type tag.
 
 use crate::mapper::Mapping;
 
-use super::PropertyMetadata;
+use super::{PropertyInfo, PropertyMetadata};
 
-/// Build a metadata snapshot from a mapping. Entities and properties without
-/// descriptions are skipped — the cache stores only annotated paths.
+/// Build a metadata snapshot from a mapping. Entries with neither a
+/// description nor a type are skipped — the cache stores only annotated
+/// paths.
 pub fn collect_from_mapping(mapping: &Mapping) -> PropertyMetadata {
     let mut meta = PropertyMetadata::new();
     for ent in &mapping.entities {
@@ -19,10 +25,20 @@ pub fn collect_from_mapping(mapping: &Mapping) -> PropertyMetadata {
             }
         }
         for prop in &ent.properties {
+            let key = format!("{}.{}", ent.kind, prop.name);
+            let mut info = PropertyInfo::default();
             if let Some(desc) = prop.description.as_deref() {
                 if !desc.is_empty() {
-                    meta.insert(format!("{}.{}", ent.kind, prop.name), desc);
+                    info.description = Some(desc.to_string());
                 }
+            }
+            if let Some(ty) = prop.field_type.as_deref() {
+                if !ty.is_empty() {
+                    info.field_type = Some(ty.to_string());
+                }
+            }
+            if !info.is_empty() {
+                meta.insert_info(key, info);
             }
         }
     }
@@ -62,7 +78,62 @@ mod tests {
     }
 
     #[test]
-    fn skips_empty_descriptions() {
+    fn collects_field_types() {
+        let mapping: Mapping = serde_json::from_value(json!({
+            "entities": [{
+                "type": "Company",
+                "source_path": "$.companies[*]",
+                "primary_key": "$.companies[*].id",
+                "properties": [
+                    {"name": "id", "source_path": "$.companies[*].id"},
+                    {
+                        "name": "name",
+                        "source_path": "$.companies[*].name",
+                        "type": "SemanticText",
+                        "description": "the company name"
+                    },
+                    {
+                        "name": "industry",
+                        "source_path": "$.companies[*].industry"
+                    }
+                ]
+            }]
+        }))
+        .unwrap();
+
+        let meta = collect_from_mapping(&mapping);
+        // Typed property: both description and type captured.
+        assert_eq!(meta.get_type("Company.name"), Some("SemanticText"));
+        assert_eq!(meta.get("Company.name"), Some("the company name"));
+        // Untyped, undocumented properties are still skipped entirely.
+        assert!(meta.info("Company.industry").is_none());
+    }
+
+    #[test]
+    fn type_only_property_still_recorded() {
+        let mapping: Mapping = serde_json::from_value(json!({
+            "entities": [{
+                "type": "Company",
+                "source_path": "$.companies[*]",
+                "primary_key": "$.companies[*].id",
+                "properties": [
+                    {"name": "id", "source_path": "$.companies[*].id"},
+                    {
+                        "name": "name",
+                        "source_path": "$.companies[*].name",
+                        "type": "SemanticText"
+                    }
+                ]
+            }]
+        }))
+        .unwrap();
+        let meta = collect_from_mapping(&mapping);
+        assert_eq!(meta.get_type("Company.name"), Some("SemanticText"));
+        assert_eq!(meta.get("Company.name"), None);
+    }
+
+    #[test]
+    fn skips_empty_descriptions_and_types() {
         let mapping: Mapping = serde_json::from_value(json!({
             "entities": [{
                 "type": "X",
@@ -78,3 +149,4 @@ mod tests {
         assert!(collect_from_mapping(&mapping).is_empty());
     }
 }
+

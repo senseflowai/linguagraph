@@ -1,0 +1,31 @@
+{
+  "companies": [
+    {
+      "id": 1,
+      "name": "Stripe",
+      "description": "Payments API for the internet that lets developers collect online and in-person payments.",
+      "industry": "Fintech",
+      "founded_at": "2010-09-01",
+      "is_public": false,
+      "employee_count": 8000
+    },
+    {
+      "id": 2,
+      "name": "Acme",
+      "description": "Premium anvils that always work.",
+      "industry": "Manufacturing",
+      "founded_at": "1949-03-15",
+      "is_public": true,
+      "employee_count": 320
+    },
+    {
+      "id": 3,
+      "name": "Cherry Robotics",
+      "description": "Builds autonomous fruit-picking robots for orchards and large-scale farms.",
+      "industry": "Robotics",
+      "founded_at": "2018-06-12",
+      "is_public": false,
+      "employee_count": 75
+    }
+  ]
+}

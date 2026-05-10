@@ -27,7 +27,8 @@ fn cfg() -> Config {
             max_traversal_depth: 4,
             default_limit: 50,
         },
-        metadata: MetadataConfig::default()
+        metadata: Default::default(),
+        types: Default::default(),
     }
 }
 

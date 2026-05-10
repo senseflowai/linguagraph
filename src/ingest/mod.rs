@@ -12,7 +12,7 @@ pub mod planner;
 use thiserror::Error;
 
 pub use dsl::{InsertPlan, NodePlan, RelationPlan};
-pub use planner::{plan, plan_with_options, PlannerOptions};
+pub use planner::{plan, plan_with_options, plan_with_registry, PlannerOptions};
 
 use crate::ast::AstError;
 use crate::mapper::MapperError;
@@ -30,4 +30,7 @@ pub enum IngestError {
 
     #[error("max_batch_size must be greater than zero")]
     InvalidBatchSize,
+
+    #[error("type handler error during ingestion: {0}")]
+    Type(String),
 }

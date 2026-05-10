@@ -1,5 +1,5 @@
 {
-  "action": "aggregate",
+  "action": "find",
   "start": {
     "label": "Camera",
     "alias": "c"
@@ -7,31 +7,28 @@
   "traversals": [],
   "filters": [
     {
-      "field": "c.created_at",
-      "op": "gte",
-      "value": "2023-01-01T00:00:00Z"
-    },
-    {
-      "field": "c.created_at",
-      "op": "lte",
-      "value": "2026-12-31T23:59:59Z"
+      "field": "c.name",
+      "op": "eq",
+      "value": "TargetAI - Openspace"
     }
   ],
   "return": [
     {
-      "aggregate": "count",
       "field": "c.id",
-      "alias": "camera_count"
-    }
-  ],
-  "group_by": [
-    "c.created_at"
-  ],
-  "sort": [
+      "alias": "id"
+    },
     {
-      "field": "c.created_at",
-      "order": "asc"
+      "field": "c.name",
+      "alias": "name"
+    },
+    {
+      "field": "c.state",
+      "alias": "state"
+    },
+    {
+      "field": "c.snapshot_url",
+      "alias": "snapshot_url"
     }
   ],
-  "limit": 1000
+  "limit": 25
 }

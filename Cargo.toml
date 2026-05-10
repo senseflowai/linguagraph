@@ -21,15 +21,27 @@ toml = "0.8"
 thiserror = "1.0"
 anyhow = "1.0"
 async-trait = "0.1"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "io-util"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "io-util", "sync"] }
 clap = { version = "4.5", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 neo4rs = "0.8"
+once_cell = "1"
+
+# `llama-cpp-2` is gated behind the `llama` feature so the default build
+# stays free of native deps. Tests and CI run on the deterministic mock
+# embedder; the GGUF-backed embedder is wired in identically when the
+# feature is enabled.
+llama-cpp-2 = { git = "https://github.com/senseflowai/llama-cpp-rs", branch = "main", optional = true }
+encoding_rs = "0.8.35"
 
 [dev-dependencies]
 pretty_assertions = "1.4"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
+
+[features]
+llama = ["dep:llama-cpp-2"]
+default = ["llama"]
 
 [profile.release]
 lto = "thin"

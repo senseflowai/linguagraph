@@ -51,4 +51,10 @@ pub enum MapperError {
 
     #[error("duplicate entity type '{0}' in mapping")]
     DuplicateEntityType(String),
+
+    #[error(
+        "property '{property}' in entity '{entity}' is missing a 'type' tag — \
+         every property must declare its type (e.g. \"type\": \"Text\")"
+    )]
+    MissingPropertyType { entity: String, property: String },
 }

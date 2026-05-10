@@ -6,15 +6,17 @@ use std::sync::Arc;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use tokio::fs;
-
+use crate::ast::Literal;
 use crate::config::{self, Config};
 use crate::core::Pipeline;
 use crate::db::{introspect, GraphClient, MemgraphClient};
 use crate::dsl;
+use crate::embeddings::{self, SharedEmbedder};
 use crate::error::Result;
 use crate::mapper::Mapping;
 use crate::metadata::{FileMetadataStore, MetadataStore};
 use crate::prompt::{self, GraphSchema, PromptOptions};
+use crate::types::{self, SharedRegistry};
 
 /// Output format for the `schema` subcommand.
 #[derive(Debug, Clone, Copy, ValueEnum, Default)]
@@ -110,6 +112,32 @@ pub enum Command {
         #[arg(long, default_value_t = 1000)]
         batch_size: usize,
     },
+    /// Compile a DSL JSON file with the configured type registry and
+    /// print the generated Cypher (including any qlink fragments).
+    /// Does not connect to the database.
+    Query {
+        /// Path to the DSL JSON file.
+        path: PathBuf,
+    },
+    /// Analyse an arbitrary JSON document and emit a prompt that
+    /// instructs an LLM to produce a linguagraph mapping JSON for it.
+    GeneratePrompt {
+        /// Path to the input JSON file.
+        path: PathBuf,
+        /// Free-form domain hints (repeatable). Rendered verbatim
+        /// under a "Domain hints" section.
+        #[arg(long = "hint")]
+        hints: Vec<String>,
+        /// Preferred field types (repeatable; ordered).
+        #[arg(long = "prefer")]
+        prefer: Vec<String>,
+        /// Skip the worked example block.
+        #[arg(long)]
+        no_examples: bool,
+        /// Skip the inferred-structure section.
+        #[arg(long)]
+        no_summary: bool,
+    },
 }
 
 pub async fn run(cli: Cli) -> Result<()> {
@@ -129,7 +157,36 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::IngestCypher { data, mapping, batch_size } => {
             cmd_ingest_cypher(&cli.config, data, mapping, batch_size).await
         }
+        Command::Query { path } => cmd_query(&cli.config, path).await,
+        Command::GeneratePrompt { path, hints, prefer, no_examples, no_summary } => {
+            cmd_generate_prompt(&cli.config, path, hints, prefer, no_examples, no_summary).await
+        }
     }
+}
+
+/// Build a [`SharedRegistry`] from `cfg`. Always returns a registry
+/// (possibly empty) so callers can pass it through unconditionally.
+fn build_registry(cfg: &Config) -> Result<(SharedRegistry, Option<SharedEmbedder>)> {
+    let dim = cfg
+        .types
+        .get("SemanticText")
+        .and_then(|t| t.embedding_dim)
+        .unwrap_or(384);
+    let model = cfg
+        .types
+        .get("SemanticText")
+        .and_then(|t| t.embedding_model.clone());
+    let embedder = embeddings::default_embedder(model.as_deref(), dim).map_err(|e| {
+        crate::error::Error::Ingest(crate::ingest::IngestError::Type(format!(
+            "embedder init: {e}"
+        )))
+    })?;
+    let registry = types::handlers::register_default(cfg, embedder.clone()).map_err(|e| {
+        crate::error::Error::Ingest(crate::ingest::IngestError::Type(format!(
+            "registry init: {e}"
+        )))
+    })?;
+    Ok((std::sync::Arc::new(registry), Some(embedder)))
 }
 
 async fn cmd_dsl(path: PathBuf) -> Result<()> {
@@ -140,21 +197,93 @@ async fn cmd_dsl(path: PathBuf) -> Result<()> {
 
 async fn cmd_cypher(config_path: &std::path::Path, path: PathBuf) -> Result<()> {
     let cfg = load_config_or_default(config_path).await;
-    let pipeline = Pipeline::new(Arc::new(crate::db::MockClient::new()), &cfg);
+    let (registry, embedder) = build_registry(&cfg)?;
+    // Load the metadata snapshot so a DSL filter like
+    // `{"field": "c.name", "op": "search", ...}` resolves to the
+    // SemanticText handler automatically when the cached mapping
+    // tagged `Company.name` as such — no `"type"` needed in the DSL.
+    let meta_store: Arc<dyn MetadataStore> =
+        Arc::new(FileMetadataStore::new(&cfg.metadata.cache_path));
+    let mut pipeline = Pipeline::new(Arc::new(crate::db::MockClient::new()), &cfg)
+        .with_registry(registry)
+        .with_metadata_store(meta_store);
+    if let Some(e) = embedder {
+        pipeline = pipeline.with_embedder(e);
+    }
+    pipeline.load_metadata().await?;
     let dsl_query = dsl::parse(&path).await?;
     let cypher = pipeline.compile(dsl_query)?;
     println!("-- Cypher --\n{}", cypher.text);
     println!("\n-- Parameters --");
     for (k, v) in &cypher.params {
         println!("${k} = {}", serde_json::to_string(v)?);
+        match v {
+            Literal::List(vec) => {
+                let emb: Vec<f32> = vec.iter()
+                    .filter_map(|value| match value {
+                        Literal::Float(f) => Some(*f as f32),
+                        _ => None,
+                    })
+                    .collect();
+                println!("{:?}", emb);
+            }
+            _ => {}
+        }
     }
+    Ok(())
+}
+
+async fn cmd_query(config_path: &std::path::Path, path: PathBuf) -> Result<()> {
+    // Same as `cypher` today; kept as a separate command so future
+    // natural-language pipelines can hang off the more obvious name.
+    cmd_cypher(config_path, path).await
+}
+
+async fn cmd_generate_prompt(
+    config_path: &std::path::Path,
+    path: PathBuf,
+    hints: Vec<String>,
+    prefer: Vec<String>,
+    no_examples: bool,
+    no_summary: bool,
+) -> Result<()> {
+    use crate::promptgen::{generate_prompt, PromptGenOptions};
+
+    let raw = fs::read_to_string(&path).await?;
+    let value: serde_json::Value = serde_json::from_str(&raw)?;
+
+    // The registry is best-effort: when config is missing or wrong
+    // we still want the CLI to work, falling back to the bundled
+    // catalogue.
+    let cfg = load_config_or_default(config_path).await;
+    let registry = build_registry(&cfg).ok().map(|(r, _)| (*r).clone());
+
+    let opts = PromptGenOptions {
+        domain_hints: hints,
+        preferred_types: prefer,
+        include_examples: !no_examples,
+        include_inferred_summary: !no_summary,
+        registry,
+        ..PromptGenOptions::default()
+    };
+    let prompt = generate_prompt(&value, &opts);
+    print!("{prompt}");
     Ok(())
 }
 
 async fn cmd_run(config_path: &std::path::Path, path: PathBuf) -> Result<()> {
     let cfg = config::load(config_path).await?;
     let client = MemgraphClient::connect(&cfg.database).await?;
-    let pipeline = Pipeline::new(Arc::new(client), &cfg);
+    let (registry, embedder) = build_registry(&cfg)?;
+    let meta_store: Arc<dyn MetadataStore> =
+        Arc::new(FileMetadataStore::new(&cfg.metadata.cache_path));
+    let mut pipeline = Pipeline::new(Arc::new(client), &cfg)
+        .with_registry(registry)
+        .with_metadata_store(meta_store);
+    if let Some(e) = embedder {
+        pipeline = pipeline.with_embedder(e);
+    }
+    pipeline.load_metadata().await?;
     let dsl_query = dsl::parse(&path).await?;
     let result = pipeline.run(dsl_query).await?;
     println!("{}", serde_json::to_string_pretty(&result)?);
@@ -186,9 +315,16 @@ async fn cmd_prompt(
         let m = store.load().await?;
         if m.is_empty() { None } else { Some(m) }
     };
+    let (registry, _) = build_registry(&cfg)?;
+    let registry_for_prompt = (*registry).clone();
     let opts = PromptOptions {
         include_examples: !no_examples,
         property_metadata,
+        type_registry: if registry_for_prompt.is_empty() {
+            None
+        } else {
+            Some(registry_for_prompt)
+        },
         ..PromptOptions::default()
     };
     let prompt = prompt::generate_system_prompt(&schema, &opts);
@@ -247,9 +383,14 @@ async fn cmd_ingest(
     let client = MemgraphClient::connect(&cfg.database).await?;
     let store: Arc<dyn MetadataStore> =
         Arc::new(FileMetadataStore::new(&cfg.metadata.cache_path));
-    let pipeline = Pipeline::new(Arc::new(client), &cfg)
+    let (registry, embedder) = build_registry(&cfg)?;
+    let mut pipeline = Pipeline::new(Arc::new(client), &cfg)
         .with_ingest_batch_size(batch_size)
-        .with_metadata_store(store);
+        .with_metadata_store(store)
+        .with_registry(registry);
+    if let Some(e) = embedder {
+        pipeline = pipeline.with_embedder(e);
+    }
     let summary = pipeline.ingest(&mapping, &value).await?;
     println!("{}", serde_json::to_string_pretty(&summary)?);
     Ok(())
@@ -266,8 +407,13 @@ async fn cmd_ingest_cypher(
     let raw = fs::read_to_string(&data).await?;
     let value: serde_json::Value = serde_json::from_str(&raw)?;
 
-    let pipeline = Pipeline::new(Arc::new(crate::db::MockClient::new()), &cfg)
-        .with_ingest_batch_size(batch_size);
+    let (registry, embedder) = build_registry(&cfg)?;
+    let mut pipeline = Pipeline::new(Arc::new(crate::db::MockClient::new()), &cfg)
+        .with_ingest_batch_size(batch_size)
+        .with_registry(registry);
+    if let Some(e) = embedder {
+        pipeline = pipeline.with_embedder(e);
+    }
     let batches = pipeline.compile_insert(&mapping, &value)?;
     for (i, q) in batches.iter().enumerate() {
         println!("-- Batch {i} --\n{}\n-- Parameters --", q.text);
@@ -296,6 +442,7 @@ async fn load_config_or_default(path: &std::path::Path) -> Config {
             llm: Default::default(),
             query: Default::default(),
             metadata: Default::default(),
+            types: Default::default(),
         },
     }
 }

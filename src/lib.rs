@@ -27,10 +27,13 @@ pub mod config;
 pub mod core;
 pub mod db;
 pub mod dsl;
+pub mod embeddings;
 pub mod error;
 pub mod ingest;
 pub mod mapper;
 pub mod metadata;
 pub mod prompt;
+pub mod promptgen;
+pub mod types;
 
 pub use error::{Error, Result};

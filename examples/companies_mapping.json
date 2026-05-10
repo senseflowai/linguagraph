@@ -1,0 +1,35 @@
+{
+  "entities": [
+    {
+      "type": "Company",
+      "source_path": "$.companies[*]",
+      "primary_key": "$.companies[*].id",
+      "description": "A company record. The `name` and `description` fields are searchable via natural-language queries.",
+      "properties": [
+        {
+          "name": "id",
+          "type": "Text",
+          "source_path": "$.companies[*].id"
+        },
+        {
+          "name": "name",
+          "type": "SemanticText",
+          "source_path": "$.companies[*].name",
+          "description": "Free-text company name. Stored on the node for exact lookups and embedded into qlink/Qdrant for vector search."
+        },
+        {
+          "name": "description",
+          "type": "SemanticText",
+          "source_path": "$.companies[*].description",
+          "description": "Long-form company description used for hybrid search."
+        },
+        {
+          "name": "industry",
+          "type": "Text",
+          "source_path": "$.companies[*].industry"
+        }
+      ]
+    }
+  ],
+  "relationships": []
+}

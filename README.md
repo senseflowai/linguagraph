@@ -29,6 +29,11 @@ producing correct, parameterized Cypher ourselves.
   store, a different Cypher backend) plug in the same way.
 - **Schema-aware prompting.** A `GraphSchema` description renders into a
   provider-agnostic system prompt with rules and worked examples.
+- **Pluggable type system.** Field types own their own ingestion / lowering /
+  Cypher emission. Bundled `SemanticText` integrates with
+  [qlink](https://github.com/senseflowai/qlink) for vector + hybrid search;
+  add your own (`GeoLocation`, `Keyword`, `ImageEmbedding`) without touching
+  the core. See [`docs/type-system.md`](#pluggable-type-system).
 - **TOML config + env overrides.** `LINGUAGRAPH__DATABASE__URI=...` overrides
   the file without templating.
 
@@ -42,12 +47,95 @@ src/
 ├── db/         GraphClient trait, neo4rs impl, mock impl
 ├── config/     TOML loader with env overrides
 ├── prompt/     schema-aware system-prompt generator
+├── types/      pluggable field-type system (registry, handlers)
+├── embeddings/ Embedder trait + Mock + llama-cpp-2 backend
+├── ingest/     mapping → InsertQuery planner with side-effect queue
+├── mapper/     declarative JSON → entity-row extraction
 ├── core/       Pipeline orchestration (wires layers together)
 ├── cli/        clap-based CLI
 └── error.rs    crate-wide Error / Result
 tests/          integration tests (no live DB required)
 examples/       sample DSL JSON, usage notes
 ```
+
+## Pluggable type system
+
+Each field type owns its behaviour across four stages — *ingestion*,
+*DSL → AST lowering*, *AST → Cypher emission*, and *prompt advertisement*.
+Core modules never branch on type names; they go through a `TypeRegistry`.
+
+### Built-in type: `SemanticText`
+
+Free-text fields searchable via embeddings + [qlink](https://github.com/senseflowai/qlink).
+Configure once in `config.toml`:
+
+```toml
+[types.SemanticText]
+embedding_model = "models/bge-small.gguf"
+collection      = "companies"
+top_k           = 20
+```
+
+Tag a property in the mapping:
+
+```json
+{
+  "name": "name",
+  "source_path": "$.companies[*].name",
+  "type": "SemanticText"
+}
+```
+
+Now the field is exact-match searchable *and* embedded into qlink/Qdrant.
+The DSL grows two new ops, `search` and `hybrid_search`:
+
+```json
+{
+  "action": "find",
+  "start": { "label": "Company", "alias": "c" },
+  "filters": [
+    { "field": "c.name", "type": "SemanticText", "op": "search", "value": "apple" }
+  ],
+  "return": [{ "field": "c.name", "alias": "name" }],
+  "limit": 5
+}
+```
+
+compiles to:
+
+```cypher
+CALL qlink.search([$p0], $p1, $p2) YIELD id AS c__qid, score AS c__score
+MATCH (c:Company)
+WHERE id(c) = c__qid
+RETURN c.name AS name
+ORDER BY c__score DESC
+LIMIT 5
+```
+
+`hybrid_search` adds an exact-match score to the vector score and orders
+by their sum. See `examples/find_company_*.json` for both shapes.
+
+### Adding a new type
+
+```rust
+struct GeoLocation;
+
+impl TypeHandler for GeoLocation {
+    fn type_id(&self) -> TypeId { TypeId::new("GeoLocation") }
+    fn capabilities(&self) -> Capabilities { Capabilities::GEO_SEARCH }
+    fn on_ingest(&self, ctx: &mut IngestCtx<'_>) -> Result<(), TypeError> { /* … */ }
+    fn lower(&self, ctx: &mut LowerCtx<'_>) -> Result<TypedPredicate, TypeError> { /* … */ }
+    fn emit(&self, ctx: &mut EmitCtx<'_>, p: &TypedPredicate) -> Result<(), TypeError> { /* … */ }
+}
+
+let registry = RegistryBuilder::new()
+    .register(GeoLocation)
+    .register(SemanticTextHandler::new(cfg, embedder))
+    .build();
+let pipeline = Pipeline::new(client, &cfg).with_registry(Arc::new(registry));
+```
+
+No changes to the DSL parser, AST, or Cypher builder are required.
 
 ## Getting started
 

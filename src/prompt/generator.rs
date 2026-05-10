@@ -8,6 +8,7 @@ use std::fmt::Write;
 
 use super::schema::{GraphSchema, NodeKind, Property, RelKind};
 use crate::metadata::PropertyMetadata;
+use crate::types::TypeRegistry;
 
 #[derive(Debug, Clone)]
 pub struct PromptOptions {
@@ -19,6 +20,9 @@ pub struct PromptOptions {
     /// whose key matches `<NodeLabel>.<property>` (or `<NodeLabel>` for the
     /// node itself) is annotated inline.
     pub property_metadata: Option<PropertyMetadata>,
+    /// Registered field types whose capabilities should be advertised
+    /// to the LLM. When `None`, the prompt only describes plain ops.
+    pub type_registry: Option<TypeRegistry>,
 }
 
 impl Default for PromptOptions {
@@ -31,6 +35,7 @@ impl Default for PromptOptions {
             ),
             include_examples: true,
             property_metadata: None,
+            type_registry: None,
         }
     }
 }
@@ -47,6 +52,10 @@ pub fn generate_system_prompt(schema: &GraphSchema, opts: &PromptOptions) -> Str
     write_nodes(&mut out, &schema.nodes, opts.property_metadata.as_ref());
     write_rels(&mut out, &schema.relationships, opts.property_metadata.as_ref());
 
+    if let Some(reg) = &opts.type_registry {
+        write_field_types(&mut out, reg);
+    }
+
     out.push_str("\n# DSL rules\n");
     out.push_str(DSL_RULES);
 
@@ -56,6 +65,41 @@ pub fn generate_system_prompt(schema: &GraphSchema, opts: &PromptOptions) -> Str
     }
 
     out
+}
+
+/// Render a `# Field types` section enumerating registered handlers,
+/// their capabilities, supported ops, and an example DSL fragment.
+///
+/// The LLM uses this to decide when to attach `"type"` to a filter.
+fn write_field_types(out: &mut String, registry: &TypeRegistry) {
+    if registry.is_empty() {
+        return;
+    }
+    out.push_str("\n# Field types\n");
+    out.push_str(
+        "Filters may be tagged with `\"type\"` to opt into specialised behaviour. \
+         Each registered type lists the ops it supports.\n",
+    );
+    let mut handlers: Vec<_> = registry.iter().collect();
+    handlers.sort_by(|a, b| a.type_id().0.cmp(&b.type_id().0));
+    for h in handlers {
+        let hint = h.prompt_hint();
+        let _ = writeln!(
+            out,
+            "  - {}  [capabilities: {}]",
+            hint.type_id, hint.capabilities
+        );
+        if let Some(doc) = hint.doc {
+            let _ = writeln!(out, "      {doc}");
+        }
+        if !hint.ops.is_empty() {
+            let ops: Vec<&str> = hint.ops.iter().map(|o| o.as_str()).collect();
+            let _ = writeln!(out, "      ops: {}", ops.join(", "));
+        }
+        if let Some(ex) = hint.example {
+            let _ = writeln!(out, "      example: {ex}");
+        }
+    }
 }
 
 fn write_nodes(out: &mut String, nodes: &[NodeKind], meta: Option<&PropertyMetadata>) {
@@ -115,11 +159,25 @@ fn render_props(
     let inner: Vec<String> = props
         .iter()
         .map(|p| {
-            let base = format!("{}: {}", p.name, format_ty(p.ty));
-            match meta.and_then(|m| m.get(&format!("{owner}.{}", p.name))) {
-                Some(d) => format!("{base} /* {d} */"),
-                None => base,
+            let key = format!("{owner}.{}", p.name);
+            let info = meta.and_then(|m| m.info(&key));
+            // Property header shape:
+            //   <name>: <scalar-ty>                       (untyped, undocumented)
+            //   <name>: <scalar-ty> @<FieldType>           (typed, e.g. SemanticText)
+            //   <name>: <scalar-ty> /* description */      (documented only)
+            //   <name>: <scalar-ty> @<FieldType> /* … */   (both)
+            //
+            // The `@SemanticText` marker tells the LLM it can omit the
+            // explicit `"type"` tag in DSL filters — the lowering step
+            // will resolve the handler from the same metadata.
+            let mut base = format!("{}: {}", p.name, format_ty(p.ty));
+            if let Some(ty) = info.and_then(|i| i.field_type.as_deref()) {
+                base = format!("{base} @{ty}");
             }
+            if let Some(desc) = info.and_then(|i| i.description.as_deref()) {
+                base = format!("{base} /* {desc} */");
+            }
+            base
         })
         .collect();
     format!(" {{ {} }}", inner.join(", "))

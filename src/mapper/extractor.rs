@@ -46,6 +46,11 @@ pub struct EntityRow {
     pub id: Literal,
     /// Properties (the planner adds the merge key automatically).
     pub properties: BTreeMap<String, Literal>,
+    /// Raw JSON values kept alongside [`Self::properties`] for properties
+    /// whose mapping has a `type` tag. The planner needs the original
+    /// value (not the lossy `Literal` view) so the handler can run.
+    /// Untyped properties are absent from this map.
+    pub raw_typed: BTreeMap<String, serde_json::Value>,
     /// Indices captured at every `[*]` segment in the source path.
     /// The planner uses this to align relationships across entity types.
     pub context: Vec<usize>,
@@ -97,11 +102,19 @@ fn extract_entity(ent: &EntityMapping, data: &Value) -> Result<ExtractedEntity, 
 
     // Pre-parse property paths so a bad mapping fails before we walk the
     // potentially huge input. We *do not* require property paths to be
-    // children of the source — see module docs.
-    let props: Vec<(String, JsonPath)> = ent
+    // children of the source — see module docs. The third tuple slot
+    // marks the property as `Some(_)`-typed so the extractor knows to
+    // also stash the raw JSON value for it.
+    let props: Vec<(String, JsonPath, Option<String>)> = ent
         .properties
         .iter()
-        .map(|p| Ok::<_, MapperError>((p.name.clone(), parse(&p.source_path)?)))
+        .map(|p| {
+            Ok::<_, MapperError>((
+                p.name.clone(),
+                parse(&p.source_path)?,
+                p.field_type.clone(),
+            ))
+        })
         .collect::<Result<_, _>>()?;
 
     let pk_field_name = derive_pk_field_name(ent);
@@ -139,7 +152,8 @@ fn extract_entity(ent: &EntityMapping, data: &Value) -> Result<ExtractedEntity, 
         }
 
         let mut properties: BTreeMap<String, Literal> = BTreeMap::new();
-        for (name, path) in &props {
+        let mut raw_typed: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+        for (name, path, field_type) in &props {
             let matches = resolve_value(path, &source, src.value, &src.context, data);
             // Missing values are tolerated (the data may legitimately omit
             // a field); MERGE leaves the existing property untouched.
@@ -148,8 +162,12 @@ fn extract_entity(ent: &EntityMapping, data: &Value) -> Result<ExtractedEntity, 
             match matches.len() {
                 0 => {}
                 1 => {
+                    let raw = matches[0].value.clone();
                     if let Some(v) = Literal::from_json_any(matches[0].value) {
                         properties.insert(name.clone(), v);
+                    }
+                    if field_type.is_some() {
+                        raw_typed.insert(name.clone(), raw);
                     }
                 }
                 _ => {
@@ -158,6 +176,11 @@ fn extract_entity(ent: &EntityMapping, data: &Value) -> Result<ExtractedEntity, 
                         .filter_map(|m| Literal::from_json_any(m.value))
                         .collect();
                     properties.insert(name.clone(), Literal::List(collected));
+                    if field_type.is_some() {
+                        let raw_list: Vec<serde_json::Value> =
+                            matches.iter().map(|m| m.value.clone()).collect();
+                        raw_typed.insert(name.clone(), serde_json::Value::Array(raw_list));
+                    }
                 }
             }
         }
@@ -165,6 +188,7 @@ fn extract_entity(ent: &EntityMapping, data: &Value) -> Result<ExtractedEntity, 
         rows.push(EntityRow {
             id,
             properties,
+            raw_typed,
             context: src.context,
         });
     }
@@ -209,6 +233,7 @@ mod tests {
                     name: (*n).into(),
                     source_path: (*p).into(),
                     description: None,
+                    field_type: None,
                 })
                 .collect(),
             name: None,

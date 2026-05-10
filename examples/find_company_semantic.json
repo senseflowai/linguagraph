@@ -1,0 +1,17 @@
+{
+  "action": "find",
+  "start": { "label": "Company", "alias": "c" },
+  "filters": [
+    {
+      "field": "c.name",
+      "type": "SemanticText",
+      "op": "search",
+      "value": "apple"
+    }
+  ],
+  "return": [
+    { "field": "c.name", "alias": "name" },
+    { "field": "c.industry", "alias": "industry" }
+  ],
+  "limit": 5
+}

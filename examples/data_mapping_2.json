@@ -7,57 +7,67 @@
       "properties": [
         {
           "name": "id",
+          "type": "Text",
           "source_path": "$.cameras[*].id",
           "description": "Unique identifier for the camera."
         },
         {
           "name": "name",
-          "source_path": "$.cameras[*].name",
           "type": "SemanticText",
+          "source_path": "$.cameras[*].name",
           "description": "Human-readable name of the camera."
         },
         {
           "name": "state",
+          "type": "Text",
           "source_path": "$.cameras[*].state",
           "description": "Current operational state of the camera (e.g., active, inactive)."
         },
         {
           "name": "state_reason",
+          "type": "Text",
           "source_path": "$.cameras[*].state_reason",
           "description": "Reason for the current state."
         },
         {
           "name": "is_dvr",
+          "type": "Boolean",
           "source_path": "$.cameras[*].is_dvr",
           "description": "Boolean indicating if the camera is a DVR."
         },
         {
           "name": "edge",
+          "type": "Boolean",
           "source_path": "$.cameras[*].edge",
           "description": "Boolean indicating if the camera is an edge device."
         },
         {
           "name": "capacity_group_token",
+          "type": "Text",
           "source_path": "$.cameras[*].capacitygroup_token",
           "description": "Token identifying the capacity group this camera belongs to."
         },
         {
           "name": "created_at",
+          "type": "Timestamp",
           "source_path": "$.cameras[*].created_at",
           "description": "Timestamp when the camera was created."
         },
         {
           "name": "updated_at",
+          "type": "Timestamp",
           "source_path": "$.cameras[*].updated_at",
           "description": "Timestamp when the camera was last updated."
         },
         {
           "name": "snapshot_url",
+          "type": "Text",
           "source_path": "$.cameras[*].snapshot_url",
           "description": "URL to the latest snapshot image of the camera."
         },
         {
           "name": "video_modules",
+          "type": "Text",
           "source_path": "$.cameras[*].video_modules",
           "description": "List of active video analytics module codes."
         }
@@ -71,41 +81,49 @@
       "properties": [
         {
           "name": "url",
+          "type": "Text",
           "source_path": "$.cameras[*].source.url",
           "description": "Full RTSP URL for the video stream."
         },
         {
           "name": "host",
+          "type": "Text",
           "source_path": "$.cameras[*].source.body.host",
           "description": "IP address or hostname of the camera."
         },
         {
           "name": "port",
+          "type": "Number",
           "source_path": "$.cameras[*].source.body.port",
           "description": "Port number for the stream."
         },
         {
           "name": "protocol",
+          "type": "Text",
           "source_path": "$.cameras[*].source.body.protocol",
           "description": "Protocol used (e.g., rtsp)."
         },
         {
           "name": "username",
+          "type": "Text",
           "source_path": "$.cameras[*].source.body.username",
           "description": "Username for authentication."
         },
         {
           "name": "password",
+          "type": "Text",
           "source_path": "$.cameras[*].source.body.password",
           "description": "Password for authentication."
         },
         {
           "name": "path",
+          "type": "Text",
           "source_path": "$.cameras[*].source.body.path",
           "description": "Stream path on the server."
         },
         {
           "name": "transport",
+          "type": "Number",
           "source_path": "$.cameras[*].source.body.transport",
           "description": "Transport protocol (e.g., tcp)."
         }
@@ -119,21 +137,25 @@
       "properties": [
         {
           "name": "host",
+          "type": "Text",
           "source_path": "$.cameras[*].onvif_host",
           "description": "ONVIF host IP."
         },
         {
           "name": "port",
+          "type": "Number",
           "source_path": "$.cameras[*].onvif_port",
           "description": "ONVIF port."
         },
         {
           "name": "username",
+          "type": "Text",
           "source_path": "$.cameras[*].onvif_login",
           "description": "ONVIF username."
         },
         {
           "name": "password",
+          "type": "Text",
           "source_path": "$.cameras[*].onvif_password",
           "description": "ONVIF password."
         }
@@ -147,11 +169,13 @@
       "properties": [
         {
           "name": "by_event",
+          "type": "Boolean",
           "source_path": "$.cameras[*].video_streaming.by_event",
           "description": "Whether streaming is event-driven."
         },
         {
           "name": "storage_depth",
+          "type": "Number",
           "source_path": "$.cameras[*].video_streaming.storage_depth",
           "description": "Number of days to store video."
         }
@@ -179,6 +203,7 @@
       "properties": [
         {
           "name": "id",
+          "type": "Text",
           "source_path": "$.cameras[*].video_analytics.modules[*].config.roi[*].id",
           "description": "Unique ID of the ROI."
         },
@@ -190,31 +215,37 @@
         },
         {
           "name": "polygon",
+          "type": "Text",
           "source_path": "$.cameras[*].video_analytics.modules[*].config.roi[*].polygon",
           "description": "Coordinates defining the polygon shape."
         },
         {
           "name": "obj_class_type",
+          "type": "Text",
           "source_path": "$.cameras[*].video_analytics.modules[*].config.roi[*].obj_class_type",
           "description": "Type of object class monitored."
         },
         {
           "name": "situation_id",
+          "type": "Text",
           "source_path": "$.cameras[*].video_analytics.modules[*].config.roi[*].situation_id",
           "description": "ID of the situation associated with this ROI."
         },
         {
           "name": "min_event_interval",
+          "type": "Number",
           "source_path": "$.cameras[*].video_analytics.modules[*].config.roi[*].min_event_interval",
           "description": "Minimum interval between events."
         },
         {
           "name": "obj_class_threshold",
+          "type": "Number",
           "source_path": "$.cameras[*].video_analytics.modules[*].config.roi[*].obj_class_threshold",
           "description": "Threshold for object classification."
         },
         {
           "name": "watch_people_activity",
+          "type": "Boolean",
           "source_path": "$.cameras[*].video_analytics.modules[*].config.roi[*].watch_people_activity",
           "description": "Whether to watch for people activity."
         }
@@ -228,6 +259,7 @@
       "properties": [
         {
           "name": "id",
+          "type": "Text",
           "source_path": "$.cameras[*].video_analytics.modules[*].config.lines[*].id",
           "description": "Unique ID of the line."
         },
@@ -239,16 +271,19 @@
         },
         {
           "name": "coords",
+          "type": "Text",
           "source_path": "$.cameras[*].video_analytics.modules[*].config.lines[*].coords",
           "description": "Coordinates of the line."
         },
         {
           "name": "direction",
+          "type": "Text",
           "source_path": "$.cameras[*].video_analytics.modules[*].config.lines[*].direction",
           "description": "Direction of detection."
         },
         {
           "name": "obj_classes",
+          "type": "Text",
           "source_path": "$.cameras[*].video_analytics.modules[*].config.lines[*].obj_classes",
           "description": "List of object classes monitored by this line."
         }
@@ -262,6 +297,7 @@
       "properties": [
         {
           "name": "id",
+          "type": "Text",
           "source_path": "$.cameras[*].origin.place_id",
           "description": "Unique identifier for the place."
         },
@@ -279,16 +315,19 @@
         },
         {
           "name": "latitude",
+          "type": "Number",
           "source_path": "$.cameras[*].origin.place_latitude",
           "description": "Latitude coordinate."
         },
         {
           "name": "longitude",
+          "type": "Number",
           "source_path": "$.cameras[*].origin.place_longitude",
           "description": "Longitude coordinate."
         },
         {
           "name": "group_id",
+          "type": "Text",
           "source_path": "$.cameras[*].origin.group_id",
           "description": "ID of the group this place belongs to."
         }
@@ -302,6 +341,7 @@
       "properties": [
         {
           "name": "id",
+          "type": "Text",
           "source_path": "$.cameras[*].tags[*].id",
           "description": "Unique ID of the tag."
         },

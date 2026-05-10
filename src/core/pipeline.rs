@@ -14,7 +14,7 @@ use crate::error::Result;
 use crate::ingest::{self, IngestError, PlannerOptions};
 use crate::mapper::{self, Mapping};
 use crate::metadata::{self, MetadataStore, PropertyMetadata};
-use crate::types::{SharedRegistry, SideEffect, SideEffectQueue, TypeRegistry};
+use crate::types::{handlers, SharedRegistry, SideEffect, SideEffectQueue};
 
 use std::sync::RwLock;
 
@@ -79,7 +79,10 @@ impl Pipeline {
             default_limit: config.query.default_limit,
             ingest_batch_size: 1000,
             metadata_store: None,
-            registry: Arc::new(TypeRegistry::empty()),
+            // Default registry contains the built-in scalar parsers
+            // (Text/Number/Boolean/Date/Timestamp) so a freshly-constructed
+            // pipeline can ingest a typed mapping without explicit setup.
+            registry: Arc::new(handlers::core_registry()),
             embedder: None,
             metadata: Arc::new(RwLock::new(None)),
         }

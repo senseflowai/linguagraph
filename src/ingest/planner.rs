@@ -21,7 +21,7 @@ use crate::ast::query::{
 };
 use crate::mapper::{Extracted, ExtractedEntity, Mapping};
 use crate::types::context::IngestCtx;
-use crate::types::{SideEffectQueue, TypeId, TypeRegistry};
+use crate::types::{handlers, SideEffectQueue, TypeId, TypeRegistry};
 
 use super::dsl::{InsertPlan, NodeData, NodePlan, RelationData, RelationPlan};
 use super::IngestError;
@@ -41,20 +41,24 @@ impl Default for PlannerOptions {
     }
 }
 
-/// Convenience: extract → plan with default options and no type
-/// handlers.
+/// Convenience: extract → plan with default options and the built-in
+/// scalar type registry. Mappings using only `Text`/`Number`/
+/// `Boolean`/`Date`/`Timestamp` resolve out of the box; mappings that
+/// reference custom types (e.g. `SemanticText`) must use
+/// [`plan_with_registry`] with a registry that contains them.
 pub fn plan(mapping: &Mapping, extracted: Extracted) -> Result<InsertQuery, IngestError> {
     plan_with_options(mapping, extracted, PlannerOptions::default())
 }
 
 /// Build the [`InsertPlan`] (internal DSL) and lower it directly into an
-/// [`InsertQuery`] in one pass.
+/// [`InsertQuery`] in one pass. Uses the built-in scalar type registry
+/// — same caveats as [`plan`].
 pub fn plan_with_options(
     mapping: &Mapping,
     extracted: Extracted,
     opts: PlannerOptions,
 ) -> Result<InsertQuery, IngestError> {
-    let registry = TypeRegistry::empty();
+    let registry = handlers::core_registry();
     let mut effects = SideEffectQueue::new();
     plan_with_registry(mapping, extracted, opts, &registry, &mut effects)
 }

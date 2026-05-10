@@ -7,25 +7,30 @@
       "properties": [
         {
           "name": "id",
-          "source_path": "$.cameras[*].id"
+          "source_path": "$.cameras[*].id",
+          "type": "Text"
         },
         {
           "name": "name",
-          "source_path": "$.cameras[*].name"
+          "source_path": "$.cameras[*].name",
+          "type": "Text"
         },
         {
           "name": "state",
           "source_path": "$.cameras[*].state",
+          "type": "Text",
           "description": "The camera's status can be active/inactive"
         },
         {
           "name": "created_at",
           "source_path": "$.cameras[*].created_at",
+          "type": "Timestamp",
           "description": "The date and time the camera was added to the system, in UTC format"
         },
         {
           "name": "updated_at",
           "source_path": "$.cameras[*].updated_at",
+          "type": "Timestamp",
           "description": "Date and time of the last camera data update in UTC format"
         }
       ],
@@ -40,6 +45,7 @@
         {
           "name": "depth",
           "source_path": "$.cameras[*].video_streaming.storage_depth",
+          "type": "Number",
           "description": "Video archive retention period in days"
         }
       ],
@@ -52,15 +58,18 @@
       "properties": [
         {
           "name": "id",
-          "source_path": "$.cameras[*].origin.place_id"
+          "source_path": "$.cameras[*].origin.place_id",
+          "type": "Text"
         },
         {
           "name": "name",
-          "source_path": "$.cameras[*].origin.place_name"
+          "source_path": "$.cameras[*].origin.place_name",
+          "type": "Text"
         },
         {
           "name": "address",
           "source_path": "$.cameras[*].origin.place_description",
+          "type": "Text",
           "description": "Camera installation address"
         }
       ],
@@ -74,11 +83,13 @@
         {
           "name": "latitude",
           "source_path": "$.cameras[*].origin.place_latitude",
+          "type": "Number",
           "description": "Latitude (Decimal Degrees)"
         },
         {
           "name": "longitude",
           "source_path": "$.cameras[*].origin.place_longitude",
+          "type": "Number",
           "description": "Longitude (Decimal Degrees)"
         }
       ],
@@ -91,7 +102,8 @@
       "properties": [
         {
           "name": "url",
-          "source_path": "$.cameras[*].source.url"
+          "source_path": "$.cameras[*].source.url",
+          "type": "Text"
         }
       ],
       "primary_key": "$.cameras[*].id"

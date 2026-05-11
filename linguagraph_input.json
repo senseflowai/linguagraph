@@ -1,34 +1,40 @@
 {
   "action": "find",
   "start": {
-    "label": "Camera",
-    "alias": "c"
+    "label": "LegalAct",
+    "alias": "act"
   },
-  "traversals": [],
+  "traversals": [
+    {
+      "from": "act",
+      "edge": {
+        "label": "HAS_CHUNK",
+        "alias": "hc",
+        "direction": "out"
+      },
+      "target": {
+        "label": "Chunk",
+        "alias": "chunk"
+      }
+    }
+  ],
   "filters": [
     {
-      "field": "c.name",
+      "field": "act.name",
       "op": "eq",
-      "value": "TargetAI - Openspace"
+      "value": "Конституция Республики Казахстан"
+    },
+    {
+      "field": "hc.text",
+      "op": "contains",
+      "value": "Статья 1"
     }
   ],
   "return": [
     {
-      "field": "c.id",
-      "alias": "id"
-    },
-    {
-      "field": "c.name",
-      "alias": "name"
-    },
-    {
-      "field": "c.state",
-      "alias": "state"
-    },
-    {
-      "field": "c.snapshot_url",
-      "alias": "snapshot_url"
+      "field": "hc.text",
+      "alias": "article_text"
     }
   ],
-  "limit": 25
+  "limit": 1
 }

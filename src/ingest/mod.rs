@@ -6,11 +6,16 @@
 //! inspect — and the planner that turns extracted rows into
 //! deterministic [`crate::ast::query::InsertQuery`] batches.
 
+pub mod document;
 pub mod dsl;
 pub mod planner;
 
 use thiserror::Error;
 
+pub use document::{
+    build_document_plan, ChunkInput, DocumentBody, DocumentIngestOptions, DocumentInput,
+    EntityInput, RelationInput,
+};
 pub use dsl::{InsertPlan, NodePlan, RelationPlan};
 pub use planner::{plan, plan_with_options, plan_with_registry, PlannerOptions};
 
@@ -33,4 +38,16 @@ pub enum IngestError {
 
     #[error("type handler error during ingestion: {0}")]
     Type(String),
+
+    #[error("'{0}' is a reserved entity label and cannot be used for user entities")]
+    ReservedLabel(String),
+
+    #[error("'{0}' is a reserved relation type and cannot be used for user relations")]
+    ReservedRelation(String),
+
+    #[error("identifier '{0}' is not a valid Cypher label/relation name even after sanitization")]
+    InvalidLabel(String),
+
+    #[error("relation in chunk '{chunk}' references unknown local entity id '{local_id}'")]
+    UnknownLocalId { chunk: String, local_id: String },
 }

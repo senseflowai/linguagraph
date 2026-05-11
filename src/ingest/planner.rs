@@ -246,7 +246,7 @@ fn contexts_align(a: &[usize], b: &[usize]) -> bool {
     a[..n] == b[..n]
 }
 
-fn lower_plan(plan: InsertPlan, opts: PlannerOptions) -> InsertQuery {
+pub(crate) fn lower_plan(plan: InsertPlan, opts: PlannerOptions) -> InsertQuery {
     let mut node_batches = Vec::new();
     for n in plan.nodes {
         if n.rows.is_empty() {

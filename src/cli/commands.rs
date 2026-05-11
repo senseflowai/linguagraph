@@ -13,9 +13,13 @@ use crate::db::{introspect, GraphClient, MemgraphClient};
 use crate::dsl;
 use crate::embeddings::{self, SharedEmbedder};
 use crate::error::Result;
+use crate::ingest::DocumentInput;
 use crate::mapper::Mapping;
 use crate::metadata::{FileMetadataStore, MetadataStore};
 use crate::prompt::{self, GraphSchema, PromptOptions};
+use crate::promptgen::knowledge::{
+    EntityTypeSpec, KnowledgeExtractOptions, RelationTypeSpec,
+};
 use crate::types::{self, SharedRegistry};
 
 /// Output format for the `schema` subcommand.
@@ -138,6 +142,44 @@ pub enum Command {
         #[arg(long)]
         no_summary: bool,
     },
+    /// Ingest a document JSON (`{document: {name, path, chunks: [...]}}`)
+    /// directly via the document-shaped ingestion path. Embeds chunk
+    /// text and writes the Document/Chunk/Entity graph to the database.
+    IngestDocument {
+        /// Path to the document JSON file.
+        path: PathBuf,
+        /// Maximum rows per UNWIND batch.
+        #[arg(long, default_value_t = 1000)]
+        batch_size: usize,
+    },
+    /// Like `ingest-document` but prints the generated Cypher batches
+    /// instead of executing them. Skips the embedding side-effects
+    /// (which require a live embedder + Qdrant) so the output is
+    /// purely declarative.
+    IngestDocumentCypher {
+        path: PathBuf,
+        #[arg(long, default_value_t = 1000)]
+        batch_size: usize,
+    },
+    /// Emit a prompt instructing an LLM to extract entities and
+    /// relations from a legal text fragment, in the JSON shape
+    /// consumed by `ingest-document`.
+    KnowledgePrompt {
+        /// Path to a UTF-8 text file containing the fragment to
+        /// analyse. Use `-` to read from stdin.
+        path: PathBuf,
+        /// Allowed entity type (repeatable). Defaults to the bundled
+        /// legal-domain vocabulary when none are passed.
+        #[arg(long = "entity-type")]
+        entity_types: Vec<String>,
+        /// Allowed relation type (repeatable). Defaults to the
+        /// bundled legal-domain vocabulary when none are passed.
+        #[arg(long = "relation-type")]
+        relation_types: Vec<String>,
+        /// Write the prompt to this path instead of stdout.
+        #[arg(long, short = 'o')]
+        output: Option<PathBuf>,
+    },
 }
 
 pub async fn run(cli: Cli) -> Result<()> {
@@ -161,6 +203,18 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::GeneratePrompt { path, hints, prefer, no_examples, no_summary } => {
             cmd_generate_prompt(&cli.config, path, hints, prefer, no_examples, no_summary).await
         }
+        Command::IngestDocument { path, batch_size } => {
+            cmd_ingest_document(&cli.config, path, batch_size).await
+        }
+        Command::IngestDocumentCypher { path, batch_size } => {
+            cmd_ingest_document_cypher(&cli.config, path, batch_size).await
+        }
+        Command::KnowledgePrompt {
+            path,
+            entity_types,
+            relation_types,
+            output,
+        } => cmd_knowledge_prompt(path, entity_types, relation_types, output).await,
     }
 }
 
@@ -421,6 +475,148 @@ async fn cmd_ingest_cypher(
             println!("${k} = {}", serde_json::to_string(v)?);
         }
         println!();
+    }
+    Ok(())
+}
+
+async fn cmd_ingest_document(
+    config_path: &std::path::Path,
+    path: PathBuf,
+    batch_size: usize,
+) -> Result<()> {
+    let cfg = config::load(config_path).await?;
+    let raw = fs::read_to_string(&path).await?;
+    let doc: DocumentInput = serde_json::from_str(&raw)?;
+
+    let client = MemgraphClient::connect(&cfg.database).await?;
+    let (registry, embedder) = build_registry(&cfg)?;
+    let mut pipeline = Pipeline::new(Arc::new(client), &cfg)
+        .with_ingest_batch_size(batch_size)
+        .with_registry(registry);
+    if let Some(e) = embedder {
+        pipeline = pipeline.with_embedder(e);
+    }
+    let summary = pipeline.ingest_document(doc).await?;
+    println!("{}", serde_json::to_string_pretty(&summary)?);
+    Ok(())
+}
+
+async fn cmd_ingest_document_cypher(
+    config_path: &std::path::Path,
+    path: PathBuf,
+    batch_size: usize,
+) -> Result<()> {
+    use crate::builder;
+    use crate::ingest::{self, DocumentIngestOptions, PlannerOptions};
+    use crate::types::SideEffectQueue;
+
+    let cfg = load_config_or_default(config_path).await;
+    let raw = fs::read_to_string(&path).await?;
+    let doc: DocumentInput = serde_json::from_str(&raw)?;
+
+    // Build the registry the same way as the executing path so the
+    // dry-run output matches reality. The SemanticText handler is
+    // required (every chunk text + entity name flows through it); when
+    // the config doesn't declare one, `build_registry` may produce a
+    // registry without SemanticText. In that case we still want the
+    // dry-run to work, so we synthesize a defaults-only SemanticText
+    // handler backed by the mock embedder.
+    let (registry, _embedder) = build_registry(&cfg)?;
+    let registry = ensure_semantic_text(registry);
+
+    let opts = DocumentIngestOptions { max_batch_size: batch_size };
+    let mut effects = SideEffectQueue::new();
+    let plan = ingest::build_document_plan(&doc, &opts, &registry, &mut effects)?;
+    let insert = ingest::planner::lower_plan(
+        plan,
+        PlannerOptions { max_batch_size: batch_size },
+    );
+    let batches = builder::build_insert(&insert)?;
+    for (i, q) in batches.iter().enumerate() {
+        println!("-- Batch {i} --\n{}\n-- Parameters --", q.text);
+        for (k, v) in &q.params {
+            println!("${k} = {}", serde_json::to_string(v)?);
+        }
+        println!();
+    }
+    Ok(())
+}
+
+/// Ensure `registry` contains a `SemanticText` handler. If one is
+/// already registered, returns the registry untouched; otherwise
+/// rebuilds it with a defaults-only `SemanticTextHandler` backed by the
+/// mock embedder. Used by `ingest-document-cypher` so the dry-run
+/// works without a `[types.SemanticText]` config block.
+fn ensure_semantic_text(registry: SharedRegistry) -> SharedRegistry {
+    use crate::embeddings::MockEmbedder;
+    use crate::types::handlers::{SemanticTextConfig, SemanticTextHandler};
+    use crate::types::{RegistryBuilder, TypeId};
+
+    if registry.contains(&TypeId::new(SemanticTextHandler::TYPE_ID)) {
+        return registry;
+    }
+    let cfg = SemanticTextConfig {
+        embedding_model: None,
+        collection: "chunks".into(),
+        top_k: 10,
+        search_threshold: 0.8,
+        reranker_threshold: 0.3,
+    };
+    let mut b = RegistryBuilder::new();
+    for h in registry.iter() {
+        b = b.register_arc(h.clone());
+    }
+    b = b.register(SemanticTextHandler::new(cfg, Arc::new(MockEmbedder::new(8))));
+    Arc::new(b.build())
+}
+
+async fn cmd_knowledge_prompt(
+    path: PathBuf,
+    entity_types: Vec<String>,
+    relation_types: Vec<String>,
+    output: Option<PathBuf>,
+) -> Result<()> {
+    use crate::promptgen::knowledge::{
+        default_entity_types, default_relation_types, generate_knowledge_extract_prompt,
+    };
+    use tokio::io::AsyncReadExt;
+
+    // Read the fragment from a file or stdin. `-` means stdin so the
+    // command composes cleanly with `cat doc.txt | linguagraph
+    // knowledge-prompt -`.
+    let fragment = if path == std::path::Path::new("-") {
+        let mut buf = String::new();
+        tokio::io::stdin().read_to_string(&mut buf).await?;
+        buf
+    } else {
+        fs::read_to_string(&path).await?
+    };
+
+    let opts = KnowledgeExtractOptions {
+        entity_types: if entity_types.is_empty() {
+            default_entity_types()
+        } else {
+            entity_types
+                .into_iter()
+                .map(EntityTypeSpec::new)
+                .collect()
+        },
+        relation_types: if relation_types.is_empty() {
+            default_relation_types()
+        } else {
+            relation_types
+                .into_iter()
+                .map(RelationTypeSpec::new)
+                .collect()
+        },
+    };
+    let prompt = generate_knowledge_extract_prompt(&fragment, &opts);
+    match output {
+        Some(p) => {
+            fs::write(&p, &prompt).await?;
+            tracing::info!(target: "linguagraph::cli", path = %p.display(), "wrote knowledge-extract prompt");
+        }
+        None => print!("{prompt}"),
     }
     Ok(())
 }

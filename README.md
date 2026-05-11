@@ -34,6 +34,11 @@ producing correct, parameterized Cypher ourselves.
   [qlink](https://github.com/senseflowai/qlink) for vector + hybrid search;
   add your own (`GeoLocation`, `Keyword`, `ImageEmbedding`) without touching
   the core. See [`docs/type-system.md`](#pluggable-type-system).
+- **Document ingestion.** Lift LLM-extracted `{document, chunks, entities,
+  relations}` JSON straight into a graph of `Document → Chunk → Entity`
+  nodes, with chunk text embedded for semantic retrieval. Ships with a
+  knowledge-extraction prompt generator so the LLM emits the exact shape
+  the ingester expects. See [Document ingestion](#document-ingestion).
 - **TOML config + env overrides.** `LINGUAGRAPH__DATABASE__URI=...` overrides
   the file without templating.
 
@@ -47,9 +52,10 @@ src/
 ├── db/         GraphClient trait, neo4rs impl, mock impl
 ├── config/     TOML loader with env overrides
 ├── prompt/     schema-aware system-prompt generator
+├── promptgen/  JSON → mapping-authoring prompt; chunk → knowledge-extract prompt
 ├── types/      pluggable field-type system (registry, handlers)
 ├── embeddings/ Embedder trait + Mock + llama-cpp-2 backend
-├── ingest/     mapping → InsertQuery planner with side-effect queue
+├── ingest/     mapping/document → InsertQuery planner with side-effect queue
 ├── mapper/     declarative JSON → entity-row extraction
 ├── core/       Pipeline orchestration (wires layers together)
 ├── cli/        clap-based CLI
@@ -136,6 +142,176 @@ let pipeline = Pipeline::new(client, &cfg).with_registry(Arc::new(registry));
 ```
 
 No changes to the DSL parser, AST, or Cypher builder are required.
+
+## Document ingestion
+
+For RAG-style workloads — where a document is split into chunks and an LLM
+extracts entities/relations from each chunk — there's a second ingest path
+that bypasses the mapping layer. Input JSON shape:
+
+```json
+{
+  "document": {
+    "name": "Article 5 of the Civil Code",
+    "path": "/docs/civil_code/article_5.txt",
+    "chunks": [
+      {
+        "id": "c1",
+        "text": "The court grants the citizen the right to appeal.",
+        "entities": [
+          {"id": "e1", "type": "StateBody",  "name": "court"},
+          {"id": "e2", "type": "Person",     "name": "citizen"},
+          {"id": "e3", "type": "LegalRight", "name": "right to appeal"}
+        ],
+        "relations": [
+          {"from": "e1", "to": "e3", "type": "GRANTS"},
+          {"from": "e3", "to": "e2", "type": "APPLIES_TO"}
+        ]
+      }
+    ]
+  }
+}
+```
+
+Pass it to `ingest-document` and you get the graph:
+
+```
+(:Document {path, name})
+  -[:HAS_CHUNK]->
+    (:Chunk {id, text, index, document_path})  // chunk text is embedded into Qdrant
+      -[:MENTIONS]->
+        (:StateBody | :Person | :LegalRight {id, name, type})
+          -[:GRANTS | :APPLIES_TO | ...]->
+            (other entity)
+```
+
+- `Document` and `Chunk` are reserved built-in labels; `HAS_CHUNK` and
+  `MENTIONS` are reserved built-in relation types.
+- Entity types and relation types are LLM-emitted strings; they are
+  auto-sanitized to satisfy the Cypher identifier grammar (`Music Group`
+  → `Music_Group`, `member-of` → `MEMBER_OF`).
+- Entity nodes are merged on a deterministic UUID v5 keyed off
+  `(document.path, chunk.id, local_id)` — re-ingest is idempotent. The
+  local `e1`/`e2` ids only wire relations within their own chunk and are
+  not stored as node keys.
+- Chunk text is always embedded via the existing `SemanticText`
+  side-effect machinery so chunks become queryable through the standard
+  DSL:
+
+  ```json
+  {
+    "action": "find",
+    "start": {"label": "Chunk", "alias": "c"},
+    "filters": [
+      {"field": "c.text", "type": "SemanticText", "op": "search",
+       "value": "right to appeal"}
+    ],
+    "return": [{"field": "c.id"}, {"field": "c.text"}],
+    "limit": 5
+  }
+  ```
+
+### Library
+
+```rust
+use linguagraph::{core::Pipeline, ingest::DocumentInput};
+
+let doc: DocumentInput = serde_json::from_str(&raw_json)?;
+let summary = pipeline.ingest_document(doc).await?;
+println!("{}", serde_json::to_string_pretty(&summary)?);
+```
+
+### CLI
+
+```bash
+# Execute against the configured database.
+linguagraph ingest-document path/to/doc.json
+
+# Dry-run: print the rendered Cypher batches without connecting.
+linguagraph ingest-document-cypher path/to/doc.json
+```
+
+### Knowledge-extraction prompt
+
+`knowledge-prompt` emits a deterministic LLM prompt whose output JSON
+plugs straight into `ingest-document`. Defaults are tuned for the legal
+domain — pass `--entity-type` / `--relation-type` (repeatable) to
+constrain the LLM to a custom ontology.
+
+```bash
+# Use the bundled legal-domain defaults (LegalNorm, StateBody, Person, ...;
+# GRANTS, REGULATES, APPLIES_TO, ...).
+linguagraph knowledge-prompt fragment.txt
+
+# Constrain the LLM to a custom vocabulary.
+linguagraph knowledge-prompt fragment.txt \
+    --entity-type Article \
+    --entity-type Citation \
+    --entity-type Court \
+    --relation-type CITES \
+    --relation-type ISSUED_BY \
+    --relation-type CONTAINS \
+    -o extract_prompt.md
+
+# Pipe a fragment in.
+cat fragment.txt | linguagraph knowledge-prompt -
+```
+
+Example custom-types invocation and the JSON the LLM is told to emit:
+
+```bash
+linguagraph knowledge-prompt article5.txt \
+    --entity-type LegalNorm \
+    --entity-type StateBody \
+    --entity-type LegalRight \
+    --relation-type GRANTS \
+    --relation-type APPLIES_TO
+```
+
+```json
+{
+  "entities": [
+    {"id": "e1", "type": "StateBody",  "name": "court"},
+    {"id": "e2", "type": "LegalRight", "name": "right to appeal"}
+  ],
+  "relations": [
+    {"from": "e1", "to": "e2", "type": "GRANTS"}
+  ]
+}
+```
+
+Drop the LLM's `entities`/`relations` arrays straight into a chunk and feed
+the document to `ingest-document`.
+
+The default vocabularies bundled with `knowledge-prompt`:
+
+| Default entity types | Default relation types |
+|---|---|
+| `LegalNorm`, `LegalAct`, `StateBody`, `Person`, `Organization`, `LegalRight`, `LegalObligation`, `Sanction`, `LegalProcedure`, `LegalConcept`, `Date`, `Location`, `MonetaryAmount` | `GRANTS`, `REQUIRES`, `PROHIBITS`, `REGULATES`, `ESTABLISHES`, `ENFORCES`, `REFERENCES`, `AMENDS`, `REPEALS`, `APPLIES_TO`, `PART_OF`, `HAS_SANCTION`, `ISSUED_BY`, `DEFINED_AS` |
+
+For programmatic use the same lists are available as
+`promptgen::knowledge::default_entity_types()` /
+`default_relation_types()`, and you can extend them rather than replace:
+
+```rust
+use linguagraph::promptgen::knowledge::{
+    default_entity_types, default_relation_types,
+    generate_knowledge_extract_prompt,
+    EntityTypeSpec, KnowledgeExtractOptions, RelationTypeSpec,
+};
+
+let mut ents = default_entity_types();
+ents.push(EntityTypeSpec::with_description(
+    "Citation", "Reference to another legal act or article.",
+));
+let mut rels = default_relation_types();
+rels.push(RelationTypeSpec::new("CITES"));
+
+let prompt = generate_knowledge_extract_prompt(
+    fragment,
+    &KnowledgeExtractOptions { entity_types: ents, relation_types: rels },
+);
+```
 
 ## Getting started
 
@@ -335,6 +511,12 @@ local model, anything.
 | `linguagraph run <file.json>` | Compile and execute against Memgraph. |
 | `linguagraph prompt [--schema <file>] [--no-examples]` | Print a system prompt. |
 | `linguagraph schema` | Fetch the live graph schema as JSON. |
+| `linguagraph ingest <data.json> <mapping.json>` | Mapping-driven ingest; execute against the configured DB. |
+| `linguagraph ingest-cypher <data.json> <mapping.json>` | Mapping-driven ingest; print Cypher only. |
+| `linguagraph ingest-document <doc.json>` | Document/chunk/entity ingest; execute against the configured DB. |
+| `linguagraph ingest-document-cypher <doc.json>` | Document/chunk/entity ingest; print Cypher only. |
+| `linguagraph generate-prompt <data.json>` | Generate a mapping-authoring prompt for an LLM. |
+| `linguagraph knowledge-prompt <fragment.txt> [--entity-type X] [--relation-type Y]` | Generate a knowledge-extraction prompt; defaults to a legal vocabulary. |
 
 Global flag: `--config <path>` (default `config.toml`).
 

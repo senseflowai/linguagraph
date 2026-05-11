@@ -11,7 +11,7 @@ use crate::db::{GraphClient, QueryResult};
 use crate::dsl::DslQuery;
 use crate::embeddings::SharedEmbedder;
 use crate::error::Result;
-use crate::ingest::{self, IngestError, PlannerOptions};
+use crate::ingest::{self, DocumentIngestOptions, DocumentInput, IngestError, PlannerOptions};
 use crate::mapper::{self, Mapping};
 use crate::metadata::{self, MetadataStore, PropertyMetadata};
 use crate::types::{handlers, SharedRegistry, SideEffect, SideEffectQueue};
@@ -82,6 +82,9 @@ impl Pipeline {
             // Default registry contains the built-in scalar parsers
             // (Text/Number/Boolean/Date/Timestamp) so a freshly-constructed
             // pipeline can ingest a typed mapping without explicit setup.
+            // `Pipeline::ingest_document` additionally requires a
+            // `SemanticText` handler — register one via
+            // [`Self::with_registry`] before calling it.
             registry: Arc::new(handlers::core_registry()),
             embedder: None,
             metadata: Arc::new(RwLock::new(None)),
@@ -279,6 +282,61 @@ impl Pipeline {
             *self.metadata.write().expect("metadata lock poisoned") =
                 Some(Arc::new(merged));
         }
+
+        Ok(IngestSummary {
+            batches_executed: total,
+            node_rows,
+            relation_rows,
+            side_effect_batches: se_batches,
+            side_effect_rows: se_rows,
+        })
+    }
+
+    // ── Document ingest path ────────────────────────────────────────────────
+
+    /// Ingest a document-shaped JSON (`{document: {name, path, chunks: [...]}}`)
+    /// directly, bypassing the mapping layer.
+    ///
+    /// Builds a Document → Chunk → Entity graph with implicit `HAS_CHUNK`
+    /// and `MENTIONS` relations, plus whatever user-supplied relations the
+    /// chunks declare. Entity types and relation types are LLM-generated
+    /// strings — they're sanitized to satisfy the Cypher identifier
+    /// grammar before being inlined as labels.
+    ///
+    /// Every chunk `text` and every entity `name` is routed through the
+    /// registered `SemanticText` handler so they're stored on the node
+    /// *and* embedded into Qdrant for semantic search. The caller must
+    /// therefore have:
+    ///
+    /// * Registered a `SemanticText` handler via [`Self::with_registry`]
+    ///   (typically via `handlers::register_default(&cfg, embedder)`).
+    /// * Configured an embedder via [`Self::with_embedder`] so the
+    ///   queued `EmbedAndStore` side effects can actually be drained.
+    pub async fn ingest_document(&self, doc: DocumentInput) -> Result<IngestSummary> {
+        let opts = DocumentIngestOptions {
+            max_batch_size: self.ingest_batch_size,
+        };
+        let mut effects = SideEffectQueue::new();
+        let plan = ingest::build_document_plan(&doc, &opts, &self.registry, &mut effects)?;
+        let insert = ingest::planner::lower_plan(
+            plan,
+            PlannerOptions { max_batch_size: self.ingest_batch_size },
+        );
+
+        let node_rows: usize = insert.node_batches.iter().map(|b| b.rows.len()).sum();
+        let relation_rows: usize = insert.relation_batches.iter().map(|b| b.rows.len()).sum();
+
+        let batches = builder::build_insert(&insert)?;
+        let total = batches.len();
+        for batch in &batches {
+            let _ = self.client.execute(batch).await?;
+        }
+
+        let (se_batches, se_rows) = self.drain_side_effects(effects).await?;
+
+        // No metadata-store refresh: document ingest has no Mapping to
+        // collect property descriptions from. Typed-filter auto-resolution
+        // remains driven by mapping ingest.
 
         Ok(IngestSummary {
             batches_executed: total,

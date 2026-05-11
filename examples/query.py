@@ -5,7 +5,7 @@ import os
 
 def main():
     # 1. Получаем текстовый вопрос от пользователя
-    user_query = "Что написано в статье 1 конституции?"
+    user_query = "Что написано в статье 1 конституции РК"
 
     # 2. Генерируем промпт для OpenAI
     # Используем команду linguagraph prompt для получения системного промпта
@@ -72,6 +72,7 @@ def main():
     # 7. Создаем JSON файл для linguagraph run
     # Предположим, что linguagraph run ожидает JSON с полем "query" или подобным
     # Вам нужно будет адаптировать эту часть под формат, который ожидает linguagraph run
+    assistant_message.replace('```json', '').replace('```', '')
     print(assistant_message)
     linguagraph_input = json.loads(assistant_message)
 

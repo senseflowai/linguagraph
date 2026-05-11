@@ -2,11 +2,11 @@
   "action": "find",
   "start": {
     "label": "LegalAct",
-    "alias": "la"
+    "alias": "act"
   },
   "traversals": [
     {
-      "from": "la",
+      "from": "act",
       "edge": {
         "label": "HAS_CHUNK",
         "alias": "hc",
@@ -14,27 +14,27 @@
       },
       "target": {
         "label": "Chunk",
-        "alias": "c"
+        "alias": "chunk"
       }
     }
   ],
   "filters": [
     {
-      "field": "la.name",
+      "field": "act.name",
       "op": "eq",
-      "value": "Конституция"
+      "value": "Конституция Республики Казахстан"
     },
     {
-      "field": "c.text",
+      "field": "hc.text",
       "op": "contains",
       "value": "Статья 1"
     }
   ],
   "return": [
     {
-      "field": "c.text",
+      "field": "hc.text",
       "alias": "article_text"
     }
   ],
-  "limit": 10
+  "limit": 1
 }

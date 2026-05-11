@@ -1,34 +1,40 @@
 {
   "action": "find",
   "start": {
-    "label": "Camera",
-    "alias": "c"
+    "label": "LegalAct",
+    "alias": "la"
   },
-  "traversals": [],
+  "traversals": [
+    {
+      "from": "la",
+      "edge": {
+        "label": "HAS_CHUNK",
+        "alias": "hc",
+        "direction": "out"
+      },
+      "target": {
+        "label": "Chunk",
+        "alias": "c"
+      }
+    }
+  ],
   "filters": [
     {
-      "field": "c.name",
+      "field": "la.name",
       "op": "eq",
-      "value": "TargetAI - Openspace"
+      "value": "Конституция"
+    },
+    {
+      "field": "c.text",
+      "op": "contains",
+      "value": "Статья 1"
     }
   ],
   "return": [
     {
-      "field": "c.id",
-      "alias": "id"
-    },
-    {
-      "field": "c.name",
-      "alias": "name"
-    },
-    {
-      "field": "c.state",
-      "alias": "state"
-    },
-    {
-      "field": "c.snapshot_url",
-      "alias": "snapshot_url"
+      "field": "c.text",
+      "alias": "article_text"
     }
   ],
-  "limit": 25
+  "limit": 10
 }

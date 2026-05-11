@@ -10,6 +10,8 @@ use linguagraph::core::Pipeline;
 use linguagraph::db::MockClient;
 use linguagraph::embeddings::MockEmbedder;
 use linguagraph::ingest::DocumentInput;
+use linguagraph::types::handlers::{SemanticTextConfig, SemanticTextHandler};
+use linguagraph::types::{RegistryBuilder, SharedRegistry};
 
 fn test_config() -> Config {
     Config {
@@ -31,6 +33,34 @@ fn test_config() -> Config {
     }
 }
 
+/// Registry with a SemanticText handler backed by the mock embedder —
+/// required by [`Pipeline::ingest_document`].
+fn test_registry() -> SharedRegistry {
+    let cfg = SemanticTextConfig {
+        embedding_model: None,
+        collection: "test".into(),
+        top_k: 10,
+        search_threshold: 0.8,
+        reranker_threshold: 0.3,
+    };
+    Arc::new(
+        RegistryBuilder::new()
+            .register(SemanticTextHandler::new(
+                cfg,
+                Arc::new(MockEmbedder::new(8)),
+            ))
+            .build(),
+    )
+}
+
+/// Wire up a Pipeline that satisfies [`Pipeline::ingest_document`]'s
+/// pre-conditions (SemanticText handler + embedder).
+fn test_pipeline(mock: Arc<MockClient>) -> Pipeline {
+    Pipeline::new(mock, &test_config())
+        .with_embedder(Arc::new(MockEmbedder::new(8)))
+        .with_registry(test_registry())
+}
+
 fn doc_from_json(v: serde_json::Value) -> DocumentInput {
     serde_json::from_value(v).expect("doc parses")
 }
@@ -38,8 +68,7 @@ fn doc_from_json(v: serde_json::Value) -> DocumentInput {
 #[tokio::test]
 async fn ingest_document_writes_expected_batches() {
     let mock = Arc::new(MockClient::new());
-    let pipeline = Pipeline::new(mock.clone(), &test_config())
-        .with_embedder(Arc::new(MockEmbedder::new(8)));
+    let pipeline = test_pipeline(mock.clone());
 
     let doc = doc_from_json(serde_json::json!({
         "document": {
@@ -81,9 +110,11 @@ async fn ingest_document_writes_expected_batches() {
     assert_eq!(summary.node_rows, 7, "expected 7 node rows total");
     // 2 HAS_CHUNK + 2 MENTIONS(Person) + 2 MENTIONS(Company) + 2 WORKS_AT.
     assert_eq!(summary.relation_rows, 8, "expected 8 relation rows total");
-    // Side effects: one Qdrant batch (both chunks bucket together), 2 rows.
-    assert_eq!(summary.side_effect_batches, 1);
-    assert_eq!(summary.side_effect_rows, 2);
+    // Side effects: chunks bucket together (1 batch, 2 rows); Person
+    // names bucket together (1 batch, 2 rows); Company names bucket
+    // together (1 batch, 2 rows). 3 batches, 6 rows.
+    assert_eq!(summary.side_effect_batches, 3);
+    assert_eq!(summary.side_effect_rows, 6);
 
     // Inspect the captured Cypher.
     let captured = mock.captured.lock().unwrap();
@@ -100,20 +131,22 @@ async fn ingest_document_writes_expected_batches() {
     assert!(texts.iter().any(|t| t.contains("MERGE (a)-[:MENTIONS]->")));
     // User relations appear.
     assert!(texts.iter().any(|t| t.contains("MERGE (a)-[:WORKS_AT]->")));
-    // Side effect Qdrant call appears.
-    assert!(
-        texts
-            .iter()
-            .any(|t| t.contains("libqlink.insert_labeled")),
-        "expected libqlink.insert_labeled call in captured Cypher"
+    // Side effect Qdrant calls appear — one per (collection, label)
+    // bucket: Chunk__text, Person__name, Company__name.
+    let qdrant_calls = texts
+        .iter()
+        .filter(|t| t.contains("libqlink.insert_labeled"))
+        .count();
+    assert_eq!(
+        qdrant_calls, 3,
+        "expected one libqlink.insert_labeled call per (label, field) bucket; got {qdrant_calls}"
     );
 }
 
 #[tokio::test]
 async fn ingest_document_sanitizes_dynamic_identifiers() {
     let mock = Arc::new(MockClient::new());
-    let pipeline = Pipeline::new(mock.clone(), &test_config())
-        .with_embedder(Arc::new(MockEmbedder::new(8)));
+    let pipeline = test_pipeline(mock.clone());
 
     let doc = doc_from_json(serde_json::json!({
         "document": {
@@ -149,10 +182,12 @@ async fn ingest_document_sanitizes_dynamic_identifiers() {
 }
 
 #[tokio::test]
-async fn ingest_document_requires_embedder() {
-    // No embedder configured.
+async fn ingest_document_requires_semantic_text_handler() {
+    // Pipeline missing the SemanticText handler — registry contains
+    // only core scalar parsers.
     let mock = Arc::new(MockClient::new());
-    let pipeline = Pipeline::new(mock.clone(), &test_config());
+    let pipeline = Pipeline::new(mock.clone(), &test_config())
+        .with_embedder(Arc::new(MockEmbedder::new(8)));
 
     let doc = doc_from_json(serde_json::json!({
         "document": {
@@ -167,9 +202,35 @@ async fn ingest_document_requires_embedder() {
         }
     }));
 
-    // The node batches will land first; the side-effect drain step then
-    // fails because no embedder is configured. We don't care which error
-    // shape comes back — only that the call surfaces it.
+    let err = pipeline.ingest_document(doc).await.unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("SemanticText"),
+        "expected SemanticText-required error, got: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn ingest_document_requires_embedder() {
+    // Registry has SemanticText, but no embedder is configured on the
+    // pipeline → the drain step fails after the Memgraph batches land.
+    let mock = Arc::new(MockClient::new());
+    let pipeline = Pipeline::new(mock.clone(), &test_config())
+        .with_registry(test_registry());
+
+    let doc = doc_from_json(serde_json::json!({
+        "document": {
+            "name": "d",
+            "path": "/d",
+            "chunks": [{
+                "id": "c1",
+                "text": "x",
+                "entities": [],
+                "relations": []
+            }]
+        }
+    }));
+
     let res = pipeline.ingest_document(doc).await;
     assert!(res.is_err(), "expected ingest to fail without an embedder");
 }
@@ -179,8 +240,7 @@ async fn ingest_document_is_idempotent_via_uuid_v5() {
     // Re-ingesting the same document should produce identical Cypher
     // batches because UUID v5 is deterministic.
     let mock = Arc::new(MockClient::new());
-    let pipeline = Pipeline::new(mock.clone(), &test_config())
-        .with_embedder(Arc::new(MockEmbedder::new(8)));
+    let pipeline = test_pipeline(mock.clone());
 
     let make_doc = || {
         doc_from_json(serde_json::json!({
@@ -223,8 +283,7 @@ async fn ingest_document_is_idempotent_via_uuid_v5() {
 #[tokio::test]
 async fn ingest_document_rejects_reserved_labels() {
     let mock = Arc::new(MockClient::new());
-    let pipeline = Pipeline::new(mock.clone(), &test_config())
-        .with_embedder(Arc::new(MockEmbedder::new(8)));
+    let pipeline = test_pipeline(mock.clone());
 
     let doc = doc_from_json(serde_json::json!({
         "document": {
@@ -250,8 +309,7 @@ async fn ingest_document_rejects_reserved_labels() {
 #[tokio::test]
 async fn ingest_document_rejects_dangling_local_ids() {
     let mock = Arc::new(MockClient::new());
-    let pipeline = Pipeline::new(mock.clone(), &test_config())
-        .with_embedder(Arc::new(MockEmbedder::new(8)));
+    let pipeline = test_pipeline(mock.clone());
 
     let doc = doc_from_json(serde_json::json!({
         "document": {

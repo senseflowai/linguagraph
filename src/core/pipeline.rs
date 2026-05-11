@@ -44,12 +44,6 @@ pub struct Pipeline {
     /// can refresh it without taking `&mut self` (the pipeline is
     /// passed around as `&self` everywhere).
     metadata: Arc<RwLock<Option<Arc<PropertyMetadata>>>>,
-    /// Qdrant collection prefix used by [`Self::ingest_document`] for the
-    /// chunk-text embedding. Picked up from `config.types["SemanticText"]
-    /// .collection` if present (so chunks are queryable via the same
-    /// SemanticText handler that the user has already configured),
-    /// otherwise falls back to `"chunks"`.
-    chunk_collection_prefix: String,
 }
 
 impl std::fmt::Debug for Pipeline {
@@ -79,11 +73,6 @@ pub struct IngestSummary {
 
 impl Pipeline {
     pub fn new(client: Arc<dyn GraphClient>, config: &Config) -> Self {
-        let chunk_collection_prefix = config
-            .types
-            .get("SemanticText")
-            .and_then(|t| t.collection.clone())
-            .unwrap_or_else(|| "chunks".to_string());
         Self {
             client,
             max_depth: config.query.max_traversal_depth,
@@ -93,24 +82,13 @@ impl Pipeline {
             // Default registry contains the built-in scalar parsers
             // (Text/Number/Boolean/Date/Timestamp) so a freshly-constructed
             // pipeline can ingest a typed mapping without explicit setup.
+            // `Pipeline::ingest_document` additionally requires a
+            // `SemanticText` handler — register one via
+            // [`Self::with_registry`] before calling it.
             registry: Arc::new(handlers::core_registry()),
             embedder: None,
             metadata: Arc::new(RwLock::new(None)),
-            chunk_collection_prefix,
         }
-    }
-
-    /// Override the Qdrant collection prefix used for chunk-text
-    /// embeddings during [`Self::ingest_document`]. Useful when the
-    /// SemanticText handler isn't configured in the same TOML as the
-    /// pipeline (e.g. in tests).
-    pub fn with_chunk_collection_prefix(mut self, prefix: impl Into<String>) -> Self {
-        self.chunk_collection_prefix = prefix.into();
-        self
-    }
-
-    pub fn chunk_collection_prefix(&self) -> &str {
-        &self.chunk_collection_prefix
     }
 
     /// Override the ingestion batch size. Useful for tests and for callers
@@ -325,16 +303,21 @@ impl Pipeline {
     /// strings — they're sanitized to satisfy the Cypher identifier
     /// grammar before being inlined as labels.
     ///
-    /// Chunks are always embedded into Qdrant via the same side-effect
-    /// mechanism the SemanticText handler uses, so the caller MUST have
-    /// configured an embedder via [`Self::with_embedder`]. The Qdrant
-    /// collection is `"{chunk_collection_prefix}__text"`.
+    /// Every chunk `text` and every entity `name` is routed through the
+    /// registered `SemanticText` handler so they're stored on the node
+    /// *and* embedded into Qdrant for semantic search. The caller must
+    /// therefore have:
+    ///
+    /// * Registered a `SemanticText` handler via [`Self::with_registry`]
+    ///   (typically via `handlers::register_default(&cfg, embedder)`).
+    /// * Configured an embedder via [`Self::with_embedder`] so the
+    ///   queued `EmbedAndStore` side effects can actually be drained.
     pub async fn ingest_document(&self, doc: DocumentInput) -> Result<IngestSummary> {
         let opts = DocumentIngestOptions {
-            collection_prefix: self.chunk_collection_prefix.clone(),
             max_batch_size: self.ingest_batch_size,
         };
-        let (plan, effects) = ingest::build_document_plan(&doc, &opts)?;
+        let mut effects = SideEffectQueue::new();
+        let plan = ingest::build_document_plan(&doc, &opts, &self.registry, &mut effects)?;
         let insert = ingest::planner::lower_plan(
             plan,
             PlannerOptions { max_batch_size: self.ingest_batch_size },

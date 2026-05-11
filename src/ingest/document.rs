@@ -17,14 +17,33 @@
 //! input is idempotent. There is *no* cross-chunk deduplication — two
 //! mentions of "Alice" in different chunks are two distinct `(:Person)`
 //! nodes — by design (see the plan file).
+//!
+//! ## Embeddings
+//!
+//! Every string field on a chunk (`text`) and every string field on an
+//! entity (`name`) is treated as `SemanticText`. The registered
+//! [`crate::types::handlers::SemanticTextHandler`] runs against each one
+//! via [`IngestCtx`] just like a mapping-declared typed property would
+//! (mirroring [`super::planner::apply_type_handlers`]). It stores the
+//! raw text on the node *and* queues an
+//! [`crate::types::SideEffect::EmbedAndStore`] so the pipeline embeds
+//! the value after the Memgraph batch lands.
+//!
+//! The handler MUST be registered. Without it `build_document_plan`
+//! returns [`IngestError::Type`] — silently ingesting without
+//! embeddings would make `c.text` / `<Label>.name` SemanticText
+//! searches miss without any signal to the caller.
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::ast::query::Literal;
-use crate::types::{SideEffect, SideEffectQueue};
+use crate::types::context::IngestCtx;
+use crate::types::handlers::SemanticTextHandler;
+use crate::types::{SideEffectQueue, TypeHandler, TypeRegistry};
 
 use super::dsl::{InsertPlan, NodeData, NodePlan, RelationData, RelationPlan};
 use super::IngestError;
@@ -85,22 +104,20 @@ pub struct RelationInput {
 }
 
 /// Knobs for [`build_document_plan`].
+///
+/// The Qdrant collection name is **no longer** carried here — it lives
+/// on the registered [`SemanticTextHandler`]'s config (`config.collection`)
+/// so chunk-text and entity-name embeddings end up in the same
+/// collections the query path consults (`{collection}__text`,
+/// `{collection}__name`).
 #[derive(Debug, Clone)]
 pub struct DocumentIngestOptions {
-    /// Qdrant collection prefix used for the chunk-text embedding. The
-    /// actual collection becomes `"{collection_prefix}__text"`, matching
-    /// the SemanticText handler's `"<config.collection>__<field_name>"`
-    /// convention.
-    pub collection_prefix: String,
     pub max_batch_size: usize,
 }
 
 impl Default for DocumentIngestOptions {
     fn default() -> Self {
-        Self {
-            collection_prefix: "chunks".to_string(),
-            max_batch_size: 1000,
-        }
+        Self { max_batch_size: 1000 }
     }
 }
 
@@ -109,13 +126,35 @@ impl Default for DocumentIngestOptions {
 /// Pure — no I/O, no DB calls. The caller (typically
 /// `Pipeline::ingest_document`) lowers the plan, renders Cypher, executes
 /// the batches, and drains the side effects.
+///
+/// `registry` MUST contain a `SemanticText` handler. Every string field
+/// on chunks (`text`) and entities (`name`) is routed through that
+/// handler so embeddings are queued in `effects` exactly like a typed
+/// mapping property would do via [`super::planner::apply_type_handlers`].
 pub fn build_document_plan(
     doc: &DocumentInput,
     opts: &DocumentIngestOptions,
-) -> Result<(InsertPlan, SideEffectQueue), IngestError> {
+    registry: &TypeRegistry,
+    effects: &mut SideEffectQueue,
+) -> Result<InsertPlan, IngestError> {
     if opts.max_batch_size == 0 {
         return Err(IngestError::InvalidBatchSize);
     }
+
+    // Look up the SemanticText handler. We *require* it: every entity
+    // `name` and every chunk `text` is assumed to be SemanticText, and
+    // silently degrading to plain strings would make downstream semantic
+    // search miss without any signal.
+    let semantic_handler = registry
+        .get_by_name(SemanticTextHandler::TYPE_ID)
+        .map_err(|_| {
+            IngestError::Type(format!(
+                "document ingest requires a `{}` handler to be registered \
+                 (it embeds chunk text and entity names for semantic search)",
+                SemanticTextHandler::TYPE_ID,
+            ))
+        })?
+        .clone();
 
     let doc_path = &doc.document.path;
 
@@ -141,14 +180,27 @@ pub fn build_document_plan(
     type UserRelKey = (String, String, String); // (rel_type, from_label, to_label)
     let mut user_rels: BTreeMap<UserRelKey, Vec<RelationData>> = BTreeMap::new();
     let mut has_chunk_rows: Vec<RelationData> = Vec::with_capacity(doc.document.chunks.len());
-    let mut effects = SideEffectQueue::new();
 
     for (chunk_idx, chunk) in doc.document.chunks.iter().enumerate() {
         let composite_chunk_id = chunk_uuid(doc_path, &chunk.id);
+        let chunk_key = Literal::String(composite_chunk_id.clone());
 
-        // Chunk node.
+        // Chunk node. The `text` field is routed through the SemanticText
+        // handler so the raw text lands on the node *and* an embedding
+        // side effect is queued.
         let mut props: BTreeMap<String, Literal> = BTreeMap::new();
-        props.insert("text".to_string(), Literal::String(chunk.text.clone()));
+        let text_lit = apply_semantic_text(
+            &semantic_handler,
+            CHUNK_LABEL,
+            "id",
+            &chunk_key,
+            "text",
+            &chunk.text,
+            effects,
+        )?;
+        if let Some(lit) = text_lit {
+            props.insert("text".to_string(), lit);
+        }
         props.insert("index".to_string(), Literal::Int(chunk_idx as i64));
         props.insert(
             "document_path".to_string(),
@@ -161,14 +213,14 @@ pub fn build_document_plan(
             Literal::String(chunk.id.clone()),
         );
         chunk_rows.push(NodeData {
-            id: Literal::String(composite_chunk_id.clone()),
+            id: chunk_key.clone(),
             props,
         });
 
         // HAS_CHUNK edge.
         has_chunk_rows.push(RelationData {
             from_id: Literal::String(doc_path.clone()),
-            to_id: Literal::String(composite_chunk_id.clone()),
+            to_id: chunk_key.clone(),
         });
 
         // Per-chunk symbol table: local id → (sanitized label, uuid).
@@ -189,12 +241,27 @@ pub fn build_document_plan(
             }
 
             let uuid = entity_uuid(doc_path, &chunk.id, &ent.id);
+            let entity_key = Literal::String(uuid.clone());
 
             // Entity node row. Store both the cleaned label and the
-            // original (pre-sanitize) `type` string for display.
+            // original (pre-sanitize) `type` string for display. The
+            // `name` field is routed through the SemanticText handler
+            // so it's embedded into the `{cfg.collection}__name`
+            // Qdrant collection alongside chunk-text embeddings.
             let mut ent_props: BTreeMap<String, Literal> = BTreeMap::new();
-            ent_props.insert("id".to_string(), Literal::String(uuid.clone()));
-            ent_props.insert("name".to_string(), Literal::String(ent.name.clone()));
+            ent_props.insert("id".to_string(), entity_key.clone());
+            let name_lit = apply_semantic_text(
+                &semantic_handler,
+                &sanitized,
+                "id",
+                &entity_key,
+                "name",
+                &ent.name,
+                effects,
+            )?;
+            if let Some(lit) = name_lit {
+                ent_props.insert("name".to_string(), lit);
+            }
             // Preserve LLM-original type wording (may include spaces/etc).
             ent_props.insert(
                 "type".to_string(),
@@ -204,7 +271,7 @@ pub fn build_document_plan(
                 .entry(sanitized.clone())
                 .or_default()
                 .push(NodeData {
-                    id: Literal::String(uuid.clone()),
+                    id: entity_key.clone(),
                     props: ent_props,
                 });
 
@@ -213,8 +280,8 @@ pub fn build_document_plan(
                 .entry(sanitized.clone())
                 .or_default()
                 .push(RelationData {
-                    from_id: Literal::String(composite_chunk_id.clone()),
-                    to_id: Literal::String(uuid.clone()),
+                    from_id: chunk_key.clone(),
+                    to_id: entity_key.clone(),
                 });
 
             // Symbol-table entry.
@@ -263,25 +330,6 @@ pub fn build_document_plan(
                     to_id: Literal::String(to.uuid.clone()),
                 });
         }
-
-        // Side effect: embed the chunk text. The pipeline's
-        // `drain_side_effects` will batch all chunks into a single Qdrant
-        // insert call because they share `(collection, payload_label,
-        // node_label, key_field)`.
-        effects.push(SideEffect::EmbedAndStore {
-            collection: format!("{}__text", opts.collection_prefix),
-            label: CHUNK_LABEL.to_string(),
-            key_field: "id".to_string(),
-            key_value: Literal::String(composite_chunk_id),
-            text: chunk.text.clone(),
-            payload_label: Some(CHUNK_LABEL.to_string()),
-            meta: {
-                let mut m: BTreeMap<String, String> = BTreeMap::new();
-                m.insert("field".to_string(), "text".to_string());
-                m.insert("document".to_string(), doc_path.clone());
-                m
-            },
-        });
     }
 
     // ── 3. Assemble the final InsertPlan. Sort rows deterministically. ─
@@ -339,14 +387,37 @@ pub fn build_document_plan(
         });
     }
 
-    Ok((
-        InsertPlan {
-            action: "insert".to_string(),
-            nodes,
-            relations,
-        },
-        effects,
-    ))
+    Ok(InsertPlan {
+        action: "insert".to_string(),
+        nodes,
+        relations,
+    })
+}
+
+/// Run `value` through the SemanticText handler exactly like
+/// [`super::planner::apply_type_handlers`] does for a typed mapping
+/// property. Returns the literal to store on the node (or `None` when
+/// the handler chose to skip the property entirely — which the bundled
+/// SemanticText never does, but other implementations could).
+fn apply_semantic_text(
+    handler: &Arc<dyn TypeHandler>,
+    label: &str,
+    key_field: &str,
+    key_value: &Literal,
+    field_name: &str,
+    value: &str,
+    effects: &mut SideEffectQueue,
+) -> Result<Option<Literal>, IngestError> {
+    let raw = serde_json::Value::String(value.to_string());
+    let mut ctx = IngestCtx::new(label, key_field, key_value, field_name, &raw, effects);
+    handler
+        .on_ingest(&mut ctx)
+        .map_err(|e| IngestError::Type(e.to_string()))?;
+    Ok(match ctx.finish() {
+        None => Some(Literal::String(value.to_string())),
+        Some(Some(lit)) => Some(lit),
+        Some(None) => None,
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -443,7 +514,11 @@ fn entity_uuid(doc_path: &str, chunk_id: &str, local_id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::embeddings::MockEmbedder;
+    use crate::types::handlers::{SemanticTextConfig, SemanticTextHandler};
+    use crate::types::{RegistryBuilder, SideEffect};
     use serde_json::json;
+    use std::sync::Arc;
 
     fn parse_doc(v: serde_json::Value) -> DocumentInput {
         serde_json::from_value(v).expect("doc parses")
@@ -451,6 +526,28 @@ mod tests {
 
     fn opts() -> DocumentIngestOptions {
         DocumentIngestOptions::default()
+    }
+
+    /// Registry pre-populated with a SemanticText handler backed by the
+    /// deterministic mock embedder — required by `build_document_plan`.
+    fn test_registry() -> TypeRegistry {
+        let cfg = SemanticTextConfig {
+            embedding_model: None,
+            collection: "test".into(),
+            top_k: 10,
+            search_threshold: 0.8,
+            reranker_threshold: 0.3,
+        };
+        RegistryBuilder::new()
+            .register(SemanticTextHandler::new(cfg, Arc::new(MockEmbedder::new(8))))
+            .build()
+    }
+
+    fn plan(doc: &DocumentInput) -> Result<(InsertPlan, SideEffectQueue), IngestError> {
+        let reg = test_registry();
+        let mut effects = SideEffectQueue::new();
+        let p = build_document_plan(doc, &opts(), &reg, &mut effects)?;
+        Ok((p, effects))
     }
 
     #[test]
@@ -474,7 +571,7 @@ mod tests {
                 ]
             }
         }));
-        let (plan, effects) = build_document_plan(&doc, &opts()).unwrap();
+        let (plan, effects) = plan(&doc).unwrap();
 
         // Nodes: Document + Chunk + Person + Company.
         let labels: Vec<&str> = plan.nodes.iter().map(|n| n.label.as_str()).collect();
@@ -494,8 +591,66 @@ mod tests {
         );
         assert!(rel_types.contains(&"WORKS_AT"));
 
-        // One side effect per chunk.
-        assert_eq!(effects.len(), 1);
+        // Side effects: 1 chunk text + 2 entity names = 3 EmbedAndStore.
+        assert_eq!(effects.len(), 3);
+    }
+
+    #[test]
+    fn entity_names_are_embedded_per_label() {
+        // Each entity `name` flows through the SemanticText handler, so
+        // we expect one EmbedAndStore per entity, tagged with the entity
+        // label as payload_label and `name` as the field meta.
+        let doc = parse_doc(json!({
+            "document": {
+                "name": "d", "path": "/d",
+                "chunks": [{
+                    "id": "c1", "text": "...",
+                    "entities": [
+                        {"id": "e1", "type": "Person",  "name": "Alice"},
+                        {"id": "e2", "type": "Company", "name": "Acme"}
+                    ],
+                    "relations": []
+                }]
+            }
+        }));
+        let (_p, effects) = plan(&doc).unwrap();
+
+        let by_label: std::collections::BTreeMap<String, Vec<String>> = effects
+            .iter()
+            .map(|e| match e {
+                SideEffect::EmbedAndStore { label, text, .. } => {
+                    (label.clone(), text.clone())
+                }
+            })
+            .fold(Default::default(), |mut acc, (label, text)| {
+                acc.entry(label).or_default().push(text);
+                acc
+            });
+        // 1 chunk + 1 person + 1 company.
+        assert_eq!(by_label.get("Chunk").map(|v| v.len()), Some(1));
+        assert_eq!(by_label.get("Person").map(|v| v.len()), Some(1));
+        assert_eq!(by_label.get("Company").map(|v| v.len()), Some(1));
+        assert!(by_label.get("Person").unwrap().contains(&"Alice".to_string()));
+        assert!(by_label.get("Company").unwrap().contains(&"Acme".to_string()));
+    }
+
+    #[test]
+    fn requires_semantic_text_handler() {
+        // A registry without SemanticText must produce a clear error.
+        let reg = RegistryBuilder::new().build();
+        let mut effects = SideEffectQueue::new();
+        let doc = parse_doc(json!({
+            "document": {"name": "d", "path": "/d",
+                "chunks": [{"id": "c1", "text": "x", "entities": [], "relations": []}]}
+        }));
+        let err = build_document_plan(&doc, &opts(), &reg, &mut effects).unwrap_err();
+        match err {
+            IngestError::Type(msg) => assert!(
+                msg.contains("SemanticText"),
+                "expected SemanticText-required message, got: {msg}"
+            ),
+            other => panic!("expected IngestError::Type, got {other:?}"),
+        }
     }
 
     #[test]
@@ -513,8 +668,8 @@ mod tests {
             }
         }));
         let doc2 = doc1.clone();
-        let (p1, _) = build_document_plan(&doc1, &opts()).unwrap();
-        let (p2, _) = build_document_plan(&doc2, &opts()).unwrap();
+        let (p1, _) = plan(&doc1).unwrap();
+        let (p2, _) = plan(&doc2).unwrap();
         let id1 = match &p1.nodes.iter().find(|n| n.label == "Person").unwrap().rows[0].id {
             Literal::String(s) => s.clone(),
             _ => unreachable!(),
@@ -545,7 +700,7 @@ mod tests {
                 }]
             }
         }));
-        let (plan, _) = build_document_plan(&doc, &opts()).unwrap();
+        let (plan, _) = plan(&doc).unwrap();
         assert!(
             plan.nodes.iter().any(|n| n.label == "Music_Group"),
             "dynamic label with space should be sanitized; got {:?}",
@@ -570,7 +725,7 @@ mod tests {
                 }]
             }
         }));
-        let err = build_document_plan(&doc, &opts()).unwrap_err();
+        let err = plan(&doc).unwrap_err();
         assert!(matches!(err, IngestError::ReservedLabel(s) if s == "Document"));
     }
 
@@ -591,7 +746,7 @@ mod tests {
                 }]
             }
         }));
-        let err = build_document_plan(&doc, &opts()).unwrap_err();
+        let err = plan(&doc).unwrap_err();
         assert!(matches!(err, IngestError::ReservedRelation(s) if s == "MENTIONS"));
     }
 
@@ -609,7 +764,7 @@ mod tests {
                 }]
             }
         }));
-        let err = build_document_plan(&doc, &opts()).unwrap_err();
+        let err = plan(&doc).unwrap_err();
         match err {
             IngestError::UnknownLocalId { chunk, local_id } => {
                 assert_eq!(chunk, "c1");
@@ -631,7 +786,7 @@ mod tests {
                 }]
             }
         }));
-        let (plan, _) = build_document_plan(&doc, &opts()).unwrap();
+        let (plan, _) = plan(&doc).unwrap();
         // "3D-Model" → "3D_Model" → "_3D_Model" (underscore-prefixed).
         assert!(
             plan.nodes.iter().any(|n| n.label == "_3D_Model"),
@@ -652,7 +807,7 @@ mod tests {
                 }]
             }
         }));
-        let err = build_document_plan(&doc, &opts()).unwrap_err();
+        let err = plan(&doc).unwrap_err();
         assert!(matches!(err, IngestError::InvalidLabel(_)));
     }
 
@@ -676,11 +831,12 @@ mod tests {
                 ]
             }
         }));
-        let (plan, effects) = build_document_plan(&doc, &opts()).unwrap();
+        let (plan, effects) = plan(&doc).unwrap();
         let person = plan.nodes.iter().find(|n| n.label == "Person").unwrap();
         assert_eq!(person.rows.len(), 2);
         let ids: Vec<&Literal> = person.rows.iter().map(|r| &r.id).collect();
         assert_ne!(ids[0], ids[1]);
-        assert_eq!(effects.len(), 2);
+        // 2 chunk-text + 2 entity-name embeddings.
+        assert_eq!(effects.len(), 4);
     }
 }

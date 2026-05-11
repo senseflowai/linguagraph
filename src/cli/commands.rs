@@ -508,23 +508,25 @@ async fn cmd_ingest_document_cypher(
 ) -> Result<()> {
     use crate::builder;
     use crate::ingest::{self, DocumentIngestOptions, PlannerOptions};
+    use crate::types::SideEffectQueue;
 
     let cfg = load_config_or_default(config_path).await;
     let raw = fs::read_to_string(&path).await?;
     let doc: DocumentInput = serde_json::from_str(&raw)?;
 
-    // Build the plan and lower it directly — no DB call, no embedder
-    // needed. This mirrors `IngestCypher` for the mapping path.
-    let collection_prefix = cfg
-        .types
-        .get("SemanticText")
-        .and_then(|t| t.collection.clone())
-        .unwrap_or_else(|| "chunks".to_string());
-    let opts = DocumentIngestOptions {
-        collection_prefix,
-        max_batch_size: batch_size,
-    };
-    let (plan, _effects) = ingest::build_document_plan(&doc, &opts)?;
+    // Build the registry the same way as the executing path so the
+    // dry-run output matches reality. The SemanticText handler is
+    // required (every chunk text + entity name flows through it); when
+    // the config doesn't declare one, `build_registry` may produce a
+    // registry without SemanticText. In that case we still want the
+    // dry-run to work, so we synthesize a defaults-only SemanticText
+    // handler backed by the mock embedder.
+    let (registry, _embedder) = build_registry(&cfg)?;
+    let registry = ensure_semantic_text(registry);
+
+    let opts = DocumentIngestOptions { max_batch_size: batch_size };
+    let mut effects = SideEffectQueue::new();
+    let plan = ingest::build_document_plan(&doc, &opts, &registry, &mut effects)?;
     let insert = ingest::planner::lower_plan(
         plan,
         PlannerOptions { max_batch_size: batch_size },
@@ -538,6 +540,34 @@ async fn cmd_ingest_document_cypher(
         println!();
     }
     Ok(())
+}
+
+/// Ensure `registry` contains a `SemanticText` handler. If one is
+/// already registered, returns the registry untouched; otherwise
+/// rebuilds it with a defaults-only `SemanticTextHandler` backed by the
+/// mock embedder. Used by `ingest-document-cypher` so the dry-run
+/// works without a `[types.SemanticText]` config block.
+fn ensure_semantic_text(registry: SharedRegistry) -> SharedRegistry {
+    use crate::embeddings::MockEmbedder;
+    use crate::types::handlers::{SemanticTextConfig, SemanticTextHandler};
+    use crate::types::{RegistryBuilder, TypeId};
+
+    if registry.contains(&TypeId::new(SemanticTextHandler::TYPE_ID)) {
+        return registry;
+    }
+    let cfg = SemanticTextConfig {
+        embedding_model: None,
+        collection: "chunks".into(),
+        top_k: 10,
+        search_threshold: 0.8,
+        reranker_threshold: 0.3,
+    };
+    let mut b = RegistryBuilder::new();
+    for h in registry.iter() {
+        b = b.register_arc(h.clone());
+    }
+    b = b.register(SemanticTextHandler::new(cfg, Arc::new(MockEmbedder::new(8))));
+    Arc::new(b.build())
 }
 
 async fn cmd_knowledge_prompt(

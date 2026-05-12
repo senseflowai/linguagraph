@@ -42,7 +42,10 @@ impl PropertyRef {
         if it.next().is_some() || alias.is_empty() {
             return None;
         }
-        Some(Self { alias: Alias(alias), property: prop })
+        Some(Self {
+            alias: Alias(alias),
+            property: prop,
+        })
     }
 }
 
@@ -314,6 +317,9 @@ pub struct RelationRow {
     pub from_id: Literal,
     /// The merge-key value of the target node.
     pub to_id: Literal,
+    /// Relationship properties set after MERGE.
+    #[serde(default)]
+    pub props: BTreeMap<String, Literal>,
 }
 
 // `Literal` derives `PartialEq`; we additionally need `Eq` and `Hash` so

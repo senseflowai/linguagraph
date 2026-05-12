@@ -7,5 +7,8 @@
 mod generator;
 mod schema;
 
-pub use generator::{generate_system_prompt, PromptOptions};
+pub use generator::{
+    generate_query_prompt, generate_system_prompt, select_query_schema, PromptOptions,
+    PromptSchemaSelection,
+};
 pub use schema::{GraphSchema, NodeKind, Property, PropertyType, RelKind};

@@ -59,7 +59,7 @@
         {
           "name": "id",
           "source_path": "$.cameras[*].origin.place_id",
-          "type": "Text"
+          "type": "Number"
         },
         {
           "name": "name",

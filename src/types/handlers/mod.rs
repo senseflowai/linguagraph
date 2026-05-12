@@ -22,9 +22,8 @@ pub mod core;
 pub mod semantic_text;
 
 pub use core::{
-    boolean_handler, date_handler, number_handler, text_handler, timestamp_handler,
-    BooleanParser, DateParser, NumberParser, ScalarParser, ScalarTypeHandler, TextParser,
-    TimestampParser,
+    boolean_handler, date_handler, number_handler, text_handler, timestamp_handler, BooleanParser,
+    DateParser, NumberParser, ScalarParser, ScalarTypeHandler, TextParser, TimestampParser,
 };
 pub use semantic_text::{SemanticTextConfig, SemanticTextHandler};
 

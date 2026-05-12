@@ -37,9 +37,7 @@ impl MetadataStore for FileMetadataStore {
                 }
                 Ok(serde_json::from_slice(&bytes)?)
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                Ok(PropertyMetadata::new())
-            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(PropertyMetadata::new()),
             Err(e) => Err(MetadataError::Io(e)),
         }
     }

@@ -92,14 +92,15 @@ impl SemanticTextConfig {
     pub fn from_config(cfg: &Config) -> Option<Self> {
         cfg.types.get("SemanticText").map(|t| Self {
             embedding_model: t.embedding_model.clone(),
-            collection: t.collection.clone().unwrap_or_else(|| "semantic_text".into()),
+            collection: t
+                .collection
+                .clone()
+                .unwrap_or_else(|| "semantic_text".into()),
             top_k: t.top_k.unwrap_or(20),
             // `threshold` in TOML refers to the cosine cutoff —
             // matches what was historically the only knob.
             search_threshold: t.threshold.unwrap_or(DEFAULT_SEARCH_THRESHOLD),
-            reranker_threshold: t
-                .reranker_threshold
-                .unwrap_or(DEFAULT_RERANKER_THRESHOLD),
+            reranker_threshold: t.reranker_threshold.unwrap_or(DEFAULT_RERANKER_THRESHOLD),
         })
     }
 }
@@ -161,10 +162,7 @@ impl TypeHandler for SemanticTextHandler {
             other => {
                 return Err(TypeError::InvalidValue {
                     ty: Self::TYPE_ID.into(),
-                    reason: format!(
-                        "SemanticText expects string, got {}",
-                        json_kind(other)
-                    ),
+                    reason: format!("SemanticText expects string, got {}", json_kind(other)),
                 });
             }
         };
@@ -236,10 +234,13 @@ impl TypeHandler for SemanticTextHandler {
         // cross-encoder prompt) AND its embedding (used for stage-1
         // KNN). The Cypher node label is the qlink payload filter,
         // matching what `on_ingest` wrote via `insert_labeled`.
-        let label = ctx.field_label.ok_or_else(|| TypeError::Handler(
-            "SemanticText: cannot resolve graph label for field; \
-             alias is not bound to a node/edge in the AST".into(),
-        ))?;
+        let label = ctx.field_label.ok_or_else(|| {
+            TypeError::Handler(
+                "SemanticText: cannot resolve graph label for field; \
+             alias is not bound to a node/edge in the AST"
+                    .into(),
+            )
+        })?;
 
         let mut params = BTreeMap::new();
         params.insert("embedding".to_string(), lit_vec);
@@ -249,10 +250,7 @@ impl TypeHandler for SemanticTextHandler {
         );
         params.insert("query_str".to_string(), Literal::String(text.to_string()));
         params.insert("label".to_string(), Literal::String(label.to_string()));
-        params.insert(
-            "top_k".to_string(),
-            Literal::Int(self.config.top_k as i64),
-        );
+        params.insert("top_k".to_string(), Literal::Int(self.config.top_k as i64));
         params.insert(
             "search_threshold".to_string(),
             Literal::Float(self.config.search_threshold),
@@ -395,10 +393,7 @@ impl TypeHandler for SemanticTextHandler {
                 ));
                 ctx.contribution_mut()
                     .order_by
-                    .push((
-                        format!("({alias}__exact + {alias}__sem)"),
-                        OrderDir::Desc,
-                    ));
+                    .push((format!("({alias}__exact + {alias}__sem)"), OrderDir::Desc));
                 // No WHERE addendum: the post_match clauses replace the
                 // node binding, so further filtering happens against
                 // the rebound `alias`.
@@ -484,12 +479,7 @@ mod tests {
     /// production path always populates `field_label` (the AST
     /// resolves the alias before the handler runs); the tests do the
     /// same so they exercise the same code path.
-    fn lc<'a>(
-        field: &'a PropertyRef,
-        op: TypedOp,
-        value: &'a Value,
-        label: &'a str,
-    ) -> LC<'a> {
+    fn lc<'a>(field: &'a PropertyRef, op: TypedOp, value: &'a Value, label: &'a str) -> LC<'a> {
         LC {
             raw: RawTypedFilter { field, op, value },
             type_id: TypeId::new(SemanticTextHandler::TYPE_ID),
@@ -638,7 +628,11 @@ mod tests {
         let pred = h.lower(&mut lower).unwrap();
 
         let mut contrib = CypherContribution::default();
-        let mut binder = CountingBinder { next: 0, next_var: 0, params: Default::default() };
+        let mut binder = CountingBinder {
+            next: 0,
+            next_var: 0,
+            params: Default::default(),
+        };
         let mut emit = EmitCtx::new(&mut contrib, &mut binder);
         h.emit(&mut emit, &pred).unwrap();
 
@@ -672,21 +666,34 @@ mod tests {
         let pred = h.lower(&mut lower).unwrap();
 
         let mut contrib = CypherContribution::default();
-        let mut binder = CountingBinder { next: 0, next_var: 0, params: Default::default() };
+        let mut binder = CountingBinder {
+            next: 0,
+            next_var: 0,
+            params: Default::default(),
+        };
         let mut emit = EmitCtx::new(&mut contrib, &mut binder);
         h.emit(&mut emit, &pred).unwrap();
 
         let floats: Vec<f64> = binder
             .params
             .values()
-            .filter_map(|v| if let Literal::Float(f) = v { Some(*f) } else { None })
+            .filter_map(|v| {
+                if let Literal::Float(f) = v {
+                    Some(*f)
+                } else {
+                    None
+                }
+            })
             .collect();
         assert!(
             floats.iter().any(|f| (f - 0.17).abs() < 1e-9),
             "reranker_threshold 0.17 not bound; floats={floats:?}"
         );
         let pre = contrib.pre_match.join("\n");
-        assert!(!pre.contains("0.17"), "reranker_threshold leaked inline: {pre}");
+        assert!(
+            !pre.contains("0.17"),
+            "reranker_threshold leaked inline: {pre}"
+        );
     }
 
     #[test]
@@ -697,7 +704,11 @@ mod tests {
         let mut lower = lc(&field, TypedOp::HybridSearch, &value, "Company");
         let pred = h.lower(&mut lower).unwrap();
         let mut contrib = CypherContribution::default();
-        let mut binder = CountingBinder { next: 0, next_var: 0, params: Default::default() };
+        let mut binder = CountingBinder {
+            next: 0,
+            next_var: 0,
+            params: Default::default(),
+        };
         let mut emit = EmitCtx::new(&mut contrib, &mut binder);
         h.emit(&mut emit, &pred).unwrap();
 
@@ -705,6 +716,9 @@ mod tests {
         assert!(post.contains("c__exact"));
         assert!(post.contains("libqlink.score_batch_node"));
         assert!(post.contains("c__sem"));
-        assert!(contrib.order_by.iter().any(|(k, _)| k.contains("c__exact + c__sem")));
+        assert!(contrib
+            .order_by
+            .iter()
+            .any(|(k, _)| k.contains("c__exact + c__sem")));
     }
 }

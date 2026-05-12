@@ -52,7 +52,9 @@ fn render_node_batch(batch: &NodeBatch) -> Result<CypherQuery, InsertError> {
     let mut rows = Vec::with_capacity(batch.rows.len());
     for row in &batch.rows {
         if matches!(row.id, Literal::Null) {
-            return Err(InsertError::MissingId { label: batch.label.clone() });
+            return Err(InsertError::MissingId {
+                label: batch.label.clone(),
+            });
         }
         for k in row.props.keys() {
             check_ident(k)?;
@@ -90,8 +92,12 @@ fn render_relation_batch(batch: &RelationBatch) -> Result<CypherQuery, InsertErr
     let mut rows = Vec::with_capacity(batch.rows.len());
     for row in &batch.rows {
         let mut entry: BTreeMap<String, Literal> = BTreeMap::new();
+        for k in row.props.keys() {
+            check_ident(k)?;
+        }
         entry.insert("from".to_string(), row.from_id.clone());
         entry.insert("to".to_string(), row.to_id.clone());
+        entry.insert("props".to_string(), Literal::Object(row.props.clone()));
         rows.push(Literal::Object(entry));
     }
 
@@ -99,7 +105,8 @@ fn render_relation_batch(batch: &RelationBatch) -> Result<CypherQuery, InsertErr
         "UNWIND $rels AS rel\n\
          MATCH (a:{from_label} {{{from_key}: rel.from}})\n\
          MATCH (b:{to_label} {{{to_key}: rel.to}})\n\
-         MERGE (a)-[:{rel_type}]->(b)",
+         MERGE (a)-[r:{rel_type}]->(b)\n\
+         SET r += rel.props",
         from_label = batch.from_label,
         from_key = batch.from_key,
         to_label = batch.to_label,
@@ -166,13 +173,18 @@ mod tests {
             from_key: "id".into(),
             to_label: "Place".into(),
             to_key: "id".into(),
-            rows: vec![RelationRow { from_id: s("c1"), to_id: s("p1") }],
+            rows: vec![RelationRow {
+                from_id: s("c1"),
+                to_id: s("p1"),
+                props: BTreeMap::new(),
+            }],
         };
         let out = render_relation_batch(&batch).unwrap();
         assert!(out.text.contains("UNWIND $rels AS rel"));
         assert!(out.text.contains("MATCH (a:Camera {id: rel.from})"));
         assert!(out.text.contains("MATCH (b:Place {id: rel.to})"));
-        assert!(out.text.contains("MERGE (a)-[:LOCATED_IN]->(b)"));
+        assert!(out.text.contains("MERGE (a)-[r:LOCATED_IN]->(b)"));
+        assert!(out.text.contains("SET r += rel.props"));
     }
 
     #[test]
@@ -180,7 +192,10 @@ mod tests {
         let batch = NodeBatch {
             label: "1Bad".into(),
             merge_on: "id".into(),
-            rows: vec![NodeRow { id: s("x"), props: BTreeMap::new() }],
+            rows: vec![NodeRow {
+                id: s("x"),
+                props: BTreeMap::new(),
+            }],
         };
         assert!(matches!(
             render_node_batch(&batch),
@@ -193,7 +208,10 @@ mod tests {
         let batch = NodeBatch {
             label: "Camera) MATCH (x".into(),
             merge_on: "id".into(),
-            rows: vec![NodeRow { id: s("x"), props: BTreeMap::new() }],
+            rows: vec![NodeRow {
+                id: s("x"),
+                props: BTreeMap::new(),
+            }],
         };
         assert!(matches!(
             render_node_batch(&batch),
@@ -206,7 +224,10 @@ mod tests {
         let batch = NodeBatch {
             label: "Camera".into(),
             merge_on: "id".into(),
-            rows: vec![NodeRow { id: Literal::Null, props: BTreeMap::new() }],
+            rows: vec![NodeRow {
+                id: Literal::Null,
+                props: BTreeMap::new(),
+            }],
         };
         assert!(matches!(
             render_node_batch(&batch),
@@ -216,7 +237,10 @@ mod tests {
 
     #[test]
     fn empty_query_yields_no_batches() {
-        let q = InsertQuery { node_batches: vec![], relation_batches: vec![] };
+        let q = InsertQuery {
+            node_batches: vec![],
+            relation_batches: vec![],
+        };
         assert!(build_insert(&q).unwrap().is_empty());
     }
 }

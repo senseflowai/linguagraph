@@ -38,9 +38,9 @@ impl SideEffect {
     /// effects so each collection's `qlink.insert_batch` is one call.
     pub fn group_key(&self) -> (&str, &str) {
         match self {
-            SideEffect::EmbedAndStore { collection, label, .. } => {
-                (collection.as_str(), label.as_str())
-            }
+            SideEffect::EmbedAndStore {
+                collection, label, ..
+            } => (collection.as_str(), label.as_str()),
         }
     }
 }

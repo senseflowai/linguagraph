@@ -85,4 +85,6 @@ pub struct RelationPlan {
 pub struct RelationData {
     pub from_id: Literal,
     pub to_id: Literal,
+    #[serde(default)]
+    pub props: BTreeMap<String, Literal>,
 }

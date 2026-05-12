@@ -13,7 +13,7 @@ use crate::ast::query::*;
 use crate::dsl::schema as d;
 use crate::metadata::PropertyMetadata;
 use crate::types::context::{LowerCtx, RawTypedFilter};
-use crate::types::{TypeError, TypeRegistry, TypeId, TypedOp};
+use crate::types::{TypeError, TypeId, TypeRegistry, TypedOp};
 
 #[derive(Debug, Error)]
 pub enum AstError {
@@ -105,7 +105,10 @@ pub fn lower_full(
     for t in dsl.traversals {
         if let Some(depth) = t.depth {
             if depth.max > max_depth {
-                return Err(AstError::DepthTooLarge { got: depth.max, max: max_depth });
+                return Err(AstError::DepthTooLarge {
+                    got: depth.max,
+                    max: max_depth,
+                });
             }
         }
 
@@ -131,7 +134,10 @@ pub fn lower_full(
                 label: t.target.label,
                 alias: Alias::new(t.target.alias),
             },
-            depth: t.depth.map(|r| Depth { min: r.min, max: r.max }),
+            depth: t.depth.map(|r| Depth {
+                min: r.min,
+                max: r.max,
+            }),
         });
     }
 
@@ -222,12 +228,11 @@ fn lower_filters(
             Some(ty_name) => {
                 let type_id = TypeId::new(&ty_name);
                 let handler = registry.get(&type_id)?;
-                let typed_op = parse_typed_op(&f.op).ok_or_else(|| {
-                    AstError::UnsupportedTypedOp {
+                let typed_op =
+                    parse_typed_op(&f.op).ok_or_else(|| AstError::UnsupportedTypedOp {
                         ty: ty_name.clone(),
                         op: f.op.clone(),
-                    }
-                })?;
+                    })?;
                 if !handler.supported_ops().contains(&typed_op) {
                     return Err(AstError::UnsupportedTypedOp {
                         ty: ty_name.clone(),
@@ -273,7 +278,8 @@ fn infer_type(
     let meta = metadata?;
     let prop = field.property.as_deref()?;
     let label = alias_labels.get(field.alias.as_str())?;
-    meta.get_type(&format!("{label}.{prop}")).map(str::to_string)
+    meta.get_type(&format!("{label}.{prop}"))
+        .map(str::to_string)
 }
 
 fn lower_op(op: d::FilterOp) -> ComparisonOp {
@@ -324,7 +330,11 @@ fn lower_returns(
                 field: resolve_property(field, bound)?,
                 alias: alias.clone(),
             }),
-            d::ReturnItem::Aggregate { aggregate, field, alias } => Ok(ReturnClause::Aggregate {
+            d::ReturnItem::Aggregate {
+                aggregate,
+                field,
+                alias,
+            } => Ok(ReturnClause::Aggregate {
                 func: lower_agg(*aggregate),
                 field: resolve_property(field, bound)?,
                 alias: alias.clone(),
@@ -370,7 +380,10 @@ fn lower_sort(
             } else if bound.contains_key(&s.field) {
                 // Sorting by an entity is unusual but legal — fall through as
                 // a property ref with no property part.
-                SortRef::Property(PropertyRef { alias: Alias::new(s.field.clone()), property: None })
+                SortRef::Property(PropertyRef {
+                    alias: Alias::new(s.field.clone()),
+                    property: None,
+                })
             } else {
                 return Err(AstError::BadSortKey(s.field.clone()));
             };
@@ -392,8 +405,12 @@ fn enforce_aggregation_rules(
     returns: &[ReturnClause],
     group_by: &[String],
 ) -> Result<(), AstError> {
-    let has_aggregate = returns.iter().any(|r| matches!(r, ReturnClause::Aggregate { .. }));
-    let has_plain = returns.iter().any(|r| matches!(r, ReturnClause::Field { .. }));
+    let has_aggregate = returns
+        .iter()
+        .any(|r| matches!(r, ReturnClause::Aggregate { .. }));
+    let has_plain = returns
+        .iter()
+        .any(|r| matches!(r, ReturnClause::Field { .. }));
 
     match action {
         Action::Find => {

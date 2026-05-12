@@ -102,7 +102,10 @@ fn default_lists_are_reusable_directly() {
     rels.push(RelationTypeSpec::new("REFERENCES_EXTERNAL"));
     let p = generate_knowledge_extract_prompt(
         "x",
-        &KnowledgeExtractOptions { entity_types: ents, relation_types: rels },
+        &KnowledgeExtractOptions {
+            entity_types: ents,
+            relation_types: rels,
+        },
     );
     assert!(p.contains("* `LegalNorm`"));
     assert!(p.contains("* `CustomThing`"));

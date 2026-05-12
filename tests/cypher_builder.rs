@@ -21,7 +21,10 @@ fn find_example_round_trip() {
     assert!(cypher.text.trim_end().ends_with("LIMIT 25"));
     // Two filter values bound as parameters.
     assert_eq!(cypher.params.len(), 2);
-    assert!(cypher.params.values().any(|v| matches!(v, Literal::Int(30))));
+    assert!(cypher
+        .params
+        .values()
+        .any(|v| matches!(v, Literal::Int(30))));
     assert!(cypher
         .params
         .values()

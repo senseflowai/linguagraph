@@ -119,10 +119,16 @@ struct FieldAcc {
 
 impl Acc {
     fn finish(self) -> JsonSchemaSummary {
-        let Acc { by_path, order, mut relationships } = self;
+        let Acc {
+            by_path,
+            order,
+            mut relationships,
+        } = self;
         let mut entities = Vec::with_capacity(order.len());
         for path in order {
-            let Some(mut ent) = by_path.get(&path).cloned() else { continue };
+            let Some(mut ent) = by_path.get(&path).cloned() else {
+                continue;
+            };
             // Pick a primary key: prefer literal id-named fields.
             // When there's none, leave it None — the prompt nudges the
             // LLM to choose. We deliberately don't try to pick a "first
@@ -169,10 +175,11 @@ impl Acc {
             });
         }
         // Stable order for relationships too.
-        relationships.sort_by(|a, b| {
-            format!("{a:?}").cmp(&format!("{b:?}"))
-        });
-        JsonSchemaSummary { entities, relationships }
+        relationships.sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
+        JsonSchemaSummary {
+            entities,
+            relationships,
+        }
     }
 }
 
@@ -400,8 +407,7 @@ fn singularize(s: &str) -> String {
     // — `addresses` ends in `sses`, not `ses` over `addres`.
     if let Some(stem) = s.strip_suffix("es") {
         let ends_with_chsh = stem.ends_with("ch") || stem.ends_with("sh");
-        if stem.ends_with('s') || stem.ends_with('x') || stem.ends_with('z') || ends_with_chsh
-        {
+        if stem.ends_with('s') || stem.ends_with('x') || stem.ends_with('z') || ends_with_chsh {
             return stem.to_string();
         }
     }
@@ -439,7 +445,10 @@ mod tests {
             e.fields.iter().map(|f| (f.name.as_str(), f)).collect();
         // `id` was promoted to primary_key, so it's not in fields.
         assert!(!by_name.contains_key("id"));
-        assert_eq!(by_name["description"].inferred_type, InferredType::SemanticText);
+        assert_eq!(
+            by_name["description"].inferred_type,
+            InferredType::SemanticText
+        );
         assert_eq!(by_name["industry"].inferred_type, InferredType::Keyword);
         // `name` is short and not in any name-hint list — stays as
         // Text rather than SemanticText.

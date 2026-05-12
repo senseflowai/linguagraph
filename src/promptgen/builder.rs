@@ -124,9 +124,7 @@ impl PromptBuilder {
         // 5. Preferred types (optional bias).
         if !self.opts.preferred_types.is_empty() {
             out.push_str("# Preferred types\n\n");
-            out.push_str(
-                "When the field type is ambiguous, prefer in this order: ",
-            );
+            out.push_str("When the field type is ambiguous, prefer in this order: ");
             out.push_str(&self.opts.preferred_types.join(", "));
             out.push_str(".\n\n");
         }
@@ -253,7 +251,11 @@ fn render_suggested_type(t: InferredType) -> &'static str {
 
 fn render_relationship(out: &mut String, rel: &RelationshipHint) {
     match rel {
-        RelationshipHint::NestedEntity { parent, child, nested_path } => {
+        RelationshipHint::NestedEntity {
+            parent,
+            child,
+            nested_path,
+        } => {
             let _ = writeln!(
                 out,
                 "- `{parent}` HAS_MANY `{child}` (nested at `{nested_path}`) \
@@ -360,7 +362,10 @@ mod tests {
             reranker_threshold: 0.3,
         };
         let registry = RegistryBuilder::new()
-            .register(SemanticTextHandler::new(cfg, Arc::new(MockEmbedder::new(8))))
+            .register(SemanticTextHandler::new(
+                cfg,
+                Arc::new(MockEmbedder::new(8)),
+            ))
             .build();
         let mut opts = PromptGenOptions::default();
         opts.registry = Some(registry);

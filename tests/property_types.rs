@@ -22,14 +22,17 @@ use serde_json::json;
 
 use linguagraph::ast::query::Literal;
 use linguagraph::ingest;
-use linguagraph::mapper::{self, Mapping, MapperError};
+use linguagraph::mapper::{self, MapperError, Mapping};
 use linguagraph::types::context::IngestCtx;
 use linguagraph::types::handlers::{self, ScalarParser, ScalarTypeHandler};
 use linguagraph::types::{
     Capabilities, RegistryBuilder, SideEffectQueue, TypeError, TypeHandler, TypeId,
 };
 
-fn pick<'a>(rows: &'a [linguagraph::ast::query::NodeRow], id: &str) -> &'a linguagraph::ast::query::NodeRow {
+fn pick<'a>(
+    rows: &'a [linguagraph::ast::query::NodeRow],
+    id: &str,
+) -> &'a linguagraph::ast::query::NodeRow {
     rows.iter()
         .find(|r| matches!(&r.id, Literal::String(s) if s == id))
         .expect("row missing")
@@ -72,8 +75,14 @@ fn missing_type_message_names_the_offending_property() {
     }"#;
     let err = Mapping::from_str(raw).unwrap_err();
     let msg = err.to_string();
-    assert!(msg.contains("lat"), "error must mention the property name; got {msg}");
-    assert!(msg.contains("Place"), "error must mention the entity; got {msg}");
+    assert!(
+        msg.contains("lat"),
+        "error must mention the property name; got {msg}"
+    );
+    assert!(
+        msg.contains("Place"),
+        "error must mention the entity; got {msg}"
+    );
 }
 
 #[test]
@@ -249,10 +258,7 @@ fn unknown_type_tag_is_an_ingest_error() {
 struct PercentageParser;
 
 impl ScalarParser for PercentageParser {
-    fn parse(
-        &self,
-        raw: &serde_json::Value,
-    ) -> Result<Option<Literal>, TypeError> {
+    fn parse(&self, raw: &serde_json::Value) -> Result<Option<Literal>, TypeError> {
         match raw {
             serde_json::Value::Null => Ok(None),
             serde_json::Value::Number(n) => {
@@ -260,7 +266,11 @@ impl ScalarParser for PercentageParser {
                     ty: "Percentage".into(),
                     reason: format!("non-finite number: {n}"),
                 })?;
-                let pct = if (0.0..=1.0).contains(&f) { f * 100.0 } else { f };
+                let pct = if (0.0..=1.0).contains(&f) {
+                    f * 100.0
+                } else {
+                    f
+                };
                 Ok(Some(Literal::Int(pct.round() as i64)))
             }
             serde_json::Value::String(s) => {
@@ -312,7 +322,10 @@ fn custom_registered_type_runs_alongside_core_types() {
     });
 
     let registry = handlers::register_core(RegistryBuilder::new())
-        .register(ScalarTypeHandler::new("Percentage", Box::new(PercentageParser)))
+        .register(ScalarTypeHandler::new(
+            "Percentage",
+            Box::new(PercentageParser),
+        ))
         .build();
 
     let extracted = mapper::extract(&mapping, &data).unwrap();
@@ -327,9 +340,18 @@ fn custom_registered_type_runs_alongside_core_types() {
     .unwrap();
 
     let rows = &q.node_batches[0].rows;
-    assert_eq!(pick(rows, "a").props.get("progress"), Some(&Literal::Int(50)));
-    assert_eq!(pick(rows, "b").props.get("progress"), Some(&Literal::Int(75)));
-    assert_eq!(pick(rows, "c").props.get("progress"), Some(&Literal::Int(30)));
+    assert_eq!(
+        pick(rows, "a").props.get("progress"),
+        Some(&Literal::Int(50))
+    );
+    assert_eq!(
+        pick(rows, "b").props.get("progress"),
+        Some(&Literal::Int(75))
+    );
+    assert_eq!(
+        pick(rows, "c").props.get("progress"),
+        Some(&Literal::Int(30))
+    );
 }
 
 #[test]
@@ -346,10 +368,7 @@ fn custom_handler_with_full_typehandler_trait_also_works() {
         fn capabilities(&self) -> Capabilities {
             Capabilities::INGEST | Capabilities::EXACT_MATCH
         }
-        fn on_ingest(
-            &self,
-            ctx: &mut IngestCtx<'_>,
-        ) -> Result<(), TypeError> {
+        fn on_ingest(&self, ctx: &mut IngestCtx<'_>) -> Result<(), TypeError> {
             ctx.set_value(Literal::String("stamped".into()));
             Ok(())
         }
@@ -398,5 +417,8 @@ fn custom_handler_with_full_typehandler_trait_also_works() {
     )
     .unwrap();
     let row = pick(&q.node_batches[0].rows, "x");
-    assert_eq!(row.props.get("tag"), Some(&Literal::String("stamped".into())));
+    assert_eq!(
+        row.props.get("tag"),
+        Some(&Literal::String("stamped".into()))
+    );
 }

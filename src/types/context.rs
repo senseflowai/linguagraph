@@ -200,7 +200,10 @@ impl std::fmt::Debug for EmitCtx<'_> {
 
 impl<'a> EmitCtx<'a> {
     pub fn new(contribution: &'a mut CypherContribution, binder: &'a mut dyn ParamBinder) -> Self {
-        Self { contribution, binder }
+        Self {
+            contribution,
+            binder,
+        }
     }
 
     /// Register a parameter and return its `$name` placeholder.
@@ -267,7 +270,13 @@ pub struct PromptHint {
 impl PromptHint {
     pub fn from_capabilities(type_id: TypeId, caps: Capabilities) -> Self {
         let ops = caps.default_ops();
-        Self { type_id, capabilities: caps, ops, doc: None, example: None }
+        Self {
+            type_id,
+            capabilities: caps,
+            ops,
+            doc: None,
+            example: None,
+        }
     }
 }
 

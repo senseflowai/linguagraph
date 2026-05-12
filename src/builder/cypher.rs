@@ -120,14 +120,20 @@ mod tests {
     }
 
     fn pref(a: &str, p: Option<&str>) -> PropertyRef {
-        PropertyRef { alias: alias(a), property: p.map(str::to_string) }
+        PropertyRef {
+            alias: alias(a),
+            property: p.map(str::to_string),
+        }
     }
 
     #[test]
     fn builds_basic_match_with_filter() {
         let q = ReadQuery {
             action: Action::Find,
-            start: Node { label: "Person".into(), alias: alias("p") },
+            start: Node {
+                label: "Person".into(),
+                alias: alias("p"),
+            },
             traversals: vec![],
             filter: Some(FilterExpression::Predicate(Predicate {
                 field: pref("p", Some("age")),
@@ -154,13 +160,19 @@ mod tests {
     fn renders_traversal_with_depth_and_direction() {
         let q = ReadQuery {
             action: Action::Find,
-            start: Node { label: "Person".into(), alias: alias("p") },
+            start: Node {
+                label: "Person".into(),
+                alias: alias("p"),
+            },
             traversals: vec![EdgeTraversal {
                 from_alias: alias("p"),
                 edge_label: "KNOWS".into(),
                 edge_alias: alias("r"),
                 direction: Direction::Out,
-                target: Node { label: "Person".into(), alias: alias("p2") },
+                target: Node {
+                    label: "Person".into(),
+                    alias: alias("p2"),
+                },
                 depth: Some(Depth { min: 1, max: 3 }),
             }],
             filter: None,
@@ -173,20 +185,29 @@ mod tests {
             limit: None,
         };
         let out = build_read(&q).unwrap().text;
-        assert!(out.contains("(p:Person)-[r:KNOWS*1..3]->(p2:Person)"), "got: {out}");
+        assert!(
+            out.contains("(p:Person)-[r:KNOWS*1..3]->(p2:Person)"),
+            "got: {out}"
+        );
     }
 
     #[test]
     fn builds_aggregate_with_order_by_alias() {
         let q = ReadQuery {
             action: Action::Aggregate,
-            start: Node { label: "Customer".into(), alias: alias("c") },
+            start: Node {
+                label: "Customer".into(),
+                alias: alias("c"),
+            },
             traversals: vec![EdgeTraversal {
                 from_alias: alias("c"),
                 edge_label: "PLACED".into(),
                 edge_alias: alias("po"),
                 direction: Direction::Out,
-                target: Node { label: "Order".into(), alias: alias("o") },
+                target: Node {
+                    label: "Order".into(),
+                    alias: alias("o"),
+                },
                 depth: None,
             }],
             filter: None,
@@ -217,7 +238,10 @@ mod tests {
     fn parameter_indices_increment() {
         let q = ReadQuery {
             action: Action::Find,
-            start: Node { label: "Person".into(), alias: alias("p") },
+            start: Node {
+                label: "Person".into(),
+                alias: alias("p"),
+            },
             traversals: vec![],
             filter: Some(FilterExpression::And(vec![
                 FilterExpression::Predicate(Predicate {

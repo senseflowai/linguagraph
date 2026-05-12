@@ -77,7 +77,7 @@ fn render_return(item: &ReturnClause) -> String {
                 AggregateFn::Count => {
                     let v = inner.split('.').next();
                     format!("count({})", v.unwrap_or(inner.as_str()))
-                },
+                }
                 AggregateFn::Sum => format!("sum({inner})"),
                 AggregateFn::Avg => format!("avg({inner})"),
                 AggregateFn::Min => format!("min({inner})"),

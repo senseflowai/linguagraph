@@ -8,6 +8,7 @@
 
 pub mod document;
 pub mod dsl;
+pub mod graph;
 pub mod planner;
 
 use thiserror::Error;
@@ -17,6 +18,7 @@ pub use document::{
     EntityInput, RelationInput,
 };
 pub use dsl::{InsertPlan, NodePlan, RelationPlan};
+pub use graph::plan_graph_with_registry;
 pub use planner::{plan, plan_with_options, plan_with_registry, PlannerOptions};
 
 use crate::ast::AstError;
@@ -50,4 +52,13 @@ pub enum IngestError {
 
     #[error("relation in chunk '{chunk}' references unknown local entity id '{local_id}'")]
     UnknownLocalId { chunk: String, local_id: String },
+
+    #[error("graph entity '{0}' is missing a primary key")]
+    MissingGraphPrimaryKey(String),
+
+    #[error("graph entity '{label}' is missing primary-key property '{field}'")]
+    MissingGraphPrimaryKeyValue { label: String, field: String },
+
+    #[error("relationship references unknown graph entity ref {0}")]
+    UnknownGraphEntityRef(usize),
 }

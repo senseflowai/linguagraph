@@ -2,18 +2,16 @@
 
 use std::sync::Arc;
 
-use serde_json::Value;
-
-use crate::ast::{from_dsl, query::ReadQuery, query::InsertQuery, query::Literal};
+use crate::ast::{from_dsl, query::InsertQuery, query::Literal, query::ReadQuery};
 use crate::builder::{self, CypherQuery};
 use crate::config::Config;
 use crate::db::{GraphClient, QueryResult};
 use crate::dsl::DslQuery;
 use crate::embeddings::SharedEmbedder;
 use crate::error::Result;
-use crate::ingest::{self, DocumentIngestOptions, DocumentInput, IngestError, PlannerOptions};
-use crate::mapper::{self, Mapping};
-use crate::metadata::{self, MetadataStore, PropertyMetadata};
+use crate::graph::Graph;
+use crate::ingest::{self, IngestError, PlannerOptions};
+use crate::metadata::{MetadataStore, PropertyMetadata};
 use crate::types::{handlers, SharedRegistry, SideEffect, SideEffectQueue};
 
 use std::sync::RwLock;
@@ -40,9 +38,7 @@ pub struct Pipeline {
     embedder: Option<SharedEmbedder>,
     /// In-memory snapshot of [`PropertyMetadata`] consulted by
     /// [`Self::lower`] to auto-resolve filter types when the DSL omits
-    /// `"type"`. Wrapped in an `RwLock` so a successful [`Self::ingest`]
-    /// can refresh it without taking `&mut self` (the pipeline is
-    /// passed around as `&self` everywhere).
+    /// `"type"`.
     metadata: Arc<RwLock<Option<Arc<PropertyMetadata>>>>,
 }
 
@@ -79,12 +75,10 @@ impl Pipeline {
             default_limit: config.query.default_limit,
             ingest_batch_size: 1000,
             metadata_store: None,
-            // Default registry contains the built-in scalar parsers
-            // (Text/Number/Boolean/Date/Timestamp) so a freshly-constructed
-            // pipeline can ingest a typed mapping without explicit setup.
-            // `Pipeline::ingest_document` additionally requires a
-            // `SemanticText` handler — register one via
-            // [`Self::with_registry`] before calling it.
+            // Default registry contains the built-in scalar parsers.
+            // Graph `Text` properties route through `SemanticText`, so
+            // callers ingesting text-rich graphs should register that
+            // handler via [`Self::with_registry`].
             registry: Arc::new(handlers::core_registry()),
             embedder: None,
             metadata: Arc::new(RwLock::new(None)),
@@ -98,8 +92,7 @@ impl Pipeline {
         self
     }
 
-    /// Attach a metadata store. When set, every [`Self::ingest`] call
-    /// merges the mapping's property descriptions into it.
+    /// Attach a metadata store for query-time type metadata.
     pub fn with_metadata_store(mut self, store: Arc<dyn MetadataStore>) -> Self {
         self.metadata_store = Some(store);
         self
@@ -152,7 +145,10 @@ impl Pipeline {
 
     /// Snapshot of the metadata currently informing query lowering.
     pub fn metadata(&self) -> Option<Arc<PropertyMetadata>> {
-        self.metadata.read().expect("metadata lock poisoned").clone()
+        self.metadata
+            .read()
+            .expect("metadata lock poisoned")
+            .clone()
     }
 
     // ── Read path ───────────────────────────────────────────────────────────
@@ -191,61 +187,45 @@ impl Pipeline {
 
     // ── Insert path ─────────────────────────────────────────────────────────
 
-    /// Compile a `(data, mapping)` pair into one Cypher batch per
-    /// node/relation group. Pure; no I/O. Drops side effects on the
-    /// floor — use [`Self::lower_insert_with_effects`] when you need
-    /// them.
-    pub fn compile_insert(&self, mapping: &Mapping, data: &Value) -> Result<Vec<CypherQuery>> {
-        let (insert, _effects) = self.lower_insert_with_effects(mapping, data)?;
+    /// Compile a graph into one Cypher batch per node/relation group.
+    /// Pure; no I/O. Drops side effects on the floor — use
+    /// [`Self::lower_insert_with_effects`] when you need them.
+    pub fn compile_insert(&self, graph: &Graph) -> Result<Vec<CypherQuery>> {
+        let (insert, _effects) = self.lower_insert_with_effects(graph)?;
         Ok(builder::build_insert(&insert)?)
     }
 
-    /// Lower a `(data, mapping)` pair into the typed [`InsertQuery`] AST,
-    /// dropping any queued side effects.
-    pub fn lower_insert(&self, mapping: &Mapping, data: &Value) -> Result<InsertQuery> {
-        Ok(self.lower_insert_with_effects(mapping, data)?.0)
+    /// Lower a graph into the typed [`InsertQuery`] AST, dropping any
+    /// queued side effects.
+    pub fn lower_insert(&self, graph: &Graph) -> Result<InsertQuery> {
+        Ok(self.lower_insert_with_effects(graph)?.0)
     }
 
-    /// Lower a `(data, mapping)` pair, returning both the [`InsertQuery`]
-    /// and the queue of side effects that must run after the Memgraph
-    /// batches succeed.
+    /// Lower a graph, returning both the [`InsertQuery`] and the queue
+    /// of side effects that must run after the Memgraph batches succeed.
     pub fn lower_insert_with_effects(
         &self,
-        mapping: &Mapping,
-        data: &Value,
+        graph: &Graph,
     ) -> Result<(InsertQuery, SideEffectQueue)> {
-        let extracted = mapper::extract(mapping, data)?;
-        let opts = PlannerOptions { max_batch_size: self.ingest_batch_size };
+        let opts = PlannerOptions {
+            max_batch_size: self.ingest_batch_size,
+        };
         let mut effects = SideEffectQueue::new();
-        let insert = ingest::plan_with_registry(
-            mapping,
-            extracted,
-            opts,
-            &self.registry,
-            &mut effects,
-        )?;
+        let insert = ingest::plan_graph_with_registry(graph, opts, &self.registry, &mut effects)?;
         Ok((insert, effects))
     }
 
-    /// Compile and execute the full ingestion pipeline.
+    /// Compile and execute the full graph ingestion pipeline.
     ///
     /// Each batch is executed sequentially so a partial failure leaves the
     /// graph in a well-defined intermediate state (already-MERGE'd batches
     /// stay; the failing one rolls back its own work). Every node MERGE
     /// runs before any relationship MERGE, so the planner's ordering
     /// guarantees that when relations execute, both endpoints exist.
-    pub async fn ingest(&self, mapping: &Mapping, data: &Value) -> Result<IngestSummary> {
-        let (insert, effects) = self.lower_insert_with_effects(mapping, data)?;
-        let node_rows: usize = insert
-            .node_batches
-            .iter()
-            .map(|b| b.rows.len())
-            .sum();
-        let relation_rows: usize = insert
-            .relation_batches
-            .iter()
-            .map(|b| b.rows.len())
-            .sum();
+    pub async fn ingest(&self, graph: &Graph) -> Result<IngestSummary> {
+        let (insert, effects) = self.lower_insert_with_effects(graph)?;
+        let node_rows: usize = insert.node_batches.iter().map(|b| b.rows.len()).sum();
+        let relation_rows: usize = insert.relation_batches.iter().map(|b| b.rows.len()).sum();
 
         let batches = builder::build_insert(&insert)?;
         let total = batches.len();
@@ -258,85 +238,6 @@ impl Pipeline {
         // texts in one call, then issue *one* `qlink.insert_batch` per
         // (collection, label) group — never per-row.
         let (se_batches, se_rows) = self.drain_side_effects(effects).await?;
-
-        // Refresh property metadata from the mapping. This runs after
-        // the graph writes succeed so a failed ingest doesn't leave the
-        // cache describing data that never landed.
-        //
-        // The persisted snapshot is also re-mirrored into the
-        // pipeline's in-memory cache so subsequent queries auto-resolve
-        // typed filters against the freshest mapping without an extra
-        // `load_metadata()` call.
-        let incoming = metadata::collect_from_mapping(mapping);
-        if !incoming.is_empty() {
-            let merged = if let Some(store) = &self.metadata_store {
-                store.update(&incoming).await?
-            } else {
-                // No persistent store: still keep an in-memory snapshot
-                // by merging into whatever was previously loaded so
-                // subsequent queries see typed-property hints.
-                let mut current = self.metadata().map(|a| (*a).clone()).unwrap_or_default();
-                current.merge(&incoming);
-                current
-            };
-            *self.metadata.write().expect("metadata lock poisoned") =
-                Some(Arc::new(merged));
-        }
-
-        Ok(IngestSummary {
-            batches_executed: total,
-            node_rows,
-            relation_rows,
-            side_effect_batches: se_batches,
-            side_effect_rows: se_rows,
-        })
-    }
-
-    // ── Document ingest path ────────────────────────────────────────────────
-
-    /// Ingest a document-shaped JSON (`{document: {name, path, chunks: [...]}}`)
-    /// directly, bypassing the mapping layer.
-    ///
-    /// Builds a Document → Chunk → Entity graph with implicit `HAS_CHUNK`
-    /// and `MENTIONS` relations, plus whatever user-supplied relations the
-    /// chunks declare. Entity types and relation types are LLM-generated
-    /// strings — they're sanitized to satisfy the Cypher identifier
-    /// grammar before being inlined as labels.
-    ///
-    /// Every chunk `text` and every entity `name` is routed through the
-    /// registered `SemanticText` handler so they're stored on the node
-    /// *and* embedded into Qdrant for semantic search. The caller must
-    /// therefore have:
-    ///
-    /// * Registered a `SemanticText` handler via [`Self::with_registry`]
-    ///   (typically via `handlers::register_default(&cfg, embedder)`).
-    /// * Configured an embedder via [`Self::with_embedder`] so the
-    ///   queued `EmbedAndStore` side effects can actually be drained.
-    pub async fn ingest_document(&self, doc: DocumentInput) -> Result<IngestSummary> {
-        let opts = DocumentIngestOptions {
-            max_batch_size: self.ingest_batch_size,
-        };
-        let mut effects = SideEffectQueue::new();
-        let plan = ingest::build_document_plan(&doc, &opts, &self.registry, &mut effects)?;
-        let insert = ingest::planner::lower_plan(
-            plan,
-            PlannerOptions { max_batch_size: self.ingest_batch_size },
-        );
-
-        let node_rows: usize = insert.node_batches.iter().map(|b| b.rows.len()).sum();
-        let relation_rows: usize = insert.relation_batches.iter().map(|b| b.rows.len()).sum();
-
-        let batches = builder::build_insert(&insert)?;
-        let total = batches.len();
-        for batch in &batches {
-            let _ = self.client.execute(batch).await?;
-        }
-
-        let (se_batches, se_rows) = self.drain_side_effects(effects).await?;
-
-        // No metadata-store refresh: document ingest has no Mapping to
-        // collect property descriptions from. Typed-filter auto-resolution
-        // remains driven by mapping ingest.
 
         Ok(IngestSummary {
             batches_executed: total,
@@ -370,10 +271,7 @@ impl Pipeline {
     /// duplicate match, no cross-label vector clobbering.
     ///
     /// Returns `(batches_run, rows_inserted)`.
-    async fn drain_side_effects(
-        &self,
-        mut effects: SideEffectQueue,
-    ) -> Result<(usize, usize)> {
+    async fn drain_side_effects(&self, mut effects: SideEffectQueue) -> Result<(usize, usize)> {
         if effects.is_empty() {
             return Ok((0, 0));
         }
@@ -544,12 +442,11 @@ pub use crate::embeddings::Embedder as _Embedder;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{DatabaseConfig, LlmConfig, MetadataConfig, QueryConfig};
+    use crate::config::{
+        DatabaseConfig, GraphSpecificationConfig, LlmConfig, MetadataConfig, QueryConfig,
+    };
     use crate::db::MockClient;
-    use crate::metadata::{MetadataError, PropertyMetadata};
-    use async_trait::async_trait;
-    use serde_json::json;
-    use std::sync::Mutex;
+    use crate::graph::{GraphBuilder, PropertyType};
 
     fn cfg() -> Config {
         Config {
@@ -564,76 +461,39 @@ mod tests {
             llm: LlmConfig::default(),
             query: QueryConfig::default(),
             metadata: MetadataConfig::default(),
+            graph_specification: GraphSpecificationConfig::default(),
             types: Default::default(),
         }
     }
 
-    #[derive(Debug, Default)]
-    struct InMemoryStore {
-        inner: Mutex<PropertyMetadata>,
-    }
-
-    #[async_trait]
-    impl MetadataStore for InMemoryStore {
-        async fn load(&self) -> std::result::Result<PropertyMetadata, MetadataError> {
-            Ok(self.inner.lock().unwrap().clone())
-        }
-        async fn save(
-            &self,
-            meta: &PropertyMetadata,
-        ) -> std::result::Result<(), MetadataError> {
-            *self.inner.lock().unwrap() = meta.clone();
-            Ok(())
-        }
-    }
-
     #[tokio::test]
-    async fn ingest_updates_metadata_store_with_descriptions() {
-        let store = Arc::new(InMemoryStore::default());
-        let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg())
-            .with_metadata_store(store.clone());
+    async fn ingest_graph_executes_insert_batches() {
+        let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg());
+        let mut graph = GraphBuilder::new();
+        graph
+            .entity("Camera")
+            .strict_primary_key("id")
+            .property("id", PropertyType::String, "c1")
+            .property("state", PropertyType::String, "active")
+            .add();
 
-        let mapping: Mapping = serde_json::from_value(json!({
-            "entities": [{
-                "type": "Camera",
-                "source_path": "$.cameras[*]",
-                "primary_key": "$.cameras[*].id",
-                "description": "An IP camera",
-                "properties": [
-                    {"name": "id", "source_path": "$.cameras[*].id"},
-                    {
-                        "name": "state",
-                        "source_path": "$.cameras[*].state",
-                        "description": "active or inactive"
-                    }
-                ]
-            }]
-        }))
-        .unwrap();
-        let data = json!({"cameras": [{"id": "c1", "state": "active"}]});
+        let summary = pipeline.ingest(&graph.build()).await.unwrap();
 
-        pipeline.ingest(&mapping, &data).await.unwrap();
-
-        let stored = store.inner.lock().unwrap().clone();
-        assert_eq!(stored.get("Camera"), Some("An IP camera"));
-        assert_eq!(stored.get("Camera.state"), Some("active or inactive"));
+        assert_eq!(summary.batches_executed, 1);
+        assert_eq!(summary.node_rows, 1);
+        assert_eq!(summary.relation_rows, 0);
     }
 
     #[tokio::test]
     async fn ingest_without_store_does_not_panic() {
         let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg());
-        let mapping: Mapping = serde_json::from_value(json!({
-            "entities": [{
-                "type": "X",
-                "source_path": "$.x[*]",
-                "primary_key": "$.x[*].id",
-                "description": "ignored without a store"
-            }]
-        }))
-        .unwrap();
-        pipeline
-            .ingest(&mapping, &json!({"x": [{"id": "a"}]}))
-            .await
-            .unwrap();
+        let mut graph = GraphBuilder::new();
+        graph
+            .entity("X")
+            .strict_primary_key("id")
+            .property("id", PropertyType::String, "a")
+            .add();
+
+        pipeline.ingest(&graph.build()).await.unwrap();
     }
 }

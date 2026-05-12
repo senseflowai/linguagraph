@@ -50,5 +50,8 @@ fn rejects_invalid_field_reference() {
         "start": { "label": "Person", "alias": "p" },
         "return": [{ "field": "p.name.extra" }]
     }"#;
-    assert!(matches!(dsl::parse_str(json), Err(DslError::InvalidFieldRef(_))));
+    assert!(matches!(
+        dsl::parse_str(json),
+        Err(DslError::InvalidFieldRef(_))
+    ));
 }

@@ -6,7 +6,7 @@ use crate::ast::{from_dsl, query::InsertQuery, query::Literal, query::ReadQuery}
 use crate::builder::{self, CypherQuery};
 use crate::config::Config;
 use crate::db::{GraphClient, QueryResult};
-use crate::dsl::DslQuery;
+use crate::dsl::{DslQuery, TraversalQuery};
 use crate::embeddings::SharedEmbedder;
 use crate::error::Result;
 use crate::graph::Graph;
@@ -182,6 +182,36 @@ impl Pipeline {
     /// Compile and execute against the configured graph client.
     pub async fn run(&self, dsl: DslQuery) -> Result<QueryResult> {
         let cypher = self.compile(dsl)?;
+        Ok(self.client.execute(&cypher).await?)
+    }
+
+    // ── Traversal path ──────────────────────────────────────────────────────
+    //
+    // [`TraversalQuery`] is a higher-level, traversal-oriented shape
+    // for text retrieval: the caller hands over the entities they
+    // care about, the search goal, and the verbatim user query, and
+    // the pipeline lowers that to a `SemanticText`-driven DSL that
+    // traverses chunks → entities (one hop, `MENTIONS`) and chunks →
+    // sources (one hop, `part_of`). The methods below mirror the
+    // DSL path so callers can choose which surface to use right at
+    // the call site.
+
+    /// Lower a [`TraversalQuery`] into the typed AST by first
+    /// converting it to a [`DslQuery`].
+    pub fn lower_traversal(&self, traversal: TraversalQuery) -> Result<ReadQuery> {
+        self.lower(traversal.into_dsl())
+    }
+
+    /// Compile a [`TraversalQuery`] all the way to a parameterized
+    /// Cypher query.
+    pub fn compile_traversal(&self, traversal: TraversalQuery) -> Result<CypherQuery> {
+        self.compile(traversal.into_dsl())
+    }
+
+    /// Compile and execute a [`TraversalQuery`] against the configured
+    /// graph client.
+    pub async fn run_traversal(&self, traversal: TraversalQuery) -> Result<QueryResult> {
+        let cypher = self.compile_traversal(traversal)?;
         Ok(self.client.execute(&cypher).await?)
     }
 
@@ -482,6 +512,67 @@ mod tests {
         assert_eq!(summary.batches_executed, 1);
         assert_eq!(summary.node_rows, 1);
         assert_eq!(summary.relation_rows, 0);
+    }
+
+    #[tokio::test]
+    async fn run_traversal_compiles_through_semantic_text_handler() {
+        use crate::embeddings::MockEmbedder;
+        use crate::types::handlers::{SemanticTextConfig, SemanticTextHandler};
+        use crate::types::RegistryBuilder;
+        use std::sync::Arc as StdArc;
+
+        // A registry with a SemanticText handler so the typed
+        // filter the TraversalQuery emits actually lowers cleanly.
+        let registry: SharedRegistry = StdArc::new(
+            crate::types::handlers::register_core(RegistryBuilder::new())
+                .register(SemanticTextHandler::new(
+                    SemanticTextConfig {
+                        embedding_model: None,
+                        collection: "test".into(),
+                        top_k: 10,
+                        search_threshold: 0.8,
+                        reranker_threshold: 0.3,
+                    },
+                    StdArc::new(MockEmbedder::new(8)),
+                ))
+                .build(),
+        );
+        let pipeline =
+            Pipeline::new(Arc::new(MockClient::new()), &cfg()).with_registry(registry);
+
+        let cypher = pipeline
+            .compile_traversal(crate::dsl::TraversalQuery::new(
+                ["Elon Musk", "Company"],
+                "Find companies founded by Elon Musk",
+                "What companies did Elon Musk found?",
+            ))
+            .expect("traversal compiles to cypher");
+
+        // Chunk is the start node and gets a label; the entity
+        // target is label-less (any node).
+        assert!(
+            cypher.text.contains("MATCH (c:Chunk)"),
+            "expected (c:Chunk) start; got: {}",
+            cypher.text
+        );
+        // Mentions hop: chunk -[:MENTIONS]-> (e) — no label on e.
+        assert!(
+            cypher.text.contains("[m:MENTIONS]->(e)"),
+            "expected label-less entity target; got: {}",
+            cypher.text
+        );
+        // part_of hop: chunk -[:part_of]-> (s:Source).
+        assert!(
+            cypher.text.contains("[po:part_of]->(s:Source)"),
+            "expected (s:Source) part_of hop; got: {}",
+            cypher.text
+        );
+        // Semantic search routes through the qlink reranker.
+        assert!(
+            cypher.text.contains("libqlink.search_reranked"),
+            "expected libqlink.search_reranked; got: {}",
+            cypher.text
+        );
     }
 
     #[tokio::test]

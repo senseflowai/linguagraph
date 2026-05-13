@@ -34,7 +34,16 @@ pub(super) fn write_match(cur: &mut Cursor, q: &ReadQuery) {
 }
 
 fn write_node(cur: &mut Cursor, node: &Node) {
-    let _ = write!(cur.buf, "({}:{})", node.alias, node.label);
+    // An empty `label` means "any node" — used by `TraversalQuery`
+    // when the caller doesn't pin the entity type. In Cypher,
+    // `MATCH (e)` matches a node of any label, so we just drop the
+    // `:Label` suffix instead of emitting `(:)` (which would be a
+    // syntax error).
+    if node.label.is_empty() {
+        let _ = write!(cur.buf, "({})", node.alias);
+    } else {
+        let _ = write!(cur.buf, "({}:{})", node.alias, node.label);
+    }
 }
 
 /// The `-[edge]->(target)` portion of a traversal — written *after* the

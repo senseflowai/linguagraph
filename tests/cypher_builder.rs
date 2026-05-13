@@ -182,8 +182,15 @@ fn explicit_from_chains_traversals() {
         "got: {}",
         cypher.text
     );
-    // Single MATCH clause — chain not split.
-    assert_eq!(cypher.text.matches("MATCH ").count(), 1);
+    // Single user MATCH clause — chain not split. The compiler
+    // additionally emits an `OPTIONAL MATCH` for the always-on
+    // sources projection, so we count standalone MATCH lines only.
+    let user_match_lines = cypher
+        .text
+        .lines()
+        .filter(|line| line.starts_with("MATCH "))
+        .count();
+    assert_eq!(user_match_lines, 1);
 }
 
 #[test]

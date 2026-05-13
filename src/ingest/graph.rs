@@ -372,6 +372,52 @@ mod tests {
     }
 
     #[test]
+    fn source_rooted_builder_lowers_with_mention_edges() {
+        // GraphBuilder::with_source minted Source + auto-attached
+        // `:mention` edges should land in the InsertQuery as a Source
+        // node batch and a MENTION relation batch.
+        use crate::graph::{MENTION_REL, PART_OF_REL, SOURCE_LABEL};
+        let mut graph = GraphBuilder::with_source("Manual.pdf");
+        graph
+            .entity("Person")
+            .strict_primary_key("id")
+            .property("id", PropertyType::String, "alice")
+            .property("name", PropertyType::Text, "Alice")
+            .add();
+        graph.chunk("Alice met Bob.").add().unwrap();
+
+        let mut effects = SideEffectQueue::new();
+        let insert = plan_graph_with_registry(
+            &graph.build(),
+            PlannerOptions::default(),
+            &registry(),
+            &mut effects,
+        )
+        .unwrap();
+
+        let node_labels: Vec<&str> = insert
+            .node_batches
+            .iter()
+            .map(|b| b.label.as_str())
+            .collect();
+        assert!(node_labels.contains(&SOURCE_LABEL));
+        assert!(node_labels.contains(&"Person"));
+        assert!(node_labels.contains(&"Chunk"));
+
+        let rel_types: Vec<&str> = insert
+            .relation_batches
+            .iter()
+            .map(|b| b.rel_type.as_str())
+            .collect();
+        assert!(rel_types.contains(&MENTION_REL));
+        assert!(rel_types.contains(&PART_OF_REL));
+
+        // 3 PropertyType::Text fields → 3 embedding side effects:
+        // Source.name, Person.name, Chunk.text.
+        assert_eq!(effects.len(), 3);
+    }
+
+    #[test]
     fn strict_primary_key_value_is_required() {
         let mut graph = GraphBuilder::new();
         graph.entity("Person").strict_primary_key("id").add();

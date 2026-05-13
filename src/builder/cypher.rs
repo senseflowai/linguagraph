@@ -3,12 +3,18 @@
 use thiserror::Error;
 
 use crate::ast::query::*;
+use crate::graph::{MENTION_REL, PART_OF_REL, SOURCE_LABEL};
 use crate::types::TypeRegistry;
 
 use super::cursor::{Cursor, CypherQuery};
 use super::insert::{build_insert, InsertError};
 use super::where_part::WhereError;
 use super::{match_part, return_part, where_part};
+
+/// Column name used for the always-on Sources projection added by
+/// [`build_read_with`]. Consumers can look this up in
+/// [`crate::db::result::QueryResult`] to render source context.
+pub const SOURCES_COLUMN: &str = "sources";
 
 #[derive(Debug, Error)]
 pub enum BuilderError {
@@ -57,8 +63,27 @@ pub fn build_read_with(
         cur.buf.push_str(&frags.join("\n"));
     }
 
+    // ── Phase 2.5: gather the per-entity Source projection. ──────────
+    //
+    // Every Find query returns a `sources` column listing the
+    // built-in `:Source` nodes reachable via `:mention` (user
+    // entities) or `:part_of` (Chunks) from any of the matched node
+    // aliases. Aggregate queries collapse rows into summary statistics
+    // — `sources` is a per-row list there has no well-defined
+    // aggregation, so we deliberately skip the projection for them.
+    let inject_sources =
+        matches!(query.action, Action::Find) && !is_sources_aliased_already(query);
+    if inject_sources {
+        write_sources_stage(&mut cur, query);
+    }
+
     // ── Phase 3: RETURN. ──────────────────────────────────────────────
     return_part::write_return(&mut cur, query);
+    if inject_sources {
+        cur.buf.push_str(", ");
+        cur.buf.push_str("__sources__ AS ");
+        cur.buf.push_str(SOURCES_COLUMN);
+    }
 
     // ── Phase 4: ORDER BY (user's keys first, then handler extras). ──
     //
@@ -93,6 +118,58 @@ pub fn build_read_with(
 /// Backwards-compatible alias for [`build_read`].
 pub fn build(query: &ReadQuery) -> Result<CypherQuery, BuilderError> {
     build_read(query)
+}
+
+/// Emit the WITH / OPTIONAL MATCH stage that gathers the unique set
+/// of `:Source` nodes reachable from any of the query's matched node
+/// aliases, exposing them as `__sources__`.
+///
+/// The stage walks both `:mention` (any user entity) and `:part_of`
+/// (chunks) edges and de-duplicates with `collect(DISTINCT ...)`.
+/// Edges in the user's traversals are intentionally excluded — we
+/// carry node aliases only because edge variables can't be sources.
+fn write_sources_stage(cur: &mut Cursor, query: &ReadQuery) {
+    let aliases = collect_node_aliases(query);
+    if aliases.is_empty() {
+        return;
+    }
+    let carry = aliases.join(", ");
+    let list = format!("[{carry}]");
+    cur.buf.push_str(&format!(
+        "\nWITH {carry}\n\
+         OPTIONAL MATCH (__src__:{SOURCE_LABEL})<-[:{MENTION_REL}|{PART_OF_REL}]-(__sn__)\n\
+         WHERE __sn__ IN {list}\n\
+         WITH {carry}, collect(DISTINCT __src__) AS __sources__"
+    ));
+}
+
+/// Names of every node alias bound by the query's MATCH clauses.
+/// Edge aliases are intentionally excluded.
+fn collect_node_aliases(query: &ReadQuery) -> Vec<String> {
+    let mut out = Vec::with_capacity(1 + query.traversals.len());
+    let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let push = |alias: &Alias, out: &mut Vec<String>, seen: &mut std::collections::BTreeSet<String>| {
+        let s = alias.as_str().to_string();
+        if seen.insert(s.clone()) {
+            out.push(s);
+        }
+    };
+    push(&query.start.alias, &mut out, &mut seen);
+    for t in &query.traversals {
+        push(&t.target.alias, &mut out, &mut seen);
+    }
+    out
+}
+
+/// True when the caller already projects a `sources` column. Used as
+/// a defensive guard so the auto-projection doesn't collide with a
+/// user-supplied one.
+fn is_sources_aliased_already(query: &ReadQuery) -> bool {
+    query.returns.iter().any(|clause| match clause {
+        ReturnClause::Field { alias, .. } | ReturnClause::Aggregate { alias, .. } => {
+            alias.as_deref() == Some(SOURCES_COLUMN)
+        }
+    })
 }
 
 /// Compile any [`Query`] variant with no registered handlers.
@@ -232,6 +309,72 @@ mod tests {
         let out = build_read(&q).unwrap().text;
         assert!(out.contains("RETURN c.name AS customer, sum(o.total) AS total_spent"));
         assert!(out.contains("ORDER BY total_spent DESC"));
+    }
+
+    #[test]
+    fn find_queries_always_project_sources_column() {
+        let q = ReadQuery {
+            action: Action::Find,
+            start: Node {
+                label: "Person".into(),
+                alias: alias("p"),
+            },
+            traversals: vec![],
+            filter: None,
+            returns: vec![ReturnClause::Field {
+                field: pref("p", Some("name")),
+                alias: Some("name".into()),
+            }],
+            group_by: vec![],
+            sort: vec![],
+            limit: None,
+        };
+        let q = build_read(&q).unwrap();
+
+        assert!(
+            q.text.contains("OPTIONAL MATCH (__src__:Source)<-[:mention|part_of]-(__sn__)"),
+            "expected source-gathering OPTIONAL MATCH, got:\n{}",
+            q.text
+        );
+        assert!(
+            q.text.contains("collect(DISTINCT __src__) AS __sources__"),
+            "expected source de-duplication via collect(DISTINCT), got:\n{}",
+            q.text
+        );
+        assert!(
+            q.text.contains("__sources__ AS sources"),
+            "expected `sources` to appear in the projection, got:\n{}",
+            q.text
+        );
+    }
+
+    #[test]
+    fn aggregate_queries_skip_sources_projection() {
+        let q = ReadQuery {
+            action: Action::Aggregate,
+            start: Node {
+                label: "Order".into(),
+                alias: alias("o"),
+            },
+            traversals: vec![],
+            filter: None,
+            returns: vec![ReturnClause::Aggregate {
+                func: AggregateFn::Count,
+                field: pref("o", None),
+                alias: Some("n".into()),
+            }],
+            group_by: vec![],
+            sort: vec![],
+            limit: None,
+        };
+        let q = build_read(&q).unwrap();
+
+        assert!(
+            !q.text.contains("__sources__"),
+            "aggregate queries must not gather sources (per-row list with no \
+             well-defined aggregation); got:\n{}",
+            q.text
+        );
     }
 
     #[test]

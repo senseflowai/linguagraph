@@ -34,7 +34,7 @@ once_cell = "1"
 # feature is enabled.
 llama-cpp-2 = { git = "https://github.com/senseflowai/llama-cpp-rs", branch = "main", optional = true }
 encoding_rs = "0.8.35"
-uuid = { version = "1", features = ["v5"] }
+uuid = { version = "1", features = ["v4", "v5"] }
 
 [dev-dependencies]
 pretty_assertions = "1.4"

@@ -10,10 +10,14 @@ mod cursor;
 mod cypher;
 mod insert;
 mod match_part;
+pub mod normalize;
+pub mod plan;
 mod return_part;
 mod where_part;
 
 pub use cursor::CypherQuery;
-pub use cypher::{build, build_read, build_read_with, compile, compile_with, BuilderError};
+pub use cypher::{
+    build, build_read, build_read_with, compile, compile_with, BuilderError, SOURCES_COLUMN,
+};
 pub use insert::{build_insert, InsertError};
-pub use where_part::WhereError;
+pub use plan::{Clause, LogicalPlan};

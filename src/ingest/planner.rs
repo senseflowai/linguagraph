@@ -16,9 +16,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use crate::ast::query::{
-    InsertQuery, Literal, NodeBatch, NodeRow, RelationBatch, RelationRow,
-};
+use crate::ast::query::{InsertQuery, Literal, NodeBatch, NodeRow, RelationBatch, RelationRow};
 use crate::mapper::{Extracted, ExtractedEntity, Mapping};
 use crate::types::context::IngestCtx;
 use crate::types::{handlers, SideEffectQueue, TypeId, TypeRegistry};
@@ -37,7 +35,9 @@ pub struct PlannerOptions {
 
 impl Default for PlannerOptions {
     fn default() -> Self {
-        Self { max_batch_size: 1000 }
+        Self {
+            max_batch_size: 1000,
+        }
     }
 }
 
@@ -163,8 +163,11 @@ fn apply_type_handlers(
 
 /// Assemble the internal DSL from the extracted rows.
 pub fn build_plan(mapping: &Mapping, extracted: &Extracted) -> Result<InsertPlan, IngestError> {
-    let by_label: HashMap<&str, &ExtractedEntity> =
-        extracted.entities.iter().map(|e| (e.label.as_str(), e)).collect();
+    let by_label: HashMap<&str, &ExtractedEntity> = extracted
+        .entities
+        .iter()
+        .map(|e| (e.label.as_str(), e))
+        .collect();
 
     // ── Node batches ────────────────────────────────────────────────────────
     let mut nodes = Vec::with_capacity(extracted.entities.len());
@@ -229,12 +232,20 @@ pub fn build_plan(mapping: &Mapping, extracted: &Extracted) -> Result<InsertPlan
             to_key: to.primary_key_field.clone(),
             rows: rows
                 .into_iter()
-                .map(|(from_id, to_id)| RelationData { from_id, to_id })
+                .map(|(from_id, to_id)| RelationData {
+                    from_id,
+                    to_id,
+                    props: BTreeMap::new(),
+                })
                 .collect(),
         });
     }
 
-    Ok(InsertPlan { action: "insert".to_string(), nodes, relations })
+    Ok(InsertPlan {
+        action: "insert".to_string(),
+        nodes,
+        relations,
+    })
 }
 
 /// Two contexts align when one is a prefix of the other. That covers both
@@ -258,7 +269,10 @@ pub(crate) fn lower_plan(plan: InsertPlan, opts: PlannerOptions) -> InsertQuery 
                 merge_on: n.merge_on.clone(),
                 rows: chunk
                     .iter()
-                    .map(|r| NodeRow { id: r.id.clone(), props: r.props.clone() })
+                    .map(|r| NodeRow {
+                        id: r.id.clone(),
+                        props: r.props.clone(),
+                    })
                     .collect(),
             });
         }
@@ -281,13 +295,17 @@ pub(crate) fn lower_plan(plan: InsertPlan, opts: PlannerOptions) -> InsertQuery 
                     .map(|d| RelationRow {
                         from_id: d.from_id.clone(),
                         to_id: d.to_id.clone(),
+                        props: d.props.clone(),
                     })
                     .collect(),
             });
         }
     }
 
-    InsertQuery { node_batches, relation_batches }
+    InsertQuery {
+        node_batches,
+        relation_batches,
+    }
 }
 
 /// Total order over the literal types used as ids.
@@ -379,7 +397,11 @@ mod tests {
         assert_eq!(place_batch.rows.len(), 1, "shared place should dedupe");
 
         let rel_rows = &q.relation_batches[0].rows;
-        assert_eq!(rel_rows.len(), 2, "two cameras both link to the shared place");
+        assert_eq!(
+            rel_rows.len(),
+            2,
+            "two cameras both link to the shared place"
+        );
     }
 
     #[test]
@@ -433,7 +455,9 @@ mod tests {
         let q = plan_with_options(
             &m,
             extracted,
-            PlannerOptions { max_batch_size: 1000 },
+            PlannerOptions {
+                max_batch_size: 1000,
+            },
         )
         .unwrap();
         // 2500 cameras → 3 batches; 2500 places → 3 batches.

@@ -68,7 +68,10 @@ pub async fn introspect_schema(
             opts.sample_size,
         )
         .await?;
-        nodes.push(NodeKind { label: label.clone(), properties });
+        nodes.push(NodeKind {
+            label: label.clone(),
+            properties,
+        });
     }
 
     let rel_types = fetch_rel_types(client).await?;
@@ -108,7 +111,10 @@ pub async fn introspect_schema(
         }
     }
 
-    Ok(GraphSchema { nodes, relationships })
+    Ok(GraphSchema {
+        nodes,
+        relationships,
+    })
 }
 
 // ─── Query helpers ──────────────────────────────────────────────────────────
@@ -202,7 +208,10 @@ async fn fetch_props(
                 Json::Array(a) => a,
                 other => vec![other],
             };
-            Some(Property { name: key, ty: infer_type(&sample_vec) })
+            Some(Property {
+                name: key,
+                ty: infer_type(&sample_vec),
+            })
         })
         .collect();
     props.sort_by(|a, b| a.name.cmp(&b.name));
@@ -467,10 +476,7 @@ mod tests {
 
     #[test]
     fn type_inference_falls_back_to_string_on_mixed_kinds() {
-        assert_eq!(
-            infer_type(&[json!(1), json!("oops")]),
-            PropertyType::String
-        );
+        assert_eq!(infer_type(&[json!(1), json!("oops")]), PropertyType::String);
     }
 
     #[test]
@@ -480,9 +486,6 @@ mod tests {
 
     #[test]
     fn type_inference_picks_list() {
-        assert_eq!(
-            infer_type(&[json!([1, 2]), json!([])]),
-            PropertyType::List
-        );
+        assert_eq!(infer_type(&[json!([1, 2]), json!([])]), PropertyType::List);
     }
 }

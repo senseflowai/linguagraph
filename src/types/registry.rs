@@ -38,17 +38,16 @@ impl RegistryBuilder {
     }
 
     pub fn build(self) -> TypeRegistry {
-        TypeRegistry { handlers: self.handlers }
+        TypeRegistry {
+            handlers: self.handlers,
+        }
     }
 }
 
 impl std::fmt::Debug for RegistryBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RegistryBuilder")
-            .field(
-                "handlers",
-                &self.handlers.keys().collect::<Vec<_>>(),
-            )
+            .field("handlers", &self.handlers.keys().collect::<Vec<_>>())
             .finish()
     }
 }

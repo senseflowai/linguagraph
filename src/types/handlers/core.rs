@@ -26,9 +26,7 @@ use serde_json::Value;
 
 use crate::ast::query::Literal;
 use crate::types::context::{EmitCtx, IngestCtx, LowerCtx};
-use crate::types::{
-    Capabilities, TypeError, TypeHandler, TypeId, TypedOp, TypedPredicate,
-};
+use crate::types::{Capabilities, TypeError, TypeHandler, TypeId, TypedOp, TypedPredicate};
 
 /// Pure parser from raw JSON to a storable [`Literal`].
 ///
@@ -68,7 +66,10 @@ impl std::fmt::Debug for ScalarTypeHandler {
 
 impl ScalarTypeHandler {
     pub fn new(type_id: impl Into<TypeId>, parser: Box<dyn ScalarParser>) -> Self {
-        Self { type_id: type_id.into(), parser }
+        Self {
+            type_id: type_id.into(),
+            parser,
+        }
     }
 
     /// Parse a raw JSON value through this handler's parser.
@@ -359,9 +360,7 @@ impl ScalarParser for TimestampParser {
     fn parse(&self, raw: &Value) -> Result<Option<Literal>, TypeError> {
         match raw {
             Value::Null => Ok(None),
-            Value::String(s) => {
-                parse_timestamp_string(s).map(|t| Some(Literal::String(t)))
-            }
+            Value::String(s) => parse_timestamp_string(s).map(|t| Some(Literal::String(t))),
             Value::Number(n) => match n.as_i64() {
                 Some(secs) => Ok(Some(Literal::String(epoch_to_timestamp(secs)))),
                 None => Err(TypeError::InvalidValue {
@@ -420,8 +419,7 @@ fn parse_timestamp_string(s: &str) -> Result<String, TypeError> {
             reason: "empty string is not a timestamp".into(),
         });
     }
-    let (date, rest) = split_date_component(trimmed)
-        .map_err(|e| relabel(e, "Timestamp"))?;
+    let (date, rest) = split_date_component(trimmed).map_err(|e| relabel(e, "Timestamp"))?;
     validate_date_components(&date).map_err(|e| relabel(e, "Timestamp"))?;
     let time_part = match rest {
         Some(r) => normalise_time_component(r)?,
@@ -484,7 +482,11 @@ fn days_in_month(year: u32, month: u32) -> u32 {
         4 | 6 | 9 | 11 => 30,
         2 => {
             let leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
-            if leap { 29 } else { 28 }
+            if leap {
+                29
+            } else {
+                28
+            }
         }
         _ => 0,
     }
@@ -494,7 +496,9 @@ fn days_in_month(year: u32, month: u32) -> u32 {
 /// timestamp. Returns the normalised tail (always terminated by `Z` or
 /// an explicit offset).
 fn normalise_time_component(rest: &str) -> Result<String, TypeError> {
-    let body = rest.strip_prefix('T').or_else(|| rest.strip_prefix(' '))
+    let body = rest
+        .strip_prefix('T')
+        .or_else(|| rest.strip_prefix(' '))
         .ok_or_else(|| TypeError::InvalidValue {
             ty: "Timestamp".into(),
             reason: format!("expected 'T' separator, got {rest:?}"),
@@ -522,8 +526,7 @@ fn is_valid_offset(s: &str) -> bool {
     // ±HHMM or ±HH:MM
     let bytes = s.as_bytes();
     if bytes.len() == 5 {
-        return (bytes[0] == b'+' || bytes[0] == b'-')
-            && bytes[1..].iter().all(u8::is_ascii_digit);
+        return (bytes[0] == b'+' || bytes[0] == b'-') && bytes[1..].iter().all(u8::is_ascii_digit);
     }
     if bytes.len() == 6 {
         return (bytes[0] == b'+' || bytes[0] == b'-')
@@ -547,7 +550,11 @@ fn validate_time_body(time: &str) -> Result<(), TypeError> {
         None => (time, None),
     };
     let parts: Vec<&str> = hms.split(':').collect();
-    if parts.len() != 3 || parts.iter().any(|p| p.len() != 2 || !p.bytes().all(|b| b.is_ascii_digit())) {
+    if parts.len() != 3
+        || parts
+            .iter()
+            .any(|p| p.len() != 2 || !p.bytes().all(|b| b.is_ascii_digit()))
+    {
         return Err(TypeError::InvalidValue {
             ty: "Timestamp".into(),
             reason: format!("invalid HH:MM:SS in {time:?}"),
@@ -567,9 +574,10 @@ fn validate_time_body(time: &str) -> Result<(), TypeError> {
 
 fn relabel(err: TypeError, ty: &str) -> TypeError {
     match err {
-        TypeError::InvalidValue { reason, .. } => {
-            TypeError::InvalidValue { ty: ty.into(), reason }
-        }
+        TypeError::InvalidValue { reason, .. } => TypeError::InvalidValue {
+            ty: ty.into(),
+            reason,
+        },
         other => other,
     }
 }
@@ -662,14 +670,26 @@ mod tests {
     #[test]
     fn text_parses_strings_numbers_bools_and_arrays() {
         let p = TextParser;
-        assert_eq!(p.parse(&json!("hello")).unwrap(), Some(Literal::String("hello".into())));
-        assert_eq!(p.parse(&json!(42)).unwrap(), Some(Literal::String("42".into())));
-        assert_eq!(p.parse(&json!(true)).unwrap(), Some(Literal::String("true".into())));
+        assert_eq!(
+            p.parse(&json!("hello")).unwrap(),
+            Some(Literal::String("hello".into()))
+        );
+        assert_eq!(
+            p.parse(&json!(42)).unwrap(),
+            Some(Literal::String("42".into()))
+        );
+        assert_eq!(
+            p.parse(&json!(true)).unwrap(),
+            Some(Literal::String("true".into()))
+        );
         assert_eq!(p.parse(&json!(null)).unwrap(), None);
         let arr = p.parse(&json!(["a", 1])).unwrap().unwrap();
         match arr {
             Literal::List(items) => {
-                assert_eq!(items, vec![Literal::String("a".into()), Literal::String("1".into())]);
+                assert_eq!(
+                    items,
+                    vec![Literal::String("a".into()), Literal::String("1".into())]
+                );
             }
             _ => panic!("expected list"),
         }
@@ -696,7 +716,10 @@ mod tests {
     fn number_handles_percentages() {
         let p = NumberParser;
         assert_eq!(p.parse(&json!("50%")).unwrap(), Some(Literal::Float(0.5)));
-        assert_eq!(p.parse(&json!("12.5%")).unwrap(), Some(Literal::Float(0.125)));
+        assert_eq!(
+            p.parse(&json!("12.5%")).unwrap(),
+            Some(Literal::Float(0.125))
+        );
         assert_eq!(p.parse(&json!("100%")).unwrap(), Some(Literal::Float(1.0)));
     }
 
@@ -713,7 +736,10 @@ mod tests {
         let p = BooleanParser;
         assert_eq!(p.parse(&json!(true)).unwrap(), Some(Literal::Bool(true)));
         assert_eq!(p.parse(&json!("yes")).unwrap(), Some(Literal::Bool(true)));
-        assert_eq!(p.parse(&json!("FALSE")).unwrap(), Some(Literal::Bool(false)));
+        assert_eq!(
+            p.parse(&json!("FALSE")).unwrap(),
+            Some(Literal::Bool(false))
+        );
         assert_eq!(p.parse(&json!("1")).unwrap(), Some(Literal::Bool(true)));
         assert_eq!(p.parse(&json!("off")).unwrap(), Some(Literal::Bool(false)));
         assert_eq!(p.parse(&json!(null)).unwrap(), None);

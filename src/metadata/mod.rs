@@ -49,11 +49,17 @@ pub struct PropertyInfo {
 
 impl PropertyInfo {
     pub fn description(d: impl Into<String>) -> Self {
-        Self { description: Some(d.into()), field_type: None }
+        Self {
+            description: Some(d.into()),
+            field_type: None,
+        }
     }
 
     pub fn typed(field_type: impl Into<String>) -> Self {
-        Self { description: None, field_type: Some(field_type.into()) }
+        Self {
+            description: None,
+            field_type: Some(field_type.into()),
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -194,10 +200,7 @@ pub trait MetadataStore: Send + Sync + std::fmt::Debug {
     /// Merge `incoming` into the existing snapshot (incoming wins on
     /// conflict, per-field) and persist the result. Returns the merged
     /// snapshot.
-    async fn update(
-        &self,
-        incoming: &PropertyMetadata,
-    ) -> Result<PropertyMetadata, MetadataError> {
+    async fn update(&self, incoming: &PropertyMetadata) -> Result<PropertyMetadata, MetadataError> {
         let mut current = self.load().await?;
         current.merge(incoming);
         self.save(&current).await?;

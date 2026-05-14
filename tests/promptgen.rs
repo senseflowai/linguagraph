@@ -57,7 +57,9 @@ fn bundled_companies_input_yields_well_formed_prompt() {
     ];
     let mut last = 0usize;
     for s in sections {
-        let pos = prompt.find(s).unwrap_or_else(|| panic!("missing section {s}"));
+        let pos = prompt
+            .find(s)
+            .unwrap_or_else(|| panic!("missing section {s}"));
         assert!(pos >= last, "section {s} appears out of order");
         last = pos;
     }

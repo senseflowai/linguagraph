@@ -92,14 +92,15 @@ impl SemanticTextConfig {
     pub fn from_config(cfg: &Config) -> Option<Self> {
         cfg.types.get("SemanticText").map(|t| Self {
             embedding_model: t.embedding_model.clone(),
-            collection: t.collection.clone().unwrap_or_else(|| "semantic_text".into()),
+            collection: t
+                .collection
+                .clone()
+                .unwrap_or_else(|| "semantic_text".into()),
             top_k: t.top_k.unwrap_or(20),
             // `threshold` in TOML refers to the cosine cutoff —
             // matches what was historically the only knob.
             search_threshold: t.threshold.unwrap_or(DEFAULT_SEARCH_THRESHOLD),
-            reranker_threshold: t
-                .reranker_threshold
-                .unwrap_or(DEFAULT_RERANKER_THRESHOLD),
+            reranker_threshold: t.reranker_threshold.unwrap_or(DEFAULT_RERANKER_THRESHOLD),
         })
     }
 }
@@ -150,6 +151,7 @@ impl TypeHandler for SemanticTextHandler {
             TypedOp::Neq,
             TypedOp::Contains,
             TypedOp::Search,
+            TypedOp::SearchReranked,
             TypedOp::HybridSearch,
         ]
     }
@@ -161,10 +163,7 @@ impl TypeHandler for SemanticTextHandler {
             other => {
                 return Err(TypeError::InvalidValue {
                     ty: Self::TYPE_ID.into(),
-                    reason: format!(
-                        "SemanticText expects string, got {}",
-                        json_kind(other)
-                    ),
+                    reason: format!("SemanticText expects string, got {}", json_kind(other)),
                 });
             }
         };
@@ -236,10 +235,13 @@ impl TypeHandler for SemanticTextHandler {
         // cross-encoder prompt) AND its embedding (used for stage-1
         // KNN). The Cypher node label is the qlink payload filter,
         // matching what `on_ingest` wrote via `insert_labeled`.
-        let label = ctx.field_label.ok_or_else(|| TypeError::Handler(
-            "SemanticText: cannot resolve graph label for field; \
-             alias is not bound to a node/edge in the AST".into(),
-        ))?;
+        let label = ctx.field_label.ok_or_else(|| {
+            TypeError::Handler(
+                "SemanticText: cannot resolve graph label for field; \
+             alias is not bound to a node/edge in the AST"
+                    .into(),
+            )
+        })?;
 
         let mut params = BTreeMap::new();
         params.insert("embedding".to_string(), lit_vec);
@@ -249,10 +251,7 @@ impl TypeHandler for SemanticTextHandler {
         );
         params.insert("query_str".to_string(), Literal::String(text.to_string()));
         params.insert("label".to_string(), Literal::String(label.to_string()));
-        params.insert(
-            "top_k".to_string(),
-            Literal::Int(self.config.top_k as i64),
-        );
+        params.insert("top_k".to_string(), Literal::Int(self.config.top_k as i64));
         params.insert(
             "search_threshold".to_string(),
             Literal::Float(self.config.search_threshold),
@@ -307,7 +306,7 @@ impl TypeHandler for SemanticTextHandler {
             // The yield is the surviving (id, reranker_score) pairs in
             // descending order, so we don't need our own threshold
             // filter or WITH gate. The MATCH then joins by id.
-            TypedOp::Eq | TypedOp::Neq | TypedOp::Contains | TypedOp::Search => {
+            TypedOp::Eq | TypedOp::Neq | TypedOp::Contains | TypedOp::SearchReranked => {
                 let alias = pred.field.alias.as_str();
                 let coll = pred
                     .params
@@ -357,6 +356,46 @@ impl TypeHandler for SemanticTextHandler {
                     .push((score, OrderDir::Desc));
                 Ok(())
             }
+
+            TypedOp::Search => {
+                let alias = pred.field.alias.as_str();
+                let coll = pred
+                    .params
+                    .get("collection")
+                    .cloned()
+                    .ok_or_else(|| TypeError::Handler("missing 'collection' param".into()))?;
+                let emb = pred
+                    .params
+                    .get("embedding")
+                    .cloned()
+                    .ok_or_else(|| TypeError::Handler("missing 'embedding' param".into()))?;
+                let label = pred
+                    .params
+                    .get("label")
+                    .cloned()
+                    .ok_or_else(|| TypeError::Handler("missing 'label' param".into()))?;
+
+                let coll_p = ctx.bind(coll);
+                let emb_p = ctx.bind(emb);
+                let label_p = ctx.bind(label);
+                // let r_thr_p = ctx.bind(rerank_thr);
+                // let prop = pred.field.property.clone().unwrap_or("name".to_string());
+                // Each call gets a unique suffix so multiple semantic
+                // searches against the same alias don't collide on
+                // `<alias>__qid` / `<alias>__score`.
+                let n = ctx.fresh_id();
+                let qid = format!("{alias}__qid_{n}");
+                let score = format!("{alias}__score_{n}");
+                ctx.push_pre_match(format!(
+                    "CALL libqlink.search_labeled([{coll_p}], {emb_p}, 30, {label_p}) \
+                     YIELD id AS {qid}, score AS {score}"
+                ));
+                ctx.set_where(format!("id({alias}) = {qid}"));
+                ctx.contribution_mut()
+                    .order_by
+                    .push((score, OrderDir::Desc));
+                Ok(())
+            }
             // ── Hybrid (exact OR semantic, weighted by score) ─────────
             //
             // Layout: after the user's MATCH/WHERE, compute an exact-
@@ -395,10 +434,7 @@ impl TypeHandler for SemanticTextHandler {
                 ));
                 ctx.contribution_mut()
                     .order_by
-                    .push((
-                        format!("({alias}__exact + {alias}__sem)"),
-                        OrderDir::Desc,
-                    ));
+                    .push((format!("({alias}__exact + {alias}__sem)"), OrderDir::Desc));
                 // No WHERE addendum: the post_match clauses replace the
                 // node binding, so further filtering happens against
                 // the rebound `alias`.
@@ -449,6 +485,110 @@ fn collection_for(h: &SemanticTextHandler, field: &PropertyRef) -> String {
     format!("{}__{}", h.config.collection, prop)
 }
 
+/// Errors produced by [`build_embed_insert_batch`]. Kept separate from
+/// `TypeError` because the only failure modes are static-identifier
+/// validation on labels and key fields — i.e. malformed input from the
+/// side-effect queue, not handler logic.
+#[derive(Debug, thiserror::Error)]
+pub enum SideEffectEmitError {
+    #[error("invalid label '{0}' in side effect")]
+    InvalidLabel(String),
+
+    #[error("invalid key field '{0}' in side effect")]
+    InvalidKeyField(String),
+}
+
+/// Render an `UNWIND $rows AS row | MATCH ... CALL libqlink.insert_labeled
+/// ...` Cypher batch for one homogeneous group of [`SideEffect::EmbedAndStore`]
+/// side effects.
+///
+/// All effects in `group` must share the same Cypher `label`, the same
+/// `key_field`, the same `collection`, and the same `payload_label`
+/// (the caller groups by exactly these). The MATCH pattern is therefore
+/// consistent across rows; only `key`/`vec` varies per row.
+///
+/// When the bucket has a `payload_label`, we use
+/// `libqlink.insert_labeled` so each vector lands in Qdrant tagged
+/// with the originating Cypher node label — that's what
+/// `libqlink.search_reranked` filters by at query time. When the
+/// bucket has no label we fall back to plain `libqlink.insert`.
+///
+/// This Cypher renderer belongs to the SemanticText handler because
+/// only this handler knows what shape an embedding side effect takes;
+/// keeping it in `core::Pipeline` would couple the orchestration
+/// layer to qlink-specific procedures.
+pub fn build_embed_insert_batch(
+    group: &[(SideEffect, Vec<f32>)],
+) -> Result<crate::builder::CypherQuery, SideEffectEmitError> {
+    use std::collections::BTreeMap;
+    debug_assert!(!group.is_empty(), "callers must not pass an empty group");
+
+    // All rows in `group` share these — see `Pipeline::drain_side_effects`.
+    let (collection, payload_label, label, key_field) = match &group[0].0 {
+        SideEffect::EmbedAndStore {
+            collection,
+            label,
+            key_field,
+            payload_label,
+            ..
+        } => (
+            collection.clone(),
+            payload_label.clone(),
+            label.clone(),
+            key_field.clone(),
+        ),
+    };
+
+    if !is_valid_ident(&label) {
+        return Err(SideEffectEmitError::InvalidLabel(label));
+    }
+    if !is_valid_ident(&key_field) {
+        return Err(SideEffectEmitError::InvalidKeyField(key_field));
+    }
+
+    // Build the row payload. Each row is `{key: <pk>, vec: <embedding>}`.
+    let mut rows: Vec<Literal> = Vec::with_capacity(group.len());
+    for (eff, vec) in group {
+        let SideEffect::EmbedAndStore { key_value, .. } = eff;
+        let mut row: BTreeMap<String, Literal> = BTreeMap::new();
+        row.insert("key".to_string(), key_value.clone());
+        row.insert(
+            "vec".to_string(),
+            Literal::List(vec.iter().map(|f| Literal::Float(*f as f64)).collect()),
+        );
+        rows.push(Literal::Object(row));
+    }
+
+    let mut params: BTreeMap<String, Literal> = BTreeMap::new();
+    params.insert("coll".to_string(), Literal::String(collection));
+    params.insert("rows".to_string(), Literal::List(rows));
+
+    let text = if let Some(plabel) = payload_label {
+        params.insert("label".to_string(), Literal::String(plabel));
+        format!(
+            "UNWIND $rows AS row\n\
+             MATCH (n:{label} {{{key_field}: row.key}})\n\
+             CALL libqlink.insert_labeled($coll, id(n), row.vec, $label) YIELD success\n\
+             RETURN count(success) AS inserted",
+        )
+    } else {
+        format!(
+            "UNWIND $rows AS row\n\
+             MATCH (n:{label} {{{key_field}: row.key}})\n\
+             CALL libqlink.insert($coll, id(n), row.vec) YIELD success\n\
+             RETURN count(success) AS inserted",
+        )
+    };
+    Ok(crate::builder::CypherQuery::new(text, params))
+}
+
+fn is_valid_ident(s: &str) -> bool {
+    let mut chars = s.chars();
+    let first = chars.next();
+    matches!(first, Some(c) if c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -484,12 +624,7 @@ mod tests {
     /// production path always populates `field_label` (the AST
     /// resolves the alias before the handler runs); the tests do the
     /// same so they exercise the same code path.
-    fn lc<'a>(
-        field: &'a PropertyRef,
-        op: TypedOp,
-        value: &'a Value,
-        label: &'a str,
-    ) -> LC<'a> {
+    fn lc<'a>(field: &'a PropertyRef, op: TypedOp, value: &'a Value, label: &'a str) -> LC<'a> {
         LC {
             raw: RawTypedFilter { field, op, value },
             type_id: TypeId::new(SemanticTextHandler::TYPE_ID),
@@ -630,7 +765,12 @@ mod tests {
     }
 
     #[test]
-    fn emit_search_calls_search_reranked_and_orders_by_score() {
+    fn emit_search_calls_search_labeled_and_orders_by_score() {
+        // `TypedOp::Search` is the pure KNN path: it calls
+        // `libqlink.search_labeled` (no cross-encoder rerank) and
+        // exposes the surviving (id, score) pairs descending.
+        // `TypedOp::SearchReranked` is the variant that goes through
+        // `libqlink.search_reranked` — separately tested.
         let h = handler();
         let field = pref("c", "name");
         let value = serde_json::json!("apple");
@@ -638,21 +778,25 @@ mod tests {
         let pred = h.lower(&mut lower).unwrap();
 
         let mut contrib = CypherContribution::default();
-        let mut binder = CountingBinder { next: 0, next_var: 0, params: Default::default() };
+        let mut binder = CountingBinder {
+            next: 0,
+            next_var: 0,
+            params: Default::default(),
+        };
         let mut emit = EmitCtx::new(&mut contrib, &mut binder);
         h.emit(&mut emit, &pred).unwrap();
 
         let pre = contrib.pre_match.join("\n");
         assert!(
-            pre.contains("CALL libqlink.search_reranked("),
-            "pre_match should call libqlink.search_reranked; got {pre}"
+            pre.contains("CALL libqlink.search_labeled("),
+            "pre_match should call libqlink.search_labeled; got {pre}"
         );
         assert!(pre.contains("YIELD id AS c__qid_0, score AS c__score_0"));
-        // Reranker handles the threshold itself, so we MUST NOT emit
-        // an extra `WHERE score >=` filter on top.
+        // No post-yield WHERE — we rely on Qdrant's similarity cutoff
+        // upstream, not a Cypher-side score filter.
         assert!(
             !pre.contains("WHERE c__score"),
-            "reranker already filters by threshold; we must not double-filter; got {pre}"
+            "must not emit a duplicate score-filter clause; got {pre}"
         );
         assert_eq!(contrib.where_inline.as_deref(), Some("id(c) = c__qid_0"));
         assert_eq!(contrib.order_by.len(), 1);
@@ -660,33 +804,47 @@ mod tests {
     }
 
     #[test]
-    fn emit_search_reranker_threshold_is_bound_as_parameter() {
+    fn emit_search_reranked_threshold_is_bound_as_parameter() {
         // The reranker threshold is bound as a Cypher parameter,
-        // never inlined into the call site. (`search_threshold` is
-        // not currently handed to qlink — see `emit` for the
-        // 6-arg call shape.)
+        // never inlined into the call site. Only the
+        // `SearchReranked` (and Eq/Neq/Contains) path uses
+        // `libqlink.search_reranked` — plain `Search` calls
+        // `search_labeled` which takes no reranker threshold.
         let h = handler_with_thresholds(0.42, 0.17);
         let field = pref("c", "name");
         let value = serde_json::json!("apple");
-        let mut lower = lc(&field, TypedOp::Search, &value, "Company");
+        let mut lower = lc(&field, TypedOp::SearchReranked, &value, "Company");
         let pred = h.lower(&mut lower).unwrap();
 
         let mut contrib = CypherContribution::default();
-        let mut binder = CountingBinder { next: 0, next_var: 0, params: Default::default() };
+        let mut binder = CountingBinder {
+            next: 0,
+            next_var: 0,
+            params: Default::default(),
+        };
         let mut emit = EmitCtx::new(&mut contrib, &mut binder);
         h.emit(&mut emit, &pred).unwrap();
 
         let floats: Vec<f64> = binder
             .params
             .values()
-            .filter_map(|v| if let Literal::Float(f) = v { Some(*f) } else { None })
+            .filter_map(|v| {
+                if let Literal::Float(f) = v {
+                    Some(*f)
+                } else {
+                    None
+                }
+            })
             .collect();
         assert!(
             floats.iter().any(|f| (f - 0.17).abs() < 1e-9),
             "reranker_threshold 0.17 not bound; floats={floats:?}"
         );
         let pre = contrib.pre_match.join("\n");
-        assert!(!pre.contains("0.17"), "reranker_threshold leaked inline: {pre}");
+        assert!(
+            !pre.contains("0.17"),
+            "reranker_threshold leaked inline: {pre}"
+        );
     }
 
     #[test]
@@ -697,7 +855,11 @@ mod tests {
         let mut lower = lc(&field, TypedOp::HybridSearch, &value, "Company");
         let pred = h.lower(&mut lower).unwrap();
         let mut contrib = CypherContribution::default();
-        let mut binder = CountingBinder { next: 0, next_var: 0, params: Default::default() };
+        let mut binder = CountingBinder {
+            next: 0,
+            next_var: 0,
+            params: Default::default(),
+        };
         let mut emit = EmitCtx::new(&mut contrib, &mut binder);
         h.emit(&mut emit, &pred).unwrap();
 
@@ -705,6 +867,9 @@ mod tests {
         assert!(post.contains("c__exact"));
         assert!(post.contains("libqlink.score_batch_node"));
         assert!(post.contains("c__sem"));
-        assert!(contrib.order_by.iter().any(|(k, _)| k.contains("c__exact + c__sem")));
+        assert!(contrib
+            .order_by
+            .iter()
+            .any(|(k, _)| k.contains("c__exact + c__sem")));
     }
 }

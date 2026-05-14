@@ -149,4 +149,3 @@ mod tests {
         assert!(collect_from_mapping(&mapping).is_empty());
     }
 }
-

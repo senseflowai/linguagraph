@@ -23,6 +23,8 @@ pub enum TypedOp {
     // ── Semantic / hybrid / geo ─────────────────────────────────────
     /// Pure vector search: `qlink.search` with the input embedded.
     Search,
+
+    SearchReranked,
     /// Hybrid: combine an exact equality with a vector score.
     #[serde(alias = "hybrid")]
     HybridSearch,
@@ -44,6 +46,7 @@ impl TypedOp {
             Self::StartsWith => "starts_with",
             Self::EndsWith => "ends_with",
             Self::Search => "search",
+            Self::SearchReranked => "search_reranked",
             Self::HybridSearch => "hybrid_search",
             Self::Near => "near",
         }

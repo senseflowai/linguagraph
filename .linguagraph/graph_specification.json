@@ -1,0 +1,160 @@
+{
+  "records": {
+    "Place": {
+      "Entity": {
+        "name": "Place",
+        "description": "Camera installation place"
+      }
+    },
+    "Camera.id": {
+      "Property": {
+        "entity": "Camera",
+        "name": "id",
+        "type": "Text",
+        "description": ""
+      }
+    },
+    "Location.longitude": {
+      "Property": {
+        "entity": "Location",
+        "name": "longitude",
+        "type": "Number",
+        "description": "Longitude (Decimal Degrees)"
+      }
+    },
+    "Storage": {
+      "Entity": {
+        "name": "Storage",
+        "description": "Video archive recording depth"
+      }
+    },
+    "Camera.updated_at": {
+      "Property": {
+        "entity": "Camera",
+        "name": "updated_at",
+        "type": "Timestamp",
+        "description": "Date and time of the last camera data update in UTC format"
+      }
+    },
+    "Source.id": {
+      "Property": {
+        "entity": "Source",
+        "name": "id",
+        "type": "String",
+        "description": "Primary key."
+      }
+    },
+    "VideoAnalyticsModule.id": {
+      "Property": {
+        "entity": "VideoAnalyticsModule",
+        "name": "id",
+        "type": "String",
+        "description": "Primary key."
+      }
+    },
+    "Camera.state": {
+      "Property": {
+        "entity": "Camera",
+        "name": "state",
+        "type": "Text",
+        "description": "The camera's status can be active/inactive"
+      }
+    },
+    "Location.latitude": {
+      "Property": {
+        "entity": "Location",
+        "name": "latitude",
+        "type": "Number",
+        "description": "Latitude (Decimal Degrees)"
+      }
+    },
+    "Location": {
+      "Entity": {
+        "name": "Location",
+        "description": "Geolocation of the camera's installation site"
+      }
+    },
+    "Camera.name": {
+      "Property": {
+        "entity": "Camera",
+        "name": "name",
+        "type": "Text",
+        "description": ""
+      }
+    },
+    "VideoAnalyticsModule": {
+      "Entity": {
+        "name": "VideoAnalyticsModule",
+        "description": "The video analytics module enabled on the camera"
+      }
+    },
+    "Source.url": {
+      "Property": {
+        "entity": "Source",
+        "name": "url",
+        "type": "Text",
+        "description": ""
+      }
+    },
+    "Location.id": {
+      "Property": {
+        "entity": "Location",
+        "name": "id",
+        "type": "String",
+        "description": "Primary key."
+      }
+    },
+    "Camera": {
+      "Entity": {
+        "name": "Camera",
+        "description": "This is an IP camera for a video surveillance system"
+      }
+    },
+    "Place.name": {
+      "Property": {
+        "entity": "Place",
+        "name": "name",
+        "type": "Text",
+        "description": ""
+      }
+    },
+    "Source": {
+      "Entity": {
+        "name": "Source",
+        "description": "link to the video stream"
+      }
+    },
+    "Place.id": {
+      "Property": {
+        "entity": "Place",
+        "name": "id",
+        "type": "Number",
+        "description": ""
+      }
+    },
+    "Camera.created_at": {
+      "Property": {
+        "entity": "Camera",
+        "name": "created_at",
+        "type": "Timestamp",
+        "description": "The date and time the camera was added to the system, in UTC format"
+      }
+    },
+    "Place.address": {
+      "Property": {
+        "entity": "Place",
+        "name": "address",
+        "type": "Text",
+        "description": "Camera installation address"
+      }
+    },
+    "Storage.depth": {
+      "Property": {
+        "entity": "Storage",
+        "name": "depth",
+        "type": "Number",
+        "description": "Video archive retention period in days"
+      }
+    }
+  }
+}

@@ -7,7 +7,7 @@
 //! Compiled only when the `llama` feature is enabled — keeps the default
 //! build dependency-free.
 
-use super::{EmbedError, Embedder};
+use super::{EmbedError, Embedder, Reranker};
 use anyhow::Context;
 use llama_cpp_2::context::params::{LlamaContextParams, LlamaPoolingType};
 use llama_cpp_2::llama_backend::LlamaBackend;
@@ -132,6 +132,72 @@ impl LlamaEmbedder {
         batches
     }
 
+    pub fn rerank_locked(
+        model: &LlamaModel,
+        query: String,
+        documents: Vec<String>,
+    ) -> anyhow::Result<Vec<f64>> {
+        const MAX_BATCH_SIZE: usize = 512;
+        let backend = backend()?;
+        let ctx_params = LlamaContextParams::default()
+            .with_n_ctx(Some(NonZeroU32::new(4096).unwrap()))
+            .with_n_seq_max(30)
+            .with_n_threads_batch(std::thread::available_parallelism()?.get().try_into()?)
+            .with_embeddings(true)
+            .with_pooling_type(LlamaPoolingType::Rank);
+
+        let mut ctx = model.new_context(&backend, ctx_params)?;
+        let mut tokenizers: Vec<LLamaTokenizer> = Vec::new();
+        let prompt_lines = {
+            let mut lines = Vec::new();
+            for doc in documents {
+                // Todo!  update to get eos and sep from model instead of hardcoding
+                lines.push(format!("{query}{eos}{eos}{doc}", eos = "</s>"));
+            }
+            lines
+        };
+
+        let mut results = Vec::with_capacity(prompt_lines.len());
+
+        for prompt in prompt_lines {
+            let tokenizer = Self::tokenize_prompt(&model, &prompt)?;
+            tokenizers.push(tokenizer);
+        }
+
+        let tokenizers_batches = Self::split_into_batches(tokenizers, MAX_BATCH_SIZE);
+
+        ctx.clear_kv_cache();
+
+        for tokenizer_batch in tokenizers_batches {
+            let mut total_tokens = 0;
+            for token in tokenizer_batch.iter() {
+                total_tokens += token.tokens.len();
+            }
+
+            let mut batch = LlamaBatch::new(total_tokens, tokenizer_batch.len() as i32);
+
+            for (s, tokenizer) in tokenizer_batch.iter().enumerate() {
+                let last_index = tokenizer.tokens.len().saturating_sub(1) as i32;
+
+                for (i, token) in (0_i32..).zip(&tokenizer.tokens) {
+                    let is_last = i == last_index;
+                    batch.add(*token, i, &[s as i32], is_last)?;
+                }
+            }
+
+            ctx.decode(&mut batch)?;
+
+            for i in 0..tokenizer_batch.len() {
+                let score = ctx.embeddings_seq_ith(i as i32)?;
+                results.push(Self::sigmoid(score.first().copied().unwrap_or(0.0) as f64))
+            }
+
+            batch.clear();
+        }
+
+        Ok(results)
+    }
+
     fn embed_locked(
         model: &LlamaModel,
         texts: &[&str],
@@ -212,6 +278,10 @@ impl LlamaEmbedder {
 
         Ok(output)
     }
+
+    fn sigmoid(x: f64) -> f64 {
+        1.0 / (1.0 + (-x).exp())
+    }
 }
 
 #[cfg(test)]
@@ -286,5 +356,19 @@ impl Embedder for LlamaEmbedder {
             .lock()
             .map_err(|e| EmbedError::Backend(format!("model mutex poisoned: {e}")))?;
         Self::embed_locked(&model, texts, self.n_ctx)
+    }
+}
+
+impl Reranker for LlamaEmbedder {
+    fn rerank(&self, query: &str, documents: &[String]) -> Result<Vec<f64>, EmbedError> {
+        if documents.is_empty() {
+            return Ok(Vec::new());
+        }
+        let model = self
+            .model
+            .lock()
+            .map_err(|e| EmbedError::Backend(format!("model mutex poisoned: {e}")))?;
+        Self::rerank_locked(&model, query.to_string(), documents.to_vec())
+            .map_err(|e| EmbedError::Backend(format!("rerank: {e}")))
     }
 }

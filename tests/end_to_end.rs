@@ -3,7 +3,9 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use linguagraph::config::{Config, DatabaseConfig, LlmConfig, MetadataConfig, QueryConfig};
+use linguagraph::config::{
+    Config, DatabaseConfig, GraphSpecificationConfig, LlmConfig, QueryConfig,
+};
 use linguagraph::core::Pipeline;
 use linguagraph::db::{MockClient, QueryResult, Row, Value};
 use linguagraph::dsl;
@@ -24,6 +26,7 @@ fn test_config() -> Config {
             default_limit: 50,
         },
         metadata: Default::default(),
+        graph_specification: GraphSpecificationConfig::default(),
         types: Default::default(),
     }
 }
@@ -32,8 +35,12 @@ fn test_config() -> Config {
 async fn pipeline_compiles_and_dispatches_to_client() {
     let mock = Arc::new(MockClient::new());
     let mut row = Row::default();
-    row.fields.insert("name".into(), Value::String("Ada".into()));
-    mock.enqueue(QueryResult { columns: vec!["name".into()], rows: vec![row] });
+    row.fields
+        .insert("name".into(), Value::String("Ada".into()));
+    mock.enqueue(QueryResult {
+        columns: vec!["name".into()],
+        rows: vec![row],
+    });
 
     let cfg = test_config();
     let pipeline = Pipeline::new(mock.clone(), &cfg);

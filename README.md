@@ -80,6 +80,12 @@ Configure once in `config.toml`:
 embedding_model = "models/bge-small.gguf"
 collection      = "companies"
 top_k           = 20
+
+[graph_specification]
+embedding_model = "models/bge-small.gguf"
+reranking_model = "models/bge-reranker.gguf"
+reranking_threshold = 0.3
+embedding_dim   = 384
 ```
 
 Tag a property in the mapping:

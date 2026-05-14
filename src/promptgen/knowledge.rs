@@ -34,7 +34,10 @@ pub struct EntityTypeSpec {
 
 impl EntityTypeSpec {
     pub fn new(name: impl Into<String>) -> Self {
-        Self { name: name.into(), description: None }
+        Self {
+            name: name.into(),
+            description: None,
+        }
     }
 
     pub fn with_description(name: impl Into<String>, desc: impl Into<String>) -> Self {
@@ -56,7 +59,10 @@ pub struct RelationTypeSpec {
 
 impl RelationTypeSpec {
     pub fn new(name: impl Into<String>) -> Self {
-        Self { name: name.into(), description: None }
+        Self {
+            name: name.into(),
+            description: None,
+        }
     }
 
     pub fn with_description(name: impl Into<String>, desc: impl Into<String>) -> Self {
@@ -137,10 +143,7 @@ pub fn default_entity_types() -> Vec<EntityTypeSpec> {
             "Date",
             "A specific date or time period explicitly mentioned.",
         ),
-        EntityTypeSpec::with_description(
-            "Location",
-            "A jurisdiction, territory, or named place.",
-        ),
+        EntityTypeSpec::with_description("Location", "A jurisdiction, territory, or named place."),
         EntityTypeSpec::with_description(
             "MonetaryAmount",
             "A specific sum of money referenced in the text.",
@@ -151,20 +154,44 @@ pub fn default_entity_types() -> Vec<EntityTypeSpec> {
 /// Default legal-domain relation vocabulary.
 pub fn default_relation_types() -> Vec<RelationTypeSpec> {
     vec![
-        RelationTypeSpec::with_description("GRANTS", "Subject confers a right or power on another."),
+        RelationTypeSpec::with_description(
+            "GRANTS",
+            "Subject confers a right or power on another.",
+        ),
         RelationTypeSpec::with_description("REQUIRES", "Subject imposes a requirement on another."),
-        RelationTypeSpec::with_description("PROHIBITS", "Subject forbids the target action or state."),
+        RelationTypeSpec::with_description(
+            "PROHIBITS",
+            "Subject forbids the target action or state.",
+        ),
         RelationTypeSpec::with_description("REGULATES", "Subject sets rules over the target."),
-        RelationTypeSpec::with_description("ESTABLISHES", "Subject creates, founds, or institutes the target."),
-        RelationTypeSpec::with_description("ENFORCES", "Subject implements or compels compliance with the target."),
+        RelationTypeSpec::with_description(
+            "ESTABLISHES",
+            "Subject creates, founds, or institutes the target.",
+        ),
+        RelationTypeSpec::with_description(
+            "ENFORCES",
+            "Subject implements or compels compliance with the target.",
+        ),
         RelationTypeSpec::with_description("REFERENCES", "Subject cites or invokes the target."),
         RelationTypeSpec::with_description("AMENDS", "Subject modifies the target legal act/norm."),
         RelationTypeSpec::with_description("REPEALS", "Subject revokes the target legal act/norm."),
         RelationTypeSpec::with_description("APPLIES_TO", "Subject's scope covers the target."),
-        RelationTypeSpec::with_description("PART_OF", "Subject is structurally contained in the target."),
-        RelationTypeSpec::with_description("HAS_SANCTION", "Subject (norm) attaches the target sanction."),
-        RelationTypeSpec::with_description("ISSUED_BY", "Subject (act/decision) was issued by the target body."),
-        RelationTypeSpec::with_description("DEFINED_AS", "Subject term is defined as the target concept."),
+        RelationTypeSpec::with_description(
+            "PART_OF",
+            "Subject is structurally contained in the target.",
+        ),
+        RelationTypeSpec::with_description(
+            "HAS_SANCTION",
+            "Subject (norm) attaches the target sanction.",
+        ),
+        RelationTypeSpec::with_description(
+            "ISSUED_BY",
+            "Subject (act/decision) was issued by the target body.",
+        ),
+        RelationTypeSpec::with_description(
+            "DEFINED_AS",
+            "Subject term is defined as the target concept.",
+        ),
     ]
 }
 
@@ -181,10 +208,7 @@ pub fn default_relation_types() -> Vec<RelationTypeSpec> {
 ///
 /// which parses directly as `(Vec<EntityInput>, Vec<RelationInput>)`
 /// for a [`crate::ingest::ChunkInput`].
-pub fn generate_knowledge_extract_prompt(
-    fragment: &str,
-    opts: &KnowledgeExtractOptions,
-) -> String {
+pub fn generate_knowledge_extract_prompt(fragment: &str, opts: &KnowledgeExtractOptions) -> String {
     let mut out = String::with_capacity(4096);
 
     out.push_str(ROLE_SECTION);
@@ -471,7 +495,11 @@ mod tests {
         let names: Vec<&str> = opts.entity_types.iter().map(|e| e.name.as_str()).collect();
         assert!(names.contains(&"LegalNorm"));
         assert!(names.contains(&"StateBody"));
-        let rels: Vec<&str> = opts.relation_types.iter().map(|r| r.name.as_str()).collect();
+        let rels: Vec<&str> = opts
+            .relation_types
+            .iter()
+            .map(|r| r.name.as_str())
+            .collect();
         assert!(rels.contains(&"GRANTS"));
         assert!(rels.contains(&"REGULATES"));
     }
@@ -522,10 +550,7 @@ mod tests {
                 "Person",
                 "A natural person.",
             )],
-            relation_types: vec![RelationTypeSpec::with_description(
-                "KNOWS",
-                "Acquaintance.",
-            )],
+            relation_types: vec![RelationTypeSpec::with_description("KNOWS", "Acquaintance.")],
         };
         let p = generate_knowledge_extract_prompt("x", &opts);
         assert!(p.contains("* `Person` — A natural person."));

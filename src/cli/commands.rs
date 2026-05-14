@@ -4,8 +4,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use clap::{Parser, Subcommand, ValueEnum};
-use tokio::fs;
 use crate::ast::Literal;
 use crate::config::{self, Config};
 use crate::core::Pipeline;
@@ -13,14 +11,17 @@ use crate::db::{introspect, GraphClient, MemgraphClient};
 use crate::dsl;
 use crate::embeddings::{self, SharedEmbedder};
 use crate::error::Result;
-use crate::ingest::DocumentInput;
-use crate::mapper::Mapping;
+use crate::graph::{
+    FileGraphSpecificationStorage, GraphBuilder, GraphSpecificationStorage,
+    DEFAULT_GRAPH_SPECIFICATION_CACHE_PATH,
+};
+use crate::mapper::{self, Mapping};
 use crate::metadata::{FileMetadataStore, MetadataStore};
 use crate::prompt::{self, GraphSchema, PromptOptions};
-use crate::promptgen::knowledge::{
-    EntityTypeSpec, KnowledgeExtractOptions, RelationTypeSpec,
-};
+use crate::promptgen::knowledge::{EntityTypeSpec, KnowledgeExtractOptions, RelationTypeSpec};
 use crate::types::{self, SharedRegistry};
+use clap::{Parser, Subcommand, ValueEnum};
+use tokio::fs;
 
 /// Output format for the `schema` subcommand.
 #[derive(Debug, Clone, Copy, ValueEnum, Default)]
@@ -55,24 +56,27 @@ pub enum Command {
         path: PathBuf,
     },
     /// Compile a DSL JSON file into Cypher and print it with parameters.
-    Cypher {
-        path: PathBuf,
-    },
+    Cypher { path: PathBuf },
     /// Compile and execute a DSL file against the configured database.
-    Run {
+    Run { path: PathBuf },
+    /// Compile and execute a traversal-query JSON file against the configured database.
+    Traversal {
+        /// Path to the traversal-query JSON file.
         path: PathBuf,
     },
     /// Print a schema-aware system prompt for an LLM.
     Prompt {
+        /// Natural-language query used to select relevant graph types.
+        query: Option<String>,
         /// Path to a schema JSON file. If omitted, the live database is queried.
         #[arg(long)]
         schema: Option<PathBuf>,
         /// Skip the worked examples in the output.
         #[arg(long)]
         no_examples: bool,
-        /// Skip annotating the prompt with cached property descriptions.
-        #[arg(long)]
-        no_metadata: bool,
+        /// Skip annotating the prompt with the cached graph specification.
+        #[arg(long = "no-specification", alias = "no-metadata")]
+        no_specification: bool,
     },
     /// Fetch the live graph schema and print it (JSON by default).
     ///
@@ -96,23 +100,30 @@ pub enum Command {
         #[arg(long)]
         no_examples: bool,
     },
-    /// Compile a (data, mapping) pair and execute the ingestion against
-    /// the configured database. Prints a summary of nodes/relationships
-    /// MERGE'd.
-    Ingest {
+    /// Compile a (data, mapper) pair into a graph, update the graph
+    /// specification cache, and ingest the graph into the configured
+    /// database.
+    IngestJson {
         /// Path to the raw data JSON file.
         data: PathBuf,
-        /// Path to the mapping JSON file.
-        mapping: PathBuf,
+        /// Path to the mapper JSON file.
+        mapper: PathBuf,
+        /// Path to the graph specification cache file.
+        #[arg(long = "spec-cache", default_value = DEFAULT_GRAPH_SPECIFICATION_CACHE_PATH)]
+        spec_cache: PathBuf,
         /// Maximum rows per UNWIND batch.
         #[arg(long, default_value_t = 1000)]
         batch_size: usize,
     },
-    /// Like `ingest` but prints the generated Cypher batches instead of
-    /// executing them. Useful for inspection and CI snapshots.
-    IngestCypher {
-        data: PathBuf,
-        mapping: PathBuf,
+    /// Ingest a GraphBuilder JSON file directly into the configured database.
+    ///
+    /// The file must contain `entities` and `relations`/`relationships`
+    /// arrays in the compact graph JSON shape accepted by
+    /// `GraphBuilder::from_json`.
+    IngestGraph {
+        /// Path to the graph JSON file.
+        path: PathBuf,
+        /// Maximum rows per UNWIND batch.
         #[arg(long, default_value_t = 1000)]
         batch_size: usize,
     },
@@ -187,22 +198,36 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Dsl { path } => cmd_dsl(path).await,
         Command::Cypher { path } => cmd_cypher(&cli.config, path).await,
         Command::Run { path } => cmd_run(&cli.config, path).await,
-        Command::Prompt { schema, no_examples, no_metadata } => {
-            cmd_prompt(&cli.config, schema, no_examples, no_metadata).await
-        }
-        Command::Schema { sample_size, format, output, no_examples } => {
-            cmd_schema(&cli.config, sample_size, format, output, no_examples).await
-        }
-        Command::Ingest { data, mapping, batch_size } => {
-            cmd_ingest(&cli.config, data, mapping, batch_size).await
-        }
-        Command::IngestCypher { data, mapping, batch_size } => {
-            cmd_ingest_cypher(&cli.config, data, mapping, batch_size).await
+        Command::Traversal { path } => cmd_traversal(&cli.config, path).await,
+        Command::Prompt {
+            query,
+            schema,
+            no_examples,
+            no_specification,
+        } => cmd_prompt(&cli.config, query, schema, no_examples, no_specification).await,
+        Command::Schema {
+            sample_size,
+            format,
+            output,
+            no_examples,
+        } => cmd_schema(&cli.config, sample_size, format, output, no_examples).await,
+        Command::IngestJson {
+            data,
+            mapper,
+            spec_cache,
+            batch_size,
+        } => cmd_ingest_json(&cli.config, data, mapper, spec_cache, batch_size).await,
+        Command::IngestGraph { path, batch_size } => {
+            cmd_ingest_graph(&cli.config, path, batch_size).await
         }
         Command::Query { path } => cmd_query(&cli.config, path).await,
-        Command::GeneratePrompt { path, hints, prefer, no_examples, no_summary } => {
-            cmd_generate_prompt(&cli.config, path, hints, prefer, no_examples, no_summary).await
-        }
+        Command::GeneratePrompt {
+            path,
+            hints,
+            prefer,
+            no_examples,
+            no_summary,
+        } => cmd_generate_prompt(&cli.config, path, hints, prefer, no_examples, no_summary).await,
         Command::IngestDocument { path, batch_size } => {
             cmd_ingest_document(&cli.config, path, batch_size).await
         }
@@ -243,6 +268,30 @@ fn build_registry(cfg: &Config) -> Result<(SharedRegistry, Option<SharedEmbedder
     Ok((std::sync::Arc::new(registry), Some(embedder)))
 }
 
+fn build_graph_specification_embedder(cfg: &Config) -> Result<SharedEmbedder> {
+    embeddings::default_embedder(
+        cfg.graph_specification.embedding_model.as_deref(),
+        cfg.graph_specification.embedding_dim,
+    )
+    .map_err(|e| {
+        crate::error::Error::Ingest(crate::ingest::IngestError::Type(format!(
+            "graph specification embedder init: {e}"
+        )))
+    })
+}
+
+fn build_graph_specification_reranker(cfg: &Config) -> Result<embeddings::SharedReranker> {
+    embeddings::default_reranker(
+        cfg.graph_specification.reranking_model.as_deref(),
+        cfg.graph_specification.embedding_dim,
+    )
+    .map_err(|e| {
+        crate::error::Error::Ingest(crate::ingest::IngestError::Type(format!(
+            "graph specification reranker init: {e}"
+        )))
+    })
+}
+
 async fn cmd_dsl(path: PathBuf) -> Result<()> {
     let q = dsl::parse(&path).await?;
     println!("{}", serde_json::to_string_pretty(&q)?);
@@ -273,7 +322,8 @@ async fn cmd_cypher(config_path: &std::path::Path, path: PathBuf) -> Result<()> 
         println!("${k} = {}", serde_json::to_string(v)?);
         match v {
             Literal::List(vec) => {
-                let emb: Vec<f32> = vec.iter()
+                let emb: Vec<f32> = vec
+                    .iter()
                     .filter_map(|value| match value {
                         Literal::Float(f) => Some(*f as f32),
                         _ => None,
@@ -344,11 +394,33 @@ async fn cmd_run(config_path: &std::path::Path, path: PathBuf) -> Result<()> {
     Ok(())
 }
 
+async fn cmd_traversal(config_path: &std::path::Path, path: PathBuf) -> Result<()> {
+    let cfg = config::load(config_path).await?;
+    let client = MemgraphClient::connect(&cfg.database).await?;
+    let (registry, embedder) = build_registry(&cfg)?;
+    let meta_store: Arc<dyn MetadataStore> =
+        Arc::new(FileMetadataStore::new(&cfg.metadata.cache_path));
+    let mut pipeline = Pipeline::new(Arc::new(client), &cfg)
+        .with_registry(registry)
+        .with_metadata_store(meta_store);
+    if let Some(e) = embedder {
+        pipeline = pipeline.with_embedder(e);
+    }
+    pipeline.load_metadata().await?;
+
+    let raw = fs::read_to_string(&path).await?;
+    let traversal: dsl::TraversalQuery = serde_json::from_str(&raw)?;
+    let result = pipeline.run_traversal(traversal).await?;
+    println!("{}", serde_json::to_string_pretty(&result)?);
+    Ok(())
+}
+
 async fn cmd_prompt(
     config_path: &std::path::Path,
+    query: Option<String>,
     schema_path: Option<PathBuf>,
     no_examples: bool,
-    no_metadata: bool,
+    no_specification: bool,
 ) -> Result<()> {
     let cfg = load_config_or_default(config_path).await;
     let schema = match schema_path {
@@ -362,18 +434,45 @@ async fn cmd_prompt(
             client.schema().await?
         }
     };
-    let property_metadata = if no_metadata {
+    let (registry, _embedder) = build_registry(&cfg)?;
+    let graph_specification_embedder = if query.is_some() {
+        Some(build_graph_specification_embedder(&cfg)?)
+    } else {
+        None
+    };
+    let graph_specification_reranker = if query.is_some() {
+        Some(build_graph_specification_reranker(&cfg)?)
+    } else {
+        None
+    };
+    let graph_specification = if no_specification {
         None
     } else {
-        let store = FileMetadataStore::new(&cfg.metadata.cache_path);
-        let m = store.load().await?;
-        if m.is_empty() { None } else { Some(m) }
+        let store = FileGraphSpecificationStorage::default();
+        let mut spec = store.load().await?;
+        if spec.is_empty() {
+            None
+        } else {
+            if let Some(embedder) = graph_specification_embedder.as_ref() {
+                spec.compute(embedder.as_ref()).map_err(|e| {
+                    crate::error::Error::Ingest(crate::ingest::IngestError::Type(format!(
+                        "graph specification embedding: {e}"
+                    )))
+                })?;
+            }
+            Some(spec)
+        }
     };
-    let (registry, _) = build_registry(&cfg)?;
     let registry_for_prompt = (*registry).clone();
     let opts = PromptOptions {
         include_examples: !no_examples,
-        property_metadata,
+        graph_specification,
+        embedding_model: graph_specification_embedder,
+        reranking_model: graph_specification_reranker,
+        schema_selection: prompt::PromptSchemaSelection {
+            reranking_threshold: cfg.graph_specification.reranking_threshold,
+            ..Default::default()
+        },
         type_registry: if registry_for_prompt.is_empty() {
             None
         } else {
@@ -381,7 +480,10 @@ async fn cmd_prompt(
         },
         ..PromptOptions::default()
     };
-    let prompt = prompt::generate_system_prompt(&schema, &opts);
+    let prompt = match query {
+        Some(query) => prompt::generate_query_prompt(&query, &schema, &opts),
+        None => prompt::generate_system_prompt(&schema, &opts),
+    };
     println!("{prompt}");
     Ok(())
 }
@@ -396,11 +498,9 @@ async fn cmd_schema(
     let cfg = config::load(config_path).await?;
     let client = MemgraphClient::connect(&cfg.database).await?;
 
-    let schema = introspect::introspect_schema(
-        &client,
-        introspect::IntrospectOptions { sample_size },
-    )
-    .await?;
+    let schema =
+        introspect::introspect_schema(&client, introspect::IntrospectOptions { sample_size })
+            .await?;
 
     let body = match format {
         SchemaFormat::Json => serde_json::to_string_pretty(&schema)?,
@@ -423,21 +523,35 @@ async fn cmd_schema(
     Ok(())
 }
 
-async fn cmd_ingest(
+async fn cmd_ingest_json(
     config_path: &std::path::Path,
     data: PathBuf,
-    mapping: PathBuf,
+    mapper: PathBuf,
+    spec_cache: PathBuf,
     batch_size: usize,
 ) -> Result<()> {
     let cfg = config::load(config_path).await?;
-    let mapping = Mapping::load(&mapping).await?;
+    let mapping = Mapping::load(&mapper).await?;
     let raw = fs::read_to_string(&data).await?;
     let value: serde_json::Value = serde_json::from_str(&raw)?;
+    let mapped = mapper::to_graph(&mapping, &value)?;
+    let (registry, embedder) = build_registry(&cfg)?;
+    let graph_specification_embedder = build_graph_specification_embedder(&cfg)?;
+
+    let spec_storage = FileGraphSpecificationStorage::new(spec_cache);
+    let mut specification = spec_storage.load().await?;
+    specification.merge(&mapped.specification);
+    specification
+        .compute(graph_specification_embedder.as_ref())
+        .map_err(|e| {
+            crate::error::Error::Ingest(crate::ingest::IngestError::Type(format!(
+                "graph specification embedding: {e}"
+            )))
+        })?;
+    spec_storage.save(&specification).await?;
 
     let client = MemgraphClient::connect(&cfg.database).await?;
-    let store: Arc<dyn MetadataStore> =
-        Arc::new(FileMetadataStore::new(&cfg.metadata.cache_path));
-    let (registry, embedder) = build_registry(&cfg)?;
+    let store: Arc<dyn MetadataStore> = Arc::new(FileMetadataStore::new(&cfg.metadata.cache_path));
     let mut pipeline = Pipeline::new(Arc::new(client), &cfg)
         .with_ingest_batch_size(batch_size)
         .with_metadata_store(store)
@@ -445,37 +559,34 @@ async fn cmd_ingest(
     if let Some(e) = embedder {
         pipeline = pipeline.with_embedder(e);
     }
-    let summary = pipeline.ingest(&mapping, &value).await?;
+
+    let summary = pipeline.ingest(&mapped.graph).await?;
     println!("{}", serde_json::to_string_pretty(&summary)?);
     Ok(())
 }
 
-async fn cmd_ingest_cypher(
+async fn cmd_ingest_graph(
     config_path: &std::path::Path,
-    data: PathBuf,
-    mapping: PathBuf,
+    path: PathBuf,
     batch_size: usize,
 ) -> Result<()> {
-    let cfg = load_config_or_default(config_path).await;
-    let mapping = Mapping::load(&mapping).await?;
-    let raw = fs::read_to_string(&data).await?;
-    let value: serde_json::Value = serde_json::from_str(&raw)?;
-
+    let cfg = config::load(config_path).await?;
+    let raw = fs::read_to_string(&path).await?;
+    let graph = GraphBuilder::from_json(&raw)?;
     let (registry, embedder) = build_registry(&cfg)?;
-    let mut pipeline = Pipeline::new(Arc::new(crate::db::MockClient::new()), &cfg)
+
+    let client = MemgraphClient::connect(&cfg.database).await?;
+    let store: Arc<dyn MetadataStore> = Arc::new(FileMetadataStore::new(&cfg.metadata.cache_path));
+    let mut pipeline = Pipeline::new(Arc::new(client), &cfg)
         .with_ingest_batch_size(batch_size)
+        .with_metadata_store(store)
         .with_registry(registry);
     if let Some(e) = embedder {
         pipeline = pipeline.with_embedder(e);
     }
-    let batches = pipeline.compile_insert(&mapping, &value)?;
-    for (i, q) in batches.iter().enumerate() {
-        println!("-- Batch {i} --\n{}\n-- Parameters --", q.text);
-        for (k, v) in &q.params {
-            println!("${k} = {}", serde_json::to_string(v)?);
-        }
-        println!();
-    }
+
+    let summary = pipeline.ingest(&graph).await?;
+    println!("{}", serde_json::to_string_pretty(&summary)?);
     Ok(())
 }
 
@@ -484,21 +595,13 @@ async fn cmd_ingest_document(
     path: PathBuf,
     batch_size: usize,
 ) -> Result<()> {
-    let cfg = config::load(config_path).await?;
-    let raw = fs::read_to_string(&path).await?;
-    let doc: DocumentInput = serde_json::from_str(&raw)?;
-
-    let client = MemgraphClient::connect(&cfg.database).await?;
-    let (registry, embedder) = build_registry(&cfg)?;
-    let mut pipeline = Pipeline::new(Arc::new(client), &cfg)
-        .with_ingest_batch_size(batch_size)
-        .with_registry(registry);
-    if let Some(e) = embedder {
-        pipeline = pipeline.with_embedder(e);
-    }
-    let summary = pipeline.ingest_document(doc).await?;
-    println!("{}", serde_json::to_string_pretty(&summary)?);
-    Ok(())
+    let _ = (config_path, path, batch_size);
+    Err(crate::error::Error::Ingest(
+        crate::ingest::IngestError::Type(
+            "document ingest was removed; build a graph::Graph and call Pipeline::ingest(&graph)"
+                .into(),
+        ),
+    ))
 }
 
 async fn cmd_ingest_document_cypher(
@@ -506,68 +609,11 @@ async fn cmd_ingest_document_cypher(
     path: PathBuf,
     batch_size: usize,
 ) -> Result<()> {
-    use crate::builder;
-    use crate::ingest::{self, DocumentIngestOptions, PlannerOptions};
-    use crate::types::SideEffectQueue;
-
-    let cfg = load_config_or_default(config_path).await;
-    let raw = fs::read_to_string(&path).await?;
-    let doc: DocumentInput = serde_json::from_str(&raw)?;
-
-    // Build the registry the same way as the executing path so the
-    // dry-run output matches reality. The SemanticText handler is
-    // required (every chunk text + entity name flows through it); when
-    // the config doesn't declare one, `build_registry` may produce a
-    // registry without SemanticText. In that case we still want the
-    // dry-run to work, so we synthesize a defaults-only SemanticText
-    // handler backed by the mock embedder.
-    let (registry, _embedder) = build_registry(&cfg)?;
-    let registry = ensure_semantic_text(registry);
-
-    let opts = DocumentIngestOptions { max_batch_size: batch_size };
-    let mut effects = SideEffectQueue::new();
-    let plan = ingest::build_document_plan(&doc, &opts, &registry, &mut effects)?;
-    let insert = ingest::planner::lower_plan(
-        plan,
-        PlannerOptions { max_batch_size: batch_size },
-    );
-    let batches = builder::build_insert(&insert)?;
-    for (i, q) in batches.iter().enumerate() {
-        println!("-- Batch {i} --\n{}\n-- Parameters --", q.text);
-        for (k, v) in &q.params {
-            println!("${k} = {}", serde_json::to_string(v)?);
-        }
-        println!();
-    }
-    Ok(())
-}
-
-/// Ensure `registry` contains a `SemanticText` handler. If one is
-/// already registered, returns the registry untouched; otherwise
-/// rebuilds it with a defaults-only `SemanticTextHandler` backed by the
-/// mock embedder. Used by `ingest-document-cypher` so the dry-run
-/// works without a `[types.SemanticText]` config block.
-fn ensure_semantic_text(registry: SharedRegistry) -> SharedRegistry {
-    use crate::embeddings::MockEmbedder;
-    use crate::types::handlers::{SemanticTextConfig, SemanticTextHandler};
-    use crate::types::{RegistryBuilder, TypeId};
-
-    if registry.contains(&TypeId::new(SemanticTextHandler::TYPE_ID)) {
-        return registry;
-    }
-    let cfg = SemanticTextConfig {
-        embedding_model: None,
-        collection: "chunks".into(),
-        top_k: 10,
-        search_threshold: 0.8,
-        reranker_threshold: 0.3,
-    };
-    let mut b = RegistryBuilder::new();
-    for h in registry.iter() {
-        b = b.register_arc(h.clone());
-    }
-    b = b.register(SemanticTextHandler::new(cfg, Arc::new(MockEmbedder::new(8))));
-    Arc::new(b.build())
+    let _ = (config_path, path, batch_size);
+    Err(crate::error::Error::Ingest(crate::ingest::IngestError::Type(
+        "document ingest-cypher was removed; build a graph::Graph and call Pipeline::compile_insert(&graph)"
+            .into(),
+    )))
 }
 
 async fn cmd_knowledge_prompt(
@@ -596,10 +642,7 @@ async fn cmd_knowledge_prompt(
         entity_types: if entity_types.is_empty() {
             default_entity_types()
         } else {
-            entity_types
-                .into_iter()
-                .map(EntityTypeSpec::new)
-                .collect()
+            entity_types.into_iter().map(EntityTypeSpec::new).collect()
         },
         relation_types: if relation_types.is_empty() {
             default_relation_types()
@@ -638,6 +681,7 @@ async fn load_config_or_default(path: &std::path::Path) -> Config {
             llm: Default::default(),
             query: Default::default(),
             metadata: Default::default(),
+            graph_specification: Default::default(),
             types: Default::default(),
         },
     }

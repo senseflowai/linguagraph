@@ -22,6 +22,9 @@ pub(super) fn write_match(cur: &mut Cursor, q: &ReadQuery) {
     let mut current_endpoint = q.start.alias.clone();
 
     for t in &q.traversals {
+        if t.optional {
+            continue;
+        }
         if t.from_alias != current_endpoint {
             cur.buf.push_str("\nMATCH ");
             // Reference the already-bound alias without repeating its
@@ -33,8 +36,25 @@ pub(super) fn write_match(cur: &mut Cursor, q: &ReadQuery) {
     }
 }
 
+pub(super) fn write_optional_matches(cur: &mut Cursor, q: &ReadQuery) {
+    for t in q.traversals.iter().filter(|t| t.optional) {
+        cur.buf.push_str("\nOPTIONAL MATCH ");
+        let _ = write!(cur.buf, "({})", t.from_alias);
+        write_traversal_tail(cur, t);
+    }
+}
+
 fn write_node(cur: &mut Cursor, node: &Node) {
-    let _ = write!(cur.buf, "({}:{})", node.alias, node.label);
+    // An empty `label` means "any node" — used by `TraversalQuery`
+    // when the caller doesn't pin the entity type. In Cypher,
+    // `MATCH (e)` matches a node of any label, so we just drop the
+    // `:Label` suffix instead of emitting `(:)` (which would be a
+    // syntax error).
+    if node.label.is_empty() {
+        let _ = write!(cur.buf, "({})", node.alias);
+    } else {
+        let _ = write!(cur.buf, "({}:{})", node.alias, node.label);
+    }
 }
 
 /// The `-[edge]->(target)` portion of a traversal — written *after* the

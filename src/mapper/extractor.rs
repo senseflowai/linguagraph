@@ -109,11 +109,7 @@ fn extract_entity(ent: &EntityMapping, data: &Value) -> Result<ExtractedEntity, 
         .properties
         .iter()
         .map(|p| {
-            Ok::<_, MapperError>((
-                p.name.clone(),
-                parse(&p.source_path)?,
-                p.field_type.clone(),
-            ))
+            Ok::<_, MapperError>((p.name.clone(), parse(&p.source_path)?, p.field_type.clone()))
         })
         .collect::<Result<_, _>>()?;
 
@@ -122,8 +118,7 @@ fn extract_entity(ent: &EntityMapping, data: &Value) -> Result<ExtractedEntity, 
     let mut rows = Vec::with_capacity(source_matches.len());
 
     for src in source_matches {
-        let pk_matches =
-            resolve_value(&pk_path, &source, src.value, &src.context, data);
+        let pk_matches = resolve_value(&pk_path, &source, src.value, &src.context, data);
         let id = match pk_matches.len() {
             0 => {
                 return Err(MapperError::MissingPrimaryKey {
@@ -213,7 +208,10 @@ fn derive_pk_field_name(ent: &EntityMapping) -> String {
 }
 
 fn parse(s: &str) -> Result<JsonPath, MapperError> {
-    JsonPath::parse(s).map_err(|e| MapperError::Path { path: s.to_string(), source: e })
+    JsonPath::parse(s).map_err(|e| MapperError::Path {
+        path: s.to_string(),
+        source: e,
+    })
 }
 
 #[cfg(test)]
@@ -324,12 +322,7 @@ mod tests {
     #[test]
     fn missing_primary_key_is_fatal() {
         let mapping = Mapping {
-            entities: vec![ent(
-                "Camera",
-                "$.cameras[*]",
-                "$.cameras[*].id",
-                &[],
-            )],
+            entities: vec![ent("Camera", "$.cameras[*]", "$.cameras[*].id", &[])],
             relationships: vec![],
         };
         let data = json!({"cameras": [{"name": "no-id"}]});

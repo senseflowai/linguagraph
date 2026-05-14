@@ -26,6 +26,9 @@ pub enum Error {
     #[error("Mapper error: {0}")]
     Mapper(#[from] crate::mapper::MapperError),
 
+    #[error("Graph build error: {0}")]
+    GraphBuild(#[from] crate::graph::GraphBuildError),
+
     #[error("Ingest error: {0}")]
     Ingest(#[from] crate::ingest::IngestError),
 
@@ -37,6 +40,9 @@ pub enum Error {
 
     #[error("Metadata error: {0}")]
     Metadata(#[from] crate::metadata::MetadataError),
+
+    #[error("Graph specification storage error: {0}")]
+    GraphSpecificationStorage(#[from] crate::graph::GraphSpecificationStorageError),
 
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),

@@ -20,15 +20,19 @@ use std::sync::Arc;
 use serde_json::json;
 
 use linguagraph::ast::query::Literal;
-use linguagraph::config::{Config, DatabaseConfig, LlmConfig, MetadataConfig, QueryConfig, TypeConfig};
+use linguagraph::config::{
+    Config, DatabaseConfig, GraphSpecificationConfig, LlmConfig, MetadataConfig, QueryConfig,
+    TypeConfig,
+};
 use linguagraph::core::Pipeline;
 use linguagraph::db::MockClient;
 use linguagraph::dsl;
 use linguagraph::embeddings::{MockEmbedder, SharedEmbedder};
+use linguagraph::graph::{GraphBuilder, PropertyType as GraphPropertyType};
 use linguagraph::mapper::Mapping;
 use linguagraph::metadata::{collect_from_mapping, PropertyMetadata};
 use linguagraph::types::{
-    handlers::{SemanticTextConfig, SemanticTextHandler},
+    handlers::{self, SemanticTextConfig, SemanticTextHandler},
     RegistryBuilder, SharedRegistry, TypeId, TypeRegistry,
 };
 
@@ -43,8 +47,8 @@ fn cfg_with_semantic_text() -> Config {
             // Pin both thresholds to recognisable values so the
             // end-to-end tests can assert they flow through
             // unchanged from config to bound parameter.
-            threshold: Some(0.75),           // cosine, stage 1
-            reranker_threshold: Some(0.42),  // reranker, stage 2
+            threshold: Some(0.75),          // cosine, stage 1
+            reranker_threshold: Some(0.42), // reranker, stage 2
             embedding_dim: Some(8),
             extra: Default::default(),
         },
@@ -61,6 +65,7 @@ fn cfg_with_semantic_text() -> Config {
         llm: LlmConfig::default(),
         query: QueryConfig::default(),
         metadata: MetadataConfig::default(),
+        graph_specification: GraphSpecificationConfig::default(),
         types,
     }
 }
@@ -69,7 +74,7 @@ fn registry_and_embedder() -> (SharedRegistry, SharedEmbedder) {
     let embedder: SharedEmbedder = Arc::new(MockEmbedder::new(8));
     let cfg = cfg_with_semantic_text();
     let st_cfg = SemanticTextConfig::from_config(&cfg).expect("config block present");
-    let registry = RegistryBuilder::new()
+    let registry = handlers::register_core(RegistryBuilder::new())
         .register(SemanticTextHandler::new(st_cfg, embedder.clone()))
         .build();
     (Arc::new(registry), embedder)
@@ -100,34 +105,27 @@ fn registry_advertises_capabilities_via_prompt_hints() {
 
 #[tokio::test]
 async fn semantic_ingest_runs_qlink_insert_after_memgraph_batches() {
-    // Mapping declares `Company.name` as a SemanticText field.
-    let mapping: Mapping = serde_json::from_value(json!({
-        "entities": [{
-            "type": "Company",
-            "source_path": "$.companies[*]",
-            "primary_key": "$.companies[*].id",
-            "properties": [
-                {"name": "id",   "source_path": "$.companies[*].id"},
-                {"name": "name", "source_path": "$.companies[*].name", "type": "SemanticText"}
-            ]
-        }]
-    }))
-    .unwrap();
-
-    let data = json!({
-        "companies": [
-            {"id": "c1", "name": "Apple Inc."},
-            {"id": "c2", "name": "Banana Republic"}
-        ]
-    });
-
     let client = Arc::new(MockClient::new());
     let (registry, embedder) = registry_and_embedder();
     let pipeline = Pipeline::new(client.clone(), &cfg_with_semantic_text())
         .with_registry(registry)
         .with_embedder(embedder);
 
-    let summary = pipeline.ingest(&mapping, &data).await.unwrap();
+    let mut graph = GraphBuilder::new();
+    graph
+        .entity("Company")
+        .strict_primary_key("id")
+        .property("id", GraphPropertyType::String, "c1")
+        .property("name", GraphPropertyType::Text, "Apple Inc.")
+        .add();
+    graph
+        .entity("Company")
+        .strict_primary_key("id")
+        .property("id", GraphPropertyType::String, "c2")
+        .property("name", GraphPropertyType::Text, "Banana Republic")
+        .add();
+
+    let summary = pipeline.ingest(&graph.build()).await.unwrap();
 
     // Two companies → 1 node MERGE batch, 0 relationship batches.
     assert_eq!(summary.batches_executed, 1);
@@ -143,9 +141,9 @@ async fn semantic_ingest_runs_qlink_insert_after_memgraph_batches() {
     assert_eq!(captured.len(), 2);
     let qlink_batch = &captured[1];
     assert!(
-        qlink_batch.text.contains(
-            "CALL libqlink.insert_labeled($coll, id(n), row.vec, $label)"
-        ),
+        qlink_batch
+            .text
+            .contains("CALL libqlink.insert_labeled($coll, id(n), row.vec, $label)"),
         "expected UNWIND-batched libqlink.insert_labeled; got:\n{}",
         qlink_batch.text
     );
@@ -181,26 +179,20 @@ async fn semantic_ingest_runs_qlink_insert_after_memgraph_batches() {
 
 #[tokio::test]
 async fn ingest_without_embedder_fails_loudly_when_side_effects_arise() {
-    let mapping: Mapping = serde_json::from_value(json!({
-        "entities": [{
-            "type": "Company",
-            "source_path": "$.companies[*]",
-            "primary_key": "$.companies[*].id",
-            "properties": [
-                {"name": "id",   "source_path": "$.companies[*].id"},
-                {"name": "name", "source_path": "$.companies[*].name", "type": "SemanticText"}
-            ]
-        }]
-    }))
-    .unwrap();
-    let data = json!({"companies": [{"id": "c1", "name": "Apple Inc."}]});
-
     let client = Arc::new(MockClient::new());
     let (registry, _) = registry_and_embedder();
     // Notice: no `.with_embedder(...)` call.
     let pipeline = Pipeline::new(client, &cfg_with_semantic_text()).with_registry(registry);
 
-    let err = pipeline.ingest(&mapping, &data).await.unwrap_err();
+    let mut graph = GraphBuilder::new();
+    graph
+        .entity("Company")
+        .strict_primary_key("id")
+        .property("id", GraphPropertyType::String, "c1")
+        .property("name", GraphPropertyType::Text, "Apple Inc.")
+        .add();
+
+    let err = pipeline.ingest(&graph.build()).await.unwrap_err();
     let msg = format!("{err}");
     assert!(msg.contains("embedder is configured") || msg.contains("no embedder"));
 }
@@ -213,13 +205,17 @@ fn semantic_search_compiles_to_qlink_search_call() {
         .with_registry(registry)
         .with_embedder(embedder);
 
+    // `search_reranked` is the cross-encoder path that emits
+    // `libqlink.search_reranked` and binds the reranker threshold.
+    // (`search` is the cheaper KNN path that goes through
+    // `libqlink.search_labeled` — covered in unit tests.)
     let dsl_query = dsl::parse_str(
         r#"{
             "action": "find",
             "start": { "label": "Company", "alias": "c" },
             "filters": [
                 { "field": "c.name", "type": "SemanticText",
-                  "op": "search", "value": "apple" }
+                  "op": "search_reranked", "value": "apple" }
             ],
             "return": [{ "field": "c.name", "alias": "name" }],
             "limit": 5
@@ -263,7 +259,10 @@ fn semantic_search_compiles_to_qlink_search_call() {
         .values()
         .any(|v| matches!(v, Literal::List(items) if items.len() == 8));
     assert!(has_embedding, "expected an 8-dim embedding parameter");
-    assert!(!cypher.text.contains("[0."), "embedding leaked into cypher text");
+    assert!(
+        !cypher.text.contains("[0."),
+        "embedding leaked into cypher text"
+    );
 
     // The natural-language query is bound as `query_str` for the
     // reranker — it should round-trip the DSL `value` verbatim.
@@ -271,13 +270,21 @@ fn semantic_search_compiles_to_qlink_search_call() {
         .params
         .values()
         .any(|v| matches!(v, Literal::String(s) if s == "apple"));
-    assert!(has_query_str, "expected 'apple' bound as query_str; params: {:?}", cypher.params);
+    assert!(
+        has_query_str,
+        "expected 'apple' bound as query_str; params: {:?}",
+        cypher.params
+    );
     // Label flows through as a Qdrant payload filter.
     let has_label = cypher
         .params
         .values()
         .any(|v| matches!(v, Literal::String(s) if s == "Company"));
-    assert!(has_label, "expected 'Company' bound as label; params: {:?}", cypher.params);
+    assert!(
+        has_label,
+        "expected 'Company' bound as label; params: {:?}",
+        cypher.params
+    );
 
     // The reranker threshold (0.42) flows through as a bound Float
     // param. The cosine `search_threshold` is not currently handed
@@ -287,7 +294,13 @@ fn semantic_search_compiles_to_qlink_search_call() {
     let floats: Vec<f64> = cypher
         .params
         .values()
-        .filter_map(|v| if let Literal::Float(f) = v { Some(*f) } else { None })
+        .filter_map(|v| {
+            if let Literal::Float(f) = v {
+                Some(*f)
+            } else {
+                None
+            }
+        })
         .collect();
     assert!(
         floats.iter().any(|f| (f - 0.42).abs() < 1e-9),
@@ -376,8 +389,9 @@ fn aggregate_with_semantic_search_drops_handler_order_by() {
         .with_embedder(embedder);
 
     // "How many cameras are at each Place that semantically matches
-    // 'office'?" — find Places via libqlink.search, traverse to
-    // Camera, count.
+    // 'office'?" — find Places via the cross-encoder reranker
+    // (`search_reranked`), traverse to Camera, count. The `search`
+    // op is the plain KNN variant (covered separately).
     let dsl_query = dsl::parse_str(
         r#"{
             "action": "aggregate",
@@ -388,7 +402,7 @@ fn aggregate_with_semantic_search_drops_handler_order_by() {
             ],
             "filters": [
                 { "field": "p.name", "type": "SemanticText",
-                  "op": "search", "value": "office" }
+                  "op": "search_reranked", "value": "office" }
             ],
             "return": [
                 { "aggregate": "count", "field": "c.id", "alias": "camera_count" }
@@ -678,7 +692,11 @@ fn metadata_lookup_keys_off_label_not_alias() {
         }"#,
     )
     .unwrap();
-    assert!(pipeline.compile(q).unwrap().text.contains("libqlink.search"));
+    assert!(pipeline
+        .compile(q)
+        .unwrap()
+        .text
+        .contains("libqlink.search"));
 
     // Filter on Person.name -> plain (and `search` is not a valid plain
     // op, so this must error rather than silently routing to a wrong
@@ -700,24 +718,17 @@ fn metadata_lookup_keys_off_label_not_alias() {
 }
 
 #[tokio::test]
-async fn ingest_refreshes_in_memory_metadata_snapshot() {
-    // Before ingest the pipeline has no metadata snapshot — so a typed
-    // DSL without `"type"` falls through to plain ops. After ingest it
-    // *does* have one, and the same DSL auto-resolves.
+async fn loaded_metadata_auto_resolves_semantic_text_filters() {
     let cfg = cfg_with_semantic_text();
     let (registry, embedder) = registry_and_embedder();
+    let mut meta = PropertyMetadata::new();
+    meta.insert_type("Company.name", "SemanticText");
     let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg)
         .with_registry(registry)
-        .with_embedder(embedder);
+        .with_embedder(embedder)
+        .with_metadata(Arc::new(meta));
 
-    let mapping = semantic_mapping();
-    let data = json!({
-        "companies": [{"id": "c1", "name": "Apple Inc.", "industry": "tech"}]
-    });
-    pipeline.ingest(&mapping, &data).await.unwrap();
-
-    // Now the in-memory snapshot has `Company.name → SemanticText`.
-    let meta = pipeline.metadata().expect("snapshot refreshed by ingest");
+    let meta = pipeline.metadata().expect("snapshot loaded");
     assert_eq!(meta.get_type("Company.name"), Some("SemanticText"));
 
     let q = dsl::parse_str(
@@ -731,31 +742,45 @@ async fn ingest_refreshes_in_memory_metadata_snapshot() {
         }"#,
     )
     .unwrap();
-    assert!(pipeline.compile(q).unwrap().text.contains("libqlink.search"));
+    assert!(pipeline
+        .compile(q)
+        .unwrap()
+        .text
+        .contains("libqlink.search"));
 }
 
 #[test]
 fn prompt_surfaces_field_type_marker() {
+    use linguagraph::graph::{GraphSpecification, PropertyType as GraphPropertyType};
     use linguagraph::prompt::{
-        generate_system_prompt, GraphSchema, NodeKind, Property, PromptOptions, PropertyType,
+        generate_system_prompt, GraphSchema, NodeKind, PromptOptions, Property, PropertyType,
     };
     let schema = GraphSchema {
         nodes: vec![NodeKind {
             label: "Company".into(),
             properties: vec![
-                Property { name: "id".into(), ty: PropertyType::String },
-                Property { name: "name".into(), ty: PropertyType::String },
+                Property {
+                    name: "id".into(),
+                    ty: PropertyType::String,
+                },
+                Property {
+                    name: "name".into(),
+                    ty: PropertyType::String,
+                },
             ],
         }],
         relationships: vec![],
     };
-    let mut meta = PropertyMetadata::new();
-    meta.insert("Company.name", "the company name");
-    meta.insert_type("Company.name", "SemanticText");
+    let spec = GraphSpecification::new().with_property(
+        "Company",
+        "name",
+        GraphPropertyType::Text,
+        "the company name",
+    );
     let prompt = generate_system_prompt(
         &schema,
         &PromptOptions {
-            property_metadata: Some(meta),
+            graph_specification: Some(spec),
             include_examples: false,
             ..Default::default()
         },

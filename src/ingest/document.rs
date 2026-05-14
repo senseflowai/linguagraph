@@ -117,7 +117,9 @@ pub struct DocumentIngestOptions {
 
 impl Default for DocumentIngestOptions {
     fn default() -> Self {
-        Self { max_batch_size: 1000 }
+        Self {
+            max_batch_size: 1000,
+        }
     }
 }
 
@@ -161,7 +163,10 @@ pub fn build_document_plan(
     // ── 1. Document node. ──────────────────────────────────────────────
     let mut doc_props: BTreeMap<String, Literal> = BTreeMap::new();
     doc_props.insert("path".to_string(), Literal::String(doc_path.clone()));
-    doc_props.insert("name".to_string(), Literal::String(doc.document.name.clone()));
+    doc_props.insert(
+        "name".to_string(),
+        Literal::String(doc.document.name.clone()),
+    );
     let document_plan = NodePlan {
         label: DOCUMENT_LABEL.to_string(),
         merge_on: "path".to_string(),
@@ -208,10 +213,7 @@ pub fn build_document_plan(
         );
         // Keep the original chunk id (within-document handle) as a property
         // for human inspection; the merge key is the composite uuid.
-        props.insert(
-            "local_id".to_string(),
-            Literal::String(chunk.id.clone()),
-        );
+        props.insert("local_id".to_string(), Literal::String(chunk.id.clone()));
         chunk_rows.push(NodeData {
             id: chunk_key.clone(),
             props,
@@ -221,6 +223,7 @@ pub fn build_document_plan(
         has_chunk_rows.push(RelationData {
             from_id: Literal::String(doc_path.clone()),
             to_id: chunk_key.clone(),
+            props: BTreeMap::new(),
         });
 
         // Per-chunk symbol table: local id → (sanitized label, uuid).
@@ -233,9 +236,8 @@ pub fn build_document_plan(
             HashMap::with_capacity(chunk.entities.len());
 
         for ent in &chunk.entities {
-            let sanitized = sanitize_label(&ent.kind).ok_or_else(|| {
-                IngestError::InvalidLabel(ent.kind.clone())
-            })?;
+            let sanitized = sanitize_label(&ent.kind)
+                .ok_or_else(|| IngestError::InvalidLabel(ent.kind.clone()))?;
             if is_reserved_label(&sanitized) {
                 return Err(IngestError::ReservedLabel(sanitized));
             }
@@ -263,10 +265,7 @@ pub fn build_document_plan(
                 ent_props.insert("name".to_string(), lit);
             }
             // Preserve LLM-original type wording (may include spaces/etc).
-            ent_props.insert(
-                "type".to_string(),
-                Literal::String(ent.kind.clone()),
-            );
+            ent_props.insert("type".to_string(), Literal::String(ent.kind.clone()));
             entities_by_label
                 .entry(sanitized.clone())
                 .or_default()
@@ -282,6 +281,7 @@ pub fn build_document_plan(
                 .push(RelationData {
                     from_id: chunk_key.clone(),
                     to_id: entity_key.clone(),
+                    props: BTreeMap::new(),
                 });
 
             // Symbol-table entry.
@@ -304,21 +304,20 @@ pub fn build_document_plan(
         }
 
         for rel in &chunk.relations {
-            let from = local.get(&rel.from).ok_or_else(|| {
-                IngestError::UnknownLocalId {
+            let from = local
+                .get(&rel.from)
+                .ok_or_else(|| IngestError::UnknownLocalId {
                     chunk: chunk.id.clone(),
                     local_id: rel.from.clone(),
-                }
-            })?;
-            let to = local.get(&rel.to).ok_or_else(|| {
-                IngestError::UnknownLocalId {
+                })?;
+            let to = local
+                .get(&rel.to)
+                .ok_or_else(|| IngestError::UnknownLocalId {
                     chunk: chunk.id.clone(),
                     local_id: rel.to.clone(),
-                }
-            })?;
-            let rel_type = sanitize_rel(&rel.kind).ok_or_else(|| {
-                IngestError::InvalidLabel(rel.kind.clone())
-            })?;
+                })?;
+            let rel_type = sanitize_rel(&rel.kind)
+                .ok_or_else(|| IngestError::InvalidLabel(rel.kind.clone()))?;
             if is_reserved_relation(&rel_type) {
                 return Err(IngestError::ReservedRelation(rel_type));
             }
@@ -328,6 +327,7 @@ pub fn build_document_plan(
                 .push(RelationData {
                     from_id: Literal::String(from.uuid.clone()),
                     to_id: Literal::String(to.uuid.clone()),
+                    props: BTreeMap::new(),
                 });
         }
     }
@@ -431,9 +431,7 @@ fn sort_node_rows(rows: &mut [NodeData]) {
 }
 
 fn sort_relation_rows(rows: &mut [RelationData]) {
-    rows.sort_by(|a, b| {
-        literal_cmp(&a.from_id, &b.from_id).then(literal_cmp(&a.to_id, &b.to_id))
-    });
+    rows.sort_by(|a, b| literal_cmp(&a.from_id, &b.from_id).then(literal_cmp(&a.to_id, &b.to_id)));
 }
 
 fn literal_cmp(a: &Literal, b: &Literal) -> std::cmp::Ordering {
@@ -467,7 +465,12 @@ fn sanitize_label(s: &str) -> Option<String> {
     }
     let mut out = trimmed.to_string();
     // Prefix `_` if the first char is now a digit.
-    if out.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+    if out
+        .chars()
+        .next()
+        .map(|c| c.is_ascii_digit())
+        .unwrap_or(false)
+    {
         out.insert(0, '_');
     }
     if out != s {
@@ -539,7 +542,10 @@ mod tests {
             reranker_threshold: 0.3,
         };
         RegistryBuilder::new()
-            .register(SemanticTextHandler::new(cfg, Arc::new(MockEmbedder::new(8))))
+            .register(SemanticTextHandler::new(
+                cfg,
+                Arc::new(MockEmbedder::new(8)),
+            ))
             .build()
     }
 
@@ -581,8 +587,7 @@ mod tests {
         assert!(labels.contains(&"Company"));
 
         // Relations: HAS_CHUNK + MENTIONS (Person + Company) + WORKS_AT.
-        let rel_types: Vec<&str> =
-            plan.relations.iter().map(|r| r.rel_type.as_str()).collect();
+        let rel_types: Vec<&str> = plan.relations.iter().map(|r| r.rel_type.as_str()).collect();
         assert!(rel_types.contains(&"HAS_CHUNK"));
         assert_eq!(
             rel_types.iter().filter(|t| **t == "MENTIONS").count(),
@@ -618,9 +623,7 @@ mod tests {
         let by_label: std::collections::BTreeMap<String, Vec<String>> = effects
             .iter()
             .map(|e| match e {
-                SideEffect::EmbedAndStore { label, text, .. } => {
-                    (label.clone(), text.clone())
-                }
+                SideEffect::EmbedAndStore { label, text, .. } => (label.clone(), text.clone()),
             })
             .fold(Default::default(), |mut acc, (label, text)| {
                 acc.entry(label).or_default().push(text);
@@ -630,8 +633,14 @@ mod tests {
         assert_eq!(by_label.get("Chunk").map(|v| v.len()), Some(1));
         assert_eq!(by_label.get("Person").map(|v| v.len()), Some(1));
         assert_eq!(by_label.get("Company").map(|v| v.len()), Some(1));
-        assert!(by_label.get("Person").unwrap().contains(&"Alice".to_string()));
-        assert!(by_label.get("Company").unwrap().contains(&"Acme".to_string()));
+        assert!(by_label
+            .get("Person")
+            .unwrap()
+            .contains(&"Alice".to_string()));
+        assert!(by_label
+            .get("Company")
+            .unwrap()
+            .contains(&"Acme".to_string()));
     }
 
     #[test]
@@ -709,7 +718,10 @@ mod tests {
         assert!(
             plan.relations.iter().any(|r| r.rel_type == "MEMBER_OF"),
             "relation with hyphen should be sanitized + uppercased; got {:?}",
-            plan.relations.iter().map(|r| &r.rel_type).collect::<Vec<_>>()
+            plan.relations
+                .iter()
+                .map(|r| &r.rel_type)
+                .collect::<Vec<_>>()
         );
     }
 

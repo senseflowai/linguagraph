@@ -17,6 +17,8 @@ pub struct Config {
     pub query: QueryConfig,
     #[serde(default)]
     pub metadata: MetadataConfig,
+    #[serde(default)]
+    pub graph_specification: GraphSpecificationConfig,
     /// Per-type configuration. Each `[types.<TypeId>]` block becomes one
     /// entry in this map and is read by the corresponding handler at
     /// registry-build time. The map is open-ended on purpose —
@@ -114,12 +116,57 @@ pub struct MetadataConfig {
 
 impl Default for MetadataConfig {
     fn default() -> Self {
-        Self { cache_path: default_metadata_path() }
+        Self {
+            cache_path: default_metadata_path(),
+        }
     }
 }
 
 fn default_metadata_path() -> String {
     ".linguagraph/property_metadata.json".into()
+}
+
+/// Graph specification settings. The specification is used to annotate
+/// prompts and to select query-relevant entity types by embedding entity
+/// descriptions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphSpecificationConfig {
+    /// Path to the embedding model used for graph-specification entity
+    /// matching. When omitted, the configured embedder falls back to the
+    /// default mock backend in builds without a concrete model.
+    #[serde(default)]
+    pub embedding_model: Option<String>,
+    /// Path to the reranking model used after coarse embedding retrieval.
+    /// With the `llama` feature this should be a GGUF reranker compatible
+    /// with llama.cpp rank pooling.
+    #[serde(default)]
+    pub reranking_model: Option<String>,
+    /// Embedding dimension hint, used by the mock embedder when no real
+    /// model is configured.
+    #[serde(default = "default_graph_specification_embedding_dim")]
+    pub embedding_dim: usize,
+    /// Minimum score required after reranking.
+    #[serde(default = "default_graph_specification_reranking_threshold")]
+    pub reranking_threshold: f64,
+}
+
+impl Default for GraphSpecificationConfig {
+    fn default() -> Self {
+        Self {
+            embedding_model: None,
+            reranking_model: None,
+            embedding_dim: default_graph_specification_embedding_dim(),
+            reranking_threshold: default_graph_specification_reranking_threshold(),
+        }
+    }
+}
+
+fn default_graph_specification_embedding_dim() -> usize {
+    384
+}
+
+fn default_graph_specification_reranking_threshold() -> f64 {
+    0.3
 }
 
 /// Open-ended per-type configuration block.

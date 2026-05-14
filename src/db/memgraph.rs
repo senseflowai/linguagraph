@@ -110,11 +110,8 @@ impl GraphClient for MemgraphClient {
         // and any Neo4j-compatible backend. Sample size defaults to 100;
         // callers that need finer control can call
         // [`crate::db::introspect_schema`] directly.
-        super::introspect::introspect_schema(
-            self,
-            super::introspect::IntrospectOptions::default(),
-        )
-        .await
+        super::introspect::introspect_schema(self, super::introspect::IntrospectOptions::default())
+            .await
     }
 }
 

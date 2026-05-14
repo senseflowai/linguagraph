@@ -138,12 +138,7 @@ pub fn walk_segments<'a>(
     out
 }
 
-fn walk<'a>(
-    segments: &[Segment],
-    value: &'a Value,
-    context: Vec<usize>,
-    out: &mut Vec<Match<'a>>,
-) {
+fn walk<'a>(segments: &[Segment], value: &'a Value, context: Vec<usize>, out: &mut Vec<Match<'a>>) {
     let Some((seg, rest)) = segments.split_first() else {
         out.push(Match { value, context });
         return;

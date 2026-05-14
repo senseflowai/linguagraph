@@ -21,7 +21,10 @@ fn find_example_round_trip() {
     assert!(cypher.text.trim_end().ends_with("LIMIT 25"));
     // Two filter values bound as parameters.
     assert_eq!(cypher.params.len(), 2);
-    assert!(cypher.params.values().any(|v| matches!(v, Literal::Int(30))));
+    assert!(cypher
+        .params
+        .values()
+        .any(|v| matches!(v, Literal::Int(30))));
     assert!(cypher
         .params
         .values()
@@ -151,6 +154,33 @@ fn sibling_traversals_emit_separate_match_clauses() {
 }
 
 #[test]
+fn optional_traversal_emits_optional_match_clause() {
+    let cypher = compile(
+        r#"{
+            "action": "find",
+            "start": { "label": "Person", "alias": "p" },
+            "traversals": [
+                {
+                    "optional": true,
+                    "edge": { "label": "WORKS_AT", "alias": "w", "direction": "out" },
+                    "target": { "label": "Company", "alias": "c" }
+                }
+            ],
+            "filters": [{ "field": "p.active", "op": "eq", "value": true }],
+            "return": [{ "field": "c.name" }]
+        }"#,
+    );
+
+    assert!(
+        cypher.text.contains(
+            "MATCH (p:Person)\nWHERE p.active = $p0\nOPTIONAL MATCH (p)-[w:WORKS_AT]->(c:Company)"
+        ),
+        "got: {}",
+        cypher.text
+    );
+}
+
+#[test]
 fn explicit_from_chains_traversals() {
     // `from` lets the author keep the legacy chained behavior on demand:
     // (p)-[k1]->(f1)-[k2]->(f2).
@@ -179,8 +209,15 @@ fn explicit_from_chains_traversals() {
         "got: {}",
         cypher.text
     );
-    // Single MATCH clause — chain not split.
-    assert_eq!(cypher.text.matches("MATCH ").count(), 1);
+    // Single user MATCH clause — chain not split. The compiler
+    // additionally emits an `OPTIONAL MATCH` for the always-on
+    // sources projection, so we count standalone MATCH lines only.
+    let user_match_lines = cypher
+        .text
+        .lines()
+        .filter(|line| line.starts_with("MATCH "))
+        .count();
+    assert_eq!(user_match_lines, 1);
 }
 
 #[test]

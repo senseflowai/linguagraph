@@ -132,16 +132,46 @@ fn leaf_kind_of(v: &Value) -> LeafKind {
 
 /// Names that strongly suggest a free-text/prose field.
 const PROSE_NAMES: &[&str] = &[
-    "description", "desc", "bio", "biography", "summary", "abstract", "body",
-    "content", "comment", "comments", "text", "notes", "note", "details",
-    "detail", "message", "title", "headline", "review", "synopsis",
+    "description",
+    "desc",
+    "bio",
+    "biography",
+    "summary",
+    "abstract",
+    "body",
+    "content",
+    "comment",
+    "comments",
+    "text",
+    "notes",
+    "note",
+    "details",
+    "detail",
+    "message",
+    "title",
+    "headline",
+    "review",
+    "synopsis",
 ];
 
 /// Names that strongly suggest a categorical / enum field.
 const KEYWORD_NAMES: &[&str] = &[
-    "status", "state", "category", "categories", "industry", "kind", "type",
-    "role", "tier", "level", "priority", "severity", "phase", "stage",
-    "department", "channel",
+    "status",
+    "state",
+    "category",
+    "categories",
+    "industry",
+    "kind",
+    "type",
+    "role",
+    "tier",
+    "level",
+    "priority",
+    "severity",
+    "phase",
+    "stage",
+    "department",
+    "channel",
 ];
 
 /// Names that mark a primary-key candidate.
@@ -183,9 +213,16 @@ fn looks_like_iso8601(s: &str) -> bool {
     }
     let is_digit = |i: usize| bytes.get(i).is_some_and(|b| b.is_ascii_digit());
     let dash = |i: usize| bytes.get(i) == Some(&b'-');
-    if !(is_digit(0) && is_digit(1) && is_digit(2) && is_digit(3)
-        && dash(4) && is_digit(5) && is_digit(6)
-        && dash(7) && is_digit(8) && is_digit(9))
+    if !(is_digit(0)
+        && is_digit(1)
+        && is_digit(2)
+        && is_digit(3)
+        && dash(4)
+        && is_digit(5)
+        && is_digit(6)
+        && dash(7)
+        && is_digit(8)
+        && is_digit(9))
     {
         return false;
     }
@@ -284,8 +321,12 @@ mod tests {
     #[test]
     fn enum_like_short_string_is_keyword() {
         let s = stats_with(&[
-            json!("active"), json!("active"), json!("inactive"),
-            json!("active"), json!("error"), json!("inactive"),
+            json!("active"),
+            json!("active"),
+            json!("inactive"),
+            json!("active"),
+            json!("error"),
+            json!("inactive"),
         ]);
         assert_eq!(infer("status_v", &s), InferredType::Keyword);
     }
@@ -298,10 +339,7 @@ mod tests {
 
     #[test]
     fn iso8601_string_is_datetime() {
-        let s = stats_with(&[
-            json!("2024-01-02T15:04:05Z"),
-            json!("2025-06-07T01:02:03Z"),
-        ]);
+        let s = stats_with(&[json!("2024-01-02T15:04:05Z"), json!("2025-06-07T01:02:03Z")]);
         assert_eq!(infer("created_at", &s), InferredType::DateTime);
     }
 

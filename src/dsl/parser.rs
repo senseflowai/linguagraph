@@ -77,7 +77,10 @@ fn validate(q: &DslQuery) -> Result<(), DslError> {
 
         if let Some(d) = t.depth {
             if d.min < 1 || d.max < d.min {
-                return Err(DslError::InvalidDepth { min: d.min, max: d.max });
+                return Err(DslError::InvalidDepth {
+                    min: d.min,
+                    max: d.max,
+                });
             }
         }
     }
@@ -91,9 +94,7 @@ fn validate(q: &DslQuery) -> Result<(), DslError> {
         // typed (handler ops) or untyped (plain ops). The lowerer
         // returns a precise `UnknownPlainOp` / `UnsupportedTypedOp`
         // when the resolved op is invalid.
-        if f.op.is_empty()
-            || !f.op.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-        {
+        if f.op.is_empty() || !f.op.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
             return Err(DslError::UnknownOp(f.op.clone()));
         }
         if let Some(ty) = &f.field_type {
@@ -215,7 +216,10 @@ mod tests {
             "start": { "label": "1Person", "alias": "p" },
             "return": [{ "field": "p.name" }]
         }"#;
-        assert!(matches!(parse_str(json), Err(DslError::InvalidIdentifier(_))));
+        assert!(matches!(
+            parse_str(json),
+            Err(DslError::InvalidIdentifier(_))
+        ));
     }
 
     #[test]
@@ -230,7 +234,10 @@ mod tests {
             }],
             "return": [{ "field": "p.name" }]
         }"#;
-        assert!(matches!(parse_str(json), Err(DslError::InvalidDepth { .. })));
+        assert!(matches!(
+            parse_str(json),
+            Err(DslError::InvalidDepth { .. })
+        ));
     }
 
     fn multiple_traversal() {

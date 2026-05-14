@@ -13,12 +13,14 @@
 //! relationship resolution deterministic in the [`crate::ingest`] planner.
 
 pub mod extractor;
+pub mod graph;
 pub mod path;
 pub mod schema;
 
 use thiserror::Error;
 
 pub use extractor::{extract, EntityRow, Extracted, ExtractedEntity};
+pub use graph::{to_graph, MappedGraph};
 pub use path::{JsonPath, PathError};
 pub use schema::{EntityMapping, Mapping, PropertyMapping, RelationshipMapping};
 
@@ -33,9 +35,7 @@ pub enum MapperError {
     #[error("invalid JSONPath '{path}': {source}")]
     Path { path: String, source: PathError },
 
-    #[error(
-        "property path '{prop}' is not a child of entity source path '{src}'"
-    )]
+    #[error("property path '{prop}' is not a child of entity source path '{src}'")]
     PropertyNotUnderSource { prop: String, src: String },
 
     #[error(
@@ -51,6 +51,15 @@ pub enum MapperError {
 
     #[error("duplicate entity type '{0}' in mapping")]
     DuplicateEntityType(String),
+
+    #[error("unknown entity type '{0}'")]
+    UnknownEntityType(String),
+
+    #[error("unknown mapping property type '{0}'")]
+    UnknownPropertyType(String),
+
+    #[error("graph construction error: {0}")]
+    Graph(String),
 
     #[error(
         "property '{property}' in entity '{entity}' is missing a 'type' tag — \

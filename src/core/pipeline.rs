@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use crate::ast::{from_dsl, query::InsertQuery, query::Literal, query::ReadQuery};
+use crate::ast::{from_dsl, query::InsertQuery, query::ReadQuery};
 use crate::builder::{self, CypherQuery};
 use crate::config::Config;
 use crate::db::{GraphClient, QueryResult, Row, Value as DbValue};
@@ -381,7 +381,8 @@ impl Pipeline {
         let mut batches_run = 0usize;
         let mut rows_inserted = 0usize;
         for ((_coll, _plabel, _nlabel, _kfield), group) in groups {
-            let cypher = build_qlink_insert_batch(&group)?;
+            let cypher = handlers::build_embed_insert_batch(&group)
+                .map_err(|e| crate::error::Error::Ingest(IngestError::Type(e.to_string())))?;
             let _ = self.client.execute(&cypher).await?;
             batches_run += 1;
             rows_inserted += group.len();
@@ -389,96 +390,6 @@ impl Pipeline {
         let _ = embedder.dim(); // assert the embedder was usable
         Ok((batches_run, rows_inserted))
     }
-}
-
-/// Render an `UNWIND $rows AS row | MATCH ... CALL libqlink.insert_labeled
-/// ...` Cypher batch for one homogeneous group of side effects.
-///
-/// All effects in `group` must share the same Cypher `label`, the same
-/// `key_field`, the same `collection`, and the same `payload_label`
-/// (the caller — `drain_side_effects` — keys the bucket by exactly
-/// these). The MATCH pattern is therefore consistent across rows; the
-/// only thing that varies per row is `key`/`vec` inside the row
-/// payload.
-///
-/// When the bucket has a `payload_label`, we use
-/// `libqlink.insert_labeled` so each vector lands in Qdrant tagged
-/// with the originating Cypher node label — that's what
-/// `libqlink.search_reranked` filters by at query time. When the
-/// bucket has no label we fall back to plain `libqlink.insert` so
-/// future handlers that don't care about labels still work.
-fn build_qlink_insert_batch(group: &[(SideEffect, Vec<f32>)]) -> Result<CypherQuery> {
-    use std::collections::BTreeMap;
-    debug_assert!(!group.is_empty(), "callers must not pass an empty group");
-
-    // All rows in `group` share these — see `drain_side_effects`.
-    let (collection, payload_label, label, key_field) = match &group[0].0 {
-        SideEffect::EmbedAndStore {
-            collection,
-            label,
-            key_field,
-            payload_label,
-            ..
-        } => (
-            collection.clone(),
-            payload_label.clone(),
-            label.clone(),
-            key_field.clone(),
-        ),
-    };
-
-    if !is_valid_ident(&label) {
-        return Err(crate::error::Error::Ingest(IngestError::Type(format!(
-            "invalid label '{label}' in side effect"
-        ))));
-    }
-    if !is_valid_ident(&key_field) {
-        return Err(crate::error::Error::Ingest(IngestError::Type(format!(
-            "invalid key field '{key_field}' in side effect"
-        ))));
-    }
-
-    // Build the row payload. Each row is `{key: <pk>, vec: <embedding>}`.
-    let mut rows: Vec<Literal> = Vec::with_capacity(group.len());
-    for (eff, vec) in group {
-        let SideEffect::EmbedAndStore { key_value, .. } = eff;
-        let mut row: BTreeMap<String, Literal> = BTreeMap::new();
-        row.insert("key".to_string(), key_value.clone());
-        row.insert(
-            "vec".to_string(),
-            Literal::List(vec.iter().map(|f| Literal::Float(*f as f64)).collect()),
-        );
-        rows.push(Literal::Object(row));
-    }
-
-    let mut params: BTreeMap<String, Literal> = BTreeMap::new();
-    params.insert("coll".to_string(), Literal::String(collection));
-    params.insert("rows".to_string(), Literal::List(rows));
-
-    let text = if let Some(plabel) = payload_label {
-        params.insert("label".to_string(), Literal::String(plabel));
-        format!(
-            "UNWIND $rows AS row\n\
-             MATCH (n:{label} {{{key_field}: row.key}})\n\
-             CALL libqlink.insert_labeled($coll, id(n), row.vec, $label) YIELD success\n\
-             RETURN count(success) AS inserted",
-        )
-    } else {
-        format!(
-            "UNWIND $rows AS row\n\
-             MATCH (n:{label} {{{key_field}: row.key}})\n\
-             CALL libqlink.insert($coll, id(n), row.vec) YIELD success\n\
-             RETURN count(success) AS inserted",
-        )
-    };
-    Ok(CypherQuery::new(text, params))
-}
-
-fn is_valid_ident(s: &str) -> bool {
-    let mut chars = s.chars();
-    let first = chars.next();
-    matches!(first, Some(c) if c.is_ascii_alphabetic() || c == '_')
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 #[derive(Default)]

@@ -865,16 +865,19 @@ mod tests {
             "expected (c:Chunk) start; got: {}",
             cypher.text
         );
-        // Mentions hop: chunk -[:MENTIONS]-> (e) — no label on e.
-        assert!(
-            cypher.text.contains("[m:MENTIONS]->(e)"),
-            "expected label-less entity target; got: {}",
-            cypher.text
-        );
-        // part_of hop: chunk -[:part_of]-> (s:Source).
+        // part_of is the required hop (rendered as MATCH).
         assert!(
             cypher.text.contains("[po:part_of]->(s:Source)"),
             "expected (s:Source) part_of hop; got: {}",
+            cypher.text
+        );
+        // MENTIONS is optional (rendered as OPTIONAL MATCH) and
+        // incoming: entities point at the chunks they mention, so
+        // the arrow reverses to <-[m:MENTIONS]-(e). The entity
+        // target is label-less.
+        assert!(
+            cypher.text.contains("OPTIONAL MATCH (c)<-[m:MENTIONS]-(e)"),
+            "expected optional MENTIONS hop with label-less entity; got: {}",
             cypher.text
         );
         // Semantic search routes through the labeled qlink search.
@@ -883,10 +886,13 @@ mod tests {
             "expected libqlink.search_labeled; got: {}",
             cypher.text
         );
+        // The carry order on the sources WITH chain follows the
+        // bound-alias order: c (start), then part_of's target s,
+        // then mentions' target e.
         assert!(
             cypher
                 .text
-                .contains("WITH c, e, s, c__score_0\nOPTIONAL MATCH"),
+                .contains("WITH c, s, e, c__score_0\nOPTIONAL MATCH"),
             "expected source projection to carry semantic score; got: {}",
             cypher.text
         );

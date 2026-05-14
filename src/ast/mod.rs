@@ -8,8 +8,10 @@
 //! that referenced `ast::from_dsl` continue to work via a small
 //! compatibility shim.
 
+pub mod binding;
 pub mod from_dsl;
 pub mod query;
 
+pub use binding::{AliasId, Binding, BindingKind, BindingTable, Field};
 pub use crate::resolve::AstError;
 pub use query::*;

@@ -205,13 +205,17 @@ fn semantic_search_compiles_to_qlink_search_call() {
         .with_registry(registry)
         .with_embedder(embedder);
 
+    // `search_reranked` is the cross-encoder path that emits
+    // `libqlink.search_reranked` and binds the reranker threshold.
+    // (`search` is the cheaper KNN path that goes through
+    // `libqlink.search_labeled` — covered in unit tests.)
     let dsl_query = dsl::parse_str(
         r#"{
             "action": "find",
             "start": { "label": "Company", "alias": "c" },
             "filters": [
                 { "field": "c.name", "type": "SemanticText",
-                  "op": "search", "value": "apple" }
+                  "op": "search_reranked", "value": "apple" }
             ],
             "return": [{ "field": "c.name", "alias": "name" }],
             "limit": 5
@@ -385,8 +389,9 @@ fn aggregate_with_semantic_search_drops_handler_order_by() {
         .with_embedder(embedder);
 
     // "How many cameras are at each Place that semantically matches
-    // 'office'?" — find Places via libqlink.search, traverse to
-    // Camera, count.
+    // 'office'?" — find Places via the cross-encoder reranker
+    // (`search_reranked`), traverse to Camera, count. The `search`
+    // op is the plain KNN variant (covered separately).
     let dsl_query = dsl::parse_str(
         r#"{
             "action": "aggregate",
@@ -397,7 +402,7 @@ fn aggregate_with_semantic_search_drops_handler_order_by() {
             ],
             "filters": [
                 { "field": "p.name", "type": "SemanticText",
-                  "op": "search", "value": "office" }
+                  "op": "search_reranked", "value": "office" }
             ],
             "return": [
                 { "aggregate": "count", "field": "c.id", "alias": "camera_count" }

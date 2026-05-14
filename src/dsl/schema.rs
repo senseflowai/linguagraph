@@ -534,22 +534,30 @@ mod traversal_tests {
         assert_eq!(dsl.start.alias, "c");
         assert_eq!(dsl.traversals.len(), 2);
 
-        let mentions = &dsl.traversals[0];
-        assert_eq!(mentions.from.as_deref(), Some("c"));
-        assert_eq!(mentions.edge.label, "MENTIONS");
-        assert_eq!(mentions.edge.direction, Direction::Out);
-        // Label-less target — matches entities of any type.
-        assert_eq!(mentions.target.label, "");
-        assert_eq!(mentions.target.alias, "e");
-        // Single hop — no depth widening.
-        assert!(mentions.depth.is_none());
-
-        let part_of = &dsl.traversals[1];
+        // `part_of` is the *required* hop (chunk → source) and goes
+        // first; `MENTIONS` is the optional fan-out (chunk ← entity)
+        // and comes second. The match_part emitter splits required
+        // and optional traversals into separate MATCH / OPTIONAL
+        // MATCH clauses, so this order is what lets a chunk with no
+        // mentions still return its source.
+        let part_of = &dsl.traversals[0];
         assert_eq!(part_of.from.as_deref(), Some("c"));
         assert_eq!(part_of.edge.label, "part_of");
+        assert_eq!(part_of.edge.direction, Direction::Out);
         assert_eq!(part_of.target.label, "Source");
         assert_eq!(part_of.target.alias, "s");
         assert!(part_of.depth.is_none());
+        assert!(!part_of.optional);
+
+        let mentions = &dsl.traversals[1];
+        assert_eq!(mentions.from.as_deref(), Some("c"));
+        assert_eq!(mentions.edge.label, "MENTIONS");
+        // Incoming MENTIONS: entities point at chunks they mention.
+        assert_eq!(mentions.edge.direction, Direction::In);
+        assert_eq!(mentions.target.label, "");
+        assert_eq!(mentions.target.alias, "e");
+        assert!(mentions.depth.is_none());
+        assert!(mentions.optional);
     }
 
     #[test]
@@ -616,7 +624,9 @@ mod traversal_tests {
         let mut t = TraversalQuery::new(["Acme"], "find acme", "what is acme?");
         t.entity_label = Some("Company".into());
         let dsl = t.into_dsl();
-        assert_eq!(dsl.traversals[0].target.label, "Company");
+        // traversals[0] is the `part_of` hop (chunk → source);
+        // the entity target lives in the second (optional) hop.
+        assert_eq!(dsl.traversals[1].target.label, "Company");
     }
 
     #[test]
@@ -632,15 +642,19 @@ mod traversal_tests {
         let dsls = t.entity_dsls();
         assert_eq!(dsls.len(), 1);
         let dsl = &dsls[0];
-        assert_eq!(dsl.start.alias, "seed");
+        // Entity-name leg starts at the (possibly label-less) entity
+        // bound to alias `e`, then walks outward to chunks and on to
+        // each chunk's source.
+        assert_eq!(dsl.start.alias, "e");
         assert_eq!(dsl.start.label, "");
-        assert_eq!(dsl.filters[0].field, "seed.name");
-        assert_eq!(dsl.filters[0].op, "search");
-        assert_eq!(dsl.traversals[0].from.as_deref(), Some("seed"));
-        assert_eq!(dsl.traversals[0].edge.direction, Direction::In);
+        assert_eq!(dsl.filters[0].field, "e.name");
+        assert_eq!(dsl.filters[0].op, "search_reranked");
+        assert_eq!(dsl.traversals[0].from.as_deref(), Some("e"));
+        assert_eq!(dsl.traversals[0].edge.direction, Direction::Out);
         assert_eq!(dsl.traversals[0].target.label, "Chunk");
         assert_eq!(dsl.traversals[1].from.as_deref(), Some("c"));
         assert_eq!(dsl.traversals[1].edge.direction, Direction::Out);
-        assert_eq!(dsl.traversals[1].target.alias, "e");
+        assert_eq!(dsl.traversals[1].target.alias, "s");
+        assert_eq!(dsl.traversals[1].target.label, "Source");
     }
 }

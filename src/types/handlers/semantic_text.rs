@@ -765,7 +765,12 @@ mod tests {
     }
 
     #[test]
-    fn emit_search_calls_search_reranked_and_orders_by_score() {
+    fn emit_search_calls_search_labeled_and_orders_by_score() {
+        // `TypedOp::Search` is the pure KNN path: it calls
+        // `libqlink.search_labeled` (no cross-encoder rerank) and
+        // exposes the surviving (id, score) pairs descending.
+        // `TypedOp::SearchReranked` is the variant that goes through
+        // `libqlink.search_reranked` — separately tested.
         let h = handler();
         let field = pref("c", "name");
         let value = serde_json::json!("apple");
@@ -783,15 +788,15 @@ mod tests {
 
         let pre = contrib.pre_match.join("\n");
         assert!(
-            pre.contains("CALL libqlink.search_reranked("),
-            "pre_match should call libqlink.search_reranked; got {pre}"
+            pre.contains("CALL libqlink.search_labeled("),
+            "pre_match should call libqlink.search_labeled; got {pre}"
         );
         assert!(pre.contains("YIELD id AS c__qid_0, score AS c__score_0"));
-        // Reranker handles the threshold itself, so we MUST NOT emit
-        // an extra `WHERE score >=` filter on top.
+        // No post-yield WHERE — we rely on Qdrant's similarity cutoff
+        // upstream, not a Cypher-side score filter.
         assert!(
             !pre.contains("WHERE c__score"),
-            "reranker already filters by threshold; we must not double-filter; got {pre}"
+            "must not emit a duplicate score-filter clause; got {pre}"
         );
         assert_eq!(contrib.where_inline.as_deref(), Some("id(c) = c__qid_0"));
         assert_eq!(contrib.order_by.len(), 1);
@@ -799,15 +804,16 @@ mod tests {
     }
 
     #[test]
-    fn emit_search_reranker_threshold_is_bound_as_parameter() {
+    fn emit_search_reranked_threshold_is_bound_as_parameter() {
         // The reranker threshold is bound as a Cypher parameter,
-        // never inlined into the call site. (`search_threshold` is
-        // not currently handed to qlink — see `emit` for the
-        // 6-arg call shape.)
+        // never inlined into the call site. Only the
+        // `SearchReranked` (and Eq/Neq/Contains) path uses
+        // `libqlink.search_reranked` — plain `Search` calls
+        // `search_labeled` which takes no reranker threshold.
         let h = handler_with_thresholds(0.42, 0.17);
         let field = pref("c", "name");
         let value = serde_json::json!("apple");
-        let mut lower = lc(&field, TypedOp::Search, &value, "Company");
+        let mut lower = lc(&field, TypedOp::SearchReranked, &value, "Company");
         let pred = h.lower(&mut lower).unwrap();
 
         let mut contrib = CypherContribution::default();

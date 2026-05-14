@@ -252,15 +252,16 @@ impl Pipeline {
 
         for dsl in traversal.entity_dsls() {
             let cypher = self.compile(dsl)?;
-            println!("{}", cypher.text);
+            tracing::debug!(target: "linguagraph::traversal", cypher = %cypher.text, "entity leg");
             let result = self.client.execute(&cypher).await?;
-            println!("{:?}", result);
+            tracing::trace!(target: "linguagraph::traversal", rows = result.rows.len(), "entity leg result");
             merged.extend(result);
         }
 
         let cypher = self.compile_traversal(traversal)?;
-        println!("{}", cypher.text);
+        tracing::debug!(target: "linguagraph::traversal", cypher = %cypher.text, "goal leg");
         let result = self.client.execute(&cypher).await?;
+        tracing::trace!(target: "linguagraph::traversal", rows = result.rows.len(), "goal leg result");
         merged.extend(result);
 
         Ok(merged.finish(limit))

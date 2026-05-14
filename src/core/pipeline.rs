@@ -176,8 +176,42 @@ impl Pipeline {
 
     /// Compile a DSL document all the way to a parameterized Cypher query.
     pub fn compile(&self, dsl: DslQuery) -> Result<CypherQuery> {
-        let ast = self.lower(dsl)?;
+        let mut ast = self.lower(dsl)?;
+        self.prepare(&mut ast)?;
         Ok(builder::build_read_with(&ast, &self.registry)?)
+    }
+
+    /// Run handler-level batched preparation over a lowered AST.
+    ///
+    /// Walks `ast` looking for typed predicates, groups them by
+    /// `type_id`, and gives each handler one batched opportunity to
+    /// rewrite its predicates' `params` (e.g. fold N independent
+    /// `embed(...)` calls into one `embed_batch(...)`).
+    ///
+    /// Handlers that don't override `prepare` get a no-op pass — the
+    /// only cost is the walk. Callers that want full control over
+    /// staging can skip `compile` and call `lower → prepare →
+    /// build_read_with` directly.
+    pub fn prepare(&self, ast: &mut ReadQuery) -> Result<()> {
+        use crate::types::PrepareCtx;
+
+        // Group typed predicates by their handler's type id.
+        let mut by_type: std::collections::HashMap<crate::types::TypeId, Vec<&mut crate::types::TypedPredicate>> =
+            std::collections::HashMap::new();
+        if let Some(expr) = ast.filter.as_mut() {
+            collect_typed_predicates_mut(expr, &mut by_type);
+        }
+
+        for (type_id, mut preds) in by_type {
+            let handler = self.registry.get(&type_id).map_err(|e| {
+                crate::error::Error::Ast(crate::ast::AstError::Type(e))
+            })?;
+            let mut ctx = PrepareCtx::new(&mut preds);
+            handler.prepare(&mut ctx).map_err(|e| {
+                crate::error::Error::Ast(crate::ast::AstError::Type(e))
+            })?;
+        }
+        Ok(())
     }
 
     /// Compile and execute against the configured graph client.
@@ -593,6 +627,28 @@ fn db_value_to_json(value: &DbValue) -> serde_json::Value {
     }
 }
 
+/// Walk a [`crate::ast::query::FilterExpression`] tree and collect mutable
+/// references to every `Typed` predicate, grouped by `type_id`.
+fn collect_typed_predicates_mut<'a>(
+    expr: &'a mut crate::ast::query::FilterExpression,
+    out: &mut std::collections::HashMap<crate::types::TypeId, Vec<&'a mut crate::types::TypedPredicate>>,
+) {
+    use crate::ast::query::FilterExpression;
+    match expr {
+        FilterExpression::Predicate(_) => {}
+        FilterExpression::Typed(t) => {
+            let key = t.type_id.clone();
+            out.entry(key).or_default().push(t);
+        }
+        FilterExpression::And(parts) | FilterExpression::Or(parts) => {
+            for p in parts.iter_mut() {
+                collect_typed_predicates_mut(p, out);
+            }
+        }
+        FilterExpression::Not(inner) => collect_typed_predicates_mut(inner, out),
+    }
+}
+
 /// Marker re-export so the embedder trait can be referenced via
 /// `pipeline::Embedder` in the README/tests without exposing the whole
 /// `embeddings` path.
@@ -623,6 +679,131 @@ mod tests {
             graph_specification: GraphSpecificationConfig::default(),
             types: Default::default(),
         }
+    }
+
+    #[test]
+    fn prepare_invokes_each_typed_handler_exactly_once_per_query() {
+        use crate::ast::query::{
+            Action, Alias, FilterExpression, Literal, Node, PropertyRef, ReadQuery, ReturnClause,
+        };
+        use crate::types::{
+            Capabilities, EmitCtx, IngestCtx, LowerCtx, PrepareCtx, PromptHint, RegistryBuilder,
+            TypeError, TypeHandler, TypeId, TypedOp, TypedPredicate,
+        };
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc as StdArc;
+
+        #[derive(Debug)]
+        struct CountingHandler {
+            id: &'static str,
+            prepared_size: StdArc<AtomicUsize>,
+            prepared_calls: StdArc<AtomicUsize>,
+        }
+
+        impl TypeHandler for CountingHandler {
+            fn type_id(&self) -> TypeId {
+                TypeId::new(self.id)
+            }
+            fn capabilities(&self) -> Capabilities {
+                Capabilities::EXACT_MATCH
+            }
+            fn supported_ops(&self) -> Vec<TypedOp> {
+                vec![TypedOp::Eq]
+            }
+            fn on_ingest(&self, _: &mut IngestCtx<'_>) -> std::result::Result<(), TypeError> {
+                Ok(())
+            }
+            fn lower(&self, _: &mut LowerCtx<'_>) -> std::result::Result<TypedPredicate, TypeError> {
+                unreachable!("test pre-builds the AST")
+            }
+            fn prepare(&self, ctx: &mut PrepareCtx<'_>) -> std::result::Result<(), TypeError> {
+                self.prepared_size.store(ctx.len(), Ordering::SeqCst);
+                self.prepared_calls.fetch_add(1, Ordering::SeqCst);
+                // Mark each predicate so we can verify the mutation
+                // crossed the lifetime boundary cleanly.
+                for p in ctx.predicates_mut() {
+                    p.params
+                        .insert("prepared".into(), Literal::Bool(true));
+                }
+                Ok(())
+            }
+            fn emit(&self, _: &mut EmitCtx<'_>, _: &TypedPredicate) -> std::result::Result<(), TypeError> {
+                unreachable!("prepare-only test")
+            }
+            fn prompt_hint(&self) -> PromptHint {
+                PromptHint::from_capabilities(self.type_id(), self.capabilities())
+            }
+        }
+
+        let prepared_size = StdArc::new(AtomicUsize::new(0));
+        let prepared_calls = StdArc::new(AtomicUsize::new(0));
+
+        let registry: SharedRegistry = StdArc::new(
+            RegistryBuilder::new()
+                .register(CountingHandler {
+                    id: "Counted",
+                    prepared_size: prepared_size.clone(),
+                    prepared_calls: prepared_calls.clone(),
+                })
+                .build(),
+        );
+        let pipeline =
+            Pipeline::new(Arc::new(MockClient::new()), &cfg()).with_registry(registry);
+
+        // Build an AST with two `Counted` predicates AND-ed together.
+        let mk_pred = |alias: &str| {
+            FilterExpression::Typed(TypedPredicate {
+                type_id: TypeId::new("Counted"),
+                field: PropertyRef {
+                    alias: Alias::new(alias),
+                    property: Some("x".into()),
+                },
+                op: TypedOp::Eq,
+                value: Literal::Int(1),
+                params: Default::default(),
+            })
+        };
+        let mut ast = ReadQuery {
+            action: Action::Find,
+            start: Node {
+                label: "T".into(),
+                alias: Alias::new("p"),
+            },
+            traversals: vec![],
+            filter: Some(FilterExpression::And(vec![mk_pred("p"), mk_pred("p")])),
+            returns: vec![ReturnClause::Field {
+                field: PropertyRef {
+                    alias: Alias::new("p"),
+                    property: Some("x".into()),
+                },
+                alias: None,
+            }],
+            group_by: vec![],
+            sort: vec![],
+            limit: None,
+        };
+
+        pipeline.prepare(&mut ast).unwrap();
+
+        assert_eq!(prepared_calls.load(Ordering::SeqCst), 1, "one batched call");
+        assert_eq!(prepared_size.load(Ordering::SeqCst), 2, "both predicates batched");
+
+        // Both predicates carry the mutation written through PrepareCtx.
+        fn assert_prepared(e: &FilterExpression) {
+            match e {
+                FilterExpression::Typed(t) => {
+                    assert_eq!(t.params.get("prepared"), Some(&Literal::Bool(true)));
+                }
+                FilterExpression::And(parts) | FilterExpression::Or(parts) => {
+                    for p in parts {
+                        assert_prepared(p);
+                    }
+                }
+                FilterExpression::Not(inner) => assert_prepared(inner),
+                FilterExpression::Predicate(_) => {}
+            }
+        }
+        assert_prepared(ast.filter.as_ref().unwrap());
     }
 
     #[tokio::test]

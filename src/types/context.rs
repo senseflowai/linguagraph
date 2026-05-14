@@ -130,6 +130,57 @@ pub struct LowerCtx<'a> {
     pub field_label: Option<&'a str>,
 }
 
+// ─── Stage 2.5: batched preparation ─────────────────────────────────
+
+/// Context for [`super::TypeHandler::prepare`].
+///
+/// Holds mutable references to every [`super::TypedPredicate`] in the
+/// query that's attributed to this handler's type. Handlers iterate
+/// `predicates_mut()` to batch I/O (one embedding call covering N
+/// search predicates, one geocoder call covering N proximity
+/// predicates, …) and write the results back into each predicate's
+/// `params` map.
+///
+/// Today's `SemanticTextHandler::lower` embeds inline; the migration
+/// path is:
+///
+/// 1. Move embedding from `lower` to `prepare` (one batched call per
+///    handler instance, not per predicate).
+/// 2. `lower` becomes pure (no I/O) — the AST is now genuinely
+///    snapshot-testable without a live embedder.
+///
+/// Until that migration lands, `prepare` is a no-op by default and
+/// the default `Pipeline::compile` doesn't call it.
+#[derive(Debug)]
+pub struct PrepareCtx<'a> {
+    preds: &'a mut Vec<&'a mut super::TypedPredicate>,
+}
+
+impl<'a> PrepareCtx<'a> {
+    pub fn new(preds: &'a mut Vec<&'a mut super::TypedPredicate>) -> Self {
+        Self { preds }
+    }
+
+    /// Borrowed view onto all predicates of this handler's type.
+    pub fn predicates(&self) -> &[&'a mut super::TypedPredicate] {
+        self.preds.as_slice()
+    }
+
+    /// Mutable view. Handlers iterate this and write batched results
+    /// into each predicate's `params` map.
+    pub fn predicates_mut(&mut self) -> &mut [&'a mut super::TypedPredicate] {
+        self.preds.as_mut_slice()
+    }
+
+    pub fn len(&self) -> usize {
+        self.preds.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.preds.is_empty()
+    }
+}
+
 // ─── Stage 3: AST → Cypher ──────────────────────────────────────────
 
 /// Cypher fragments a handler may contribute around the user's main

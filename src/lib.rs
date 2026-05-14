@@ -35,6 +35,7 @@ pub mod mapper;
 pub mod metadata;
 pub mod prompt;
 pub mod promptgen;
+pub mod resolve;
 pub mod types;
 
 pub use error::{Error, Result};

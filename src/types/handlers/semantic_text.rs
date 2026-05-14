@@ -485,6 +485,110 @@ fn collection_for(h: &SemanticTextHandler, field: &PropertyRef) -> String {
     format!("{}__{}", h.config.collection, prop)
 }
 
+/// Errors produced by [`build_embed_insert_batch`]. Kept separate from
+/// `TypeError` because the only failure modes are static-identifier
+/// validation on labels and key fields — i.e. malformed input from the
+/// side-effect queue, not handler logic.
+#[derive(Debug, thiserror::Error)]
+pub enum SideEffectEmitError {
+    #[error("invalid label '{0}' in side effect")]
+    InvalidLabel(String),
+
+    #[error("invalid key field '{0}' in side effect")]
+    InvalidKeyField(String),
+}
+
+/// Render an `UNWIND $rows AS row | MATCH ... CALL libqlink.insert_labeled
+/// ...` Cypher batch for one homogeneous group of [`SideEffect::EmbedAndStore`]
+/// side effects.
+///
+/// All effects in `group` must share the same Cypher `label`, the same
+/// `key_field`, the same `collection`, and the same `payload_label`
+/// (the caller groups by exactly these). The MATCH pattern is therefore
+/// consistent across rows; only `key`/`vec` varies per row.
+///
+/// When the bucket has a `payload_label`, we use
+/// `libqlink.insert_labeled` so each vector lands in Qdrant tagged
+/// with the originating Cypher node label — that's what
+/// `libqlink.search_reranked` filters by at query time. When the
+/// bucket has no label we fall back to plain `libqlink.insert`.
+///
+/// This Cypher renderer belongs to the SemanticText handler because
+/// only this handler knows what shape an embedding side effect takes;
+/// keeping it in `core::Pipeline` would couple the orchestration
+/// layer to qlink-specific procedures.
+pub fn build_embed_insert_batch(
+    group: &[(SideEffect, Vec<f32>)],
+) -> Result<crate::builder::CypherQuery, SideEffectEmitError> {
+    use std::collections::BTreeMap;
+    debug_assert!(!group.is_empty(), "callers must not pass an empty group");
+
+    // All rows in `group` share these — see `Pipeline::drain_side_effects`.
+    let (collection, payload_label, label, key_field) = match &group[0].0 {
+        SideEffect::EmbedAndStore {
+            collection,
+            label,
+            key_field,
+            payload_label,
+            ..
+        } => (
+            collection.clone(),
+            payload_label.clone(),
+            label.clone(),
+            key_field.clone(),
+        ),
+    };
+
+    if !is_valid_ident(&label) {
+        return Err(SideEffectEmitError::InvalidLabel(label));
+    }
+    if !is_valid_ident(&key_field) {
+        return Err(SideEffectEmitError::InvalidKeyField(key_field));
+    }
+
+    // Build the row payload. Each row is `{key: <pk>, vec: <embedding>}`.
+    let mut rows: Vec<Literal> = Vec::with_capacity(group.len());
+    for (eff, vec) in group {
+        let SideEffect::EmbedAndStore { key_value, .. } = eff;
+        let mut row: BTreeMap<String, Literal> = BTreeMap::new();
+        row.insert("key".to_string(), key_value.clone());
+        row.insert(
+            "vec".to_string(),
+            Literal::List(vec.iter().map(|f| Literal::Float(*f as f64)).collect()),
+        );
+        rows.push(Literal::Object(row));
+    }
+
+    let mut params: BTreeMap<String, Literal> = BTreeMap::new();
+    params.insert("coll".to_string(), Literal::String(collection));
+    params.insert("rows".to_string(), Literal::List(rows));
+
+    let text = if let Some(plabel) = payload_label {
+        params.insert("label".to_string(), Literal::String(plabel));
+        format!(
+            "UNWIND $rows AS row\n\
+             MATCH (n:{label} {{{key_field}: row.key}})\n\
+             CALL libqlink.insert_labeled($coll, id(n), row.vec, $label) YIELD success\n\
+             RETURN count(success) AS inserted",
+        )
+    } else {
+        format!(
+            "UNWIND $rows AS row\n\
+             MATCH (n:{label} {{{key_field}: row.key}})\n\
+             CALL libqlink.insert($coll, id(n), row.vec) YIELD success\n\
+             RETURN count(success) AS inserted",
+        )
+    };
+    Ok(crate::builder::CypherQuery::new(text, params))
+}
+
+fn is_valid_ident(s: &str) -> bool {
+    let mut chars = s.chars();
+    let first = chars.next();
+    matches!(first, Some(c) if c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

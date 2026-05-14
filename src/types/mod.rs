@@ -70,7 +70,7 @@ use std::sync::Arc;
 use thiserror::Error;
 
 pub use capability::Capabilities;
-pub use context::{EmitCtx, IngestCtx, LowerCtx, PromptHint};
+pub use context::{EmitCtx, IngestCtx, LowerCtx, PrepareCtx, PromptHint};
 pub use op::TypedOp;
 pub use registry::{RegistryBuilder, TypeRegistry};
 pub use side_effect::{SideEffect, SideEffectQueue};
@@ -186,7 +186,34 @@ pub trait TypeHandler: Send + Sync + Debug {
     /// is registered and the op is in [`Self::supported_ops`]; the
     /// handler only has to check value shape and stash anything it
     /// needs in `params`.
+    ///
+    /// `lower` is documented as pure in [`crate::ast`] / [`crate::resolve`].
+    /// Handlers that need I/O (e.g. computing embeddings) should
+    /// stash a *symbolic* request in `params` here and do the actual
+    /// batched I/O in [`Self::prepare`], keeping this method
+    /// synchronous and testable.
     fn lower(&self, ctx: &mut LowerCtx<'_>) -> Result<TypedPredicate, TypeError>;
+
+    /// Stage 2.5: batched preparation, run between lowering and emit.
+    ///
+    /// The pipeline collects all `TypedPredicate`s belonging to this
+    /// handler in a single query (or across a batch of queries) and
+    /// hands them here through `ctx.predicates_mut()`. Handlers can
+    /// then do one batched I/O call (embedder, geocoder, …) and
+    /// mutate the predicates' `params` in place.
+    ///
+    /// Default impl is a no-op. Handlers whose `lower` is already
+    /// pure don't need to override.
+    ///
+    /// Kept synchronous so handlers that don't need async work don't
+    /// pay the `async_trait` allocation cost. Pipelines that need
+    /// async batching can use [`crate::types::PrepareCtx::take_pending`]
+    /// + a custom driver — added as a follow-up when a handler
+    /// actually needs it.
+    fn prepare(&self, ctx: &mut PrepareCtx<'_>) -> Result<(), TypeError> {
+        let _ = ctx;
+        Ok(())
+    }
 
     /// Stage 3: AST → Cypher.
     ///

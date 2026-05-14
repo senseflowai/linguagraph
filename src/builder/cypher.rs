@@ -4,11 +4,10 @@ use thiserror::Error;
 
 use crate::ast::query::*;
 use crate::graph::{MENTION_REL, PART_OF_REL, SOURCE_LABEL};
-use crate::types::TypeRegistry;
+use crate::types::{TypeError, TypeRegistry};
 
 use super::cursor::{Cursor, CypherQuery};
 use super::insert::{build_insert, InsertError};
-use super::where_part::WhereError;
 use super::{match_part, return_part, where_part};
 
 /// Column name used for the always-on Sources projection added by
@@ -25,8 +24,8 @@ pub enum BuilderError {
     #[error("insert builder error: {0}")]
     Insert(#[from] InsertError),
 
-    #[error("where clause error: {0}")]
-    Where(#[from] WhereError),
+    #[error("type system error: {0}")]
+    Type(#[from] TypeError),
 }
 
 /// Compile a [`ReadQuery`] into a single parameterized [`CypherQuery`]

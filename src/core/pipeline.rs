@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use crate::ast::{from_dsl, query::InsertQuery, query::Literal, query::ReadQuery};
+use crate::ast::{from_dsl, query::InsertQuery, query::ReadQuery};
 use crate::builder::{self, CypherQuery};
 use crate::config::Config;
 use crate::db::{GraphClient, QueryResult, Row, Value as DbValue};
@@ -176,8 +176,42 @@ impl Pipeline {
 
     /// Compile a DSL document all the way to a parameterized Cypher query.
     pub fn compile(&self, dsl: DslQuery) -> Result<CypherQuery> {
-        let ast = self.lower(dsl)?;
+        let mut ast = self.lower(dsl)?;
+        self.prepare(&mut ast)?;
         Ok(builder::build_read_with(&ast, &self.registry)?)
+    }
+
+    /// Run handler-level batched preparation over a lowered AST.
+    ///
+    /// Walks `ast` looking for typed predicates, groups them by
+    /// `type_id`, and gives each handler one batched opportunity to
+    /// rewrite its predicates' `params` (e.g. fold N independent
+    /// `embed(...)` calls into one `embed_batch(...)`).
+    ///
+    /// Handlers that don't override `prepare` get a no-op pass — the
+    /// only cost is the walk. Callers that want full control over
+    /// staging can skip `compile` and call `lower → prepare →
+    /// build_read_with` directly.
+    pub fn prepare(&self, ast: &mut ReadQuery) -> Result<()> {
+        use crate::types::PrepareCtx;
+
+        // Group typed predicates by their handler's type id.
+        let mut by_type: std::collections::HashMap<crate::types::TypeId, Vec<&mut crate::types::TypedPredicate>> =
+            std::collections::HashMap::new();
+        if let Some(expr) = ast.filter.as_mut() {
+            collect_typed_predicates_mut(expr, &mut by_type);
+        }
+
+        for (type_id, mut preds) in by_type {
+            let handler = self.registry.get(&type_id).map_err(|e| {
+                crate::error::Error::Ast(crate::ast::AstError::Type(e))
+            })?;
+            let mut ctx = PrepareCtx::new(&mut preds);
+            handler.prepare(&mut ctx).map_err(|e| {
+                crate::error::Error::Ast(crate::ast::AstError::Type(e))
+            })?;
+        }
+        Ok(())
     }
 
     /// Compile and execute against the configured graph client.
@@ -218,15 +252,16 @@ impl Pipeline {
 
         for dsl in traversal.entity_dsls() {
             let cypher = self.compile(dsl)?;
-            println!("{}", cypher.text);
+            tracing::debug!(target: "linguagraph::traversal", cypher = %cypher.text, "entity leg");
             let result = self.client.execute(&cypher).await?;
-            println!("{:?}", result);
+            tracing::trace!(target: "linguagraph::traversal", rows = result.rows.len(), "entity leg result");
             merged.extend(result);
         }
 
         let cypher = self.compile_traversal(traversal)?;
-        println!("{}", cypher.text);
+        tracing::debug!(target: "linguagraph::traversal", cypher = %cypher.text, "goal leg");
         let result = self.client.execute(&cypher).await?;
+        tracing::trace!(target: "linguagraph::traversal", rows = result.rows.len(), "goal leg result");
         merged.extend(result);
 
         Ok(merged.finish(limit))
@@ -381,7 +416,8 @@ impl Pipeline {
         let mut batches_run = 0usize;
         let mut rows_inserted = 0usize;
         for ((_coll, _plabel, _nlabel, _kfield), group) in groups {
-            let cypher = build_qlink_insert_batch(&group)?;
+            let cypher = handlers::build_embed_insert_batch(&group)
+                .map_err(|e| crate::error::Error::Ingest(IngestError::Type(e.to_string())))?;
             let _ = self.client.execute(&cypher).await?;
             batches_run += 1;
             rows_inserted += group.len();
@@ -389,96 +425,6 @@ impl Pipeline {
         let _ = embedder.dim(); // assert the embedder was usable
         Ok((batches_run, rows_inserted))
     }
-}
-
-/// Render an `UNWIND $rows AS row | MATCH ... CALL libqlink.insert_labeled
-/// ...` Cypher batch for one homogeneous group of side effects.
-///
-/// All effects in `group` must share the same Cypher `label`, the same
-/// `key_field`, the same `collection`, and the same `payload_label`
-/// (the caller — `drain_side_effects` — keys the bucket by exactly
-/// these). The MATCH pattern is therefore consistent across rows; the
-/// only thing that varies per row is `key`/`vec` inside the row
-/// payload.
-///
-/// When the bucket has a `payload_label`, we use
-/// `libqlink.insert_labeled` so each vector lands in Qdrant tagged
-/// with the originating Cypher node label — that's what
-/// `libqlink.search_reranked` filters by at query time. When the
-/// bucket has no label we fall back to plain `libqlink.insert` so
-/// future handlers that don't care about labels still work.
-fn build_qlink_insert_batch(group: &[(SideEffect, Vec<f32>)]) -> Result<CypherQuery> {
-    use std::collections::BTreeMap;
-    debug_assert!(!group.is_empty(), "callers must not pass an empty group");
-
-    // All rows in `group` share these — see `drain_side_effects`.
-    let (collection, payload_label, label, key_field) = match &group[0].0 {
-        SideEffect::EmbedAndStore {
-            collection,
-            label,
-            key_field,
-            payload_label,
-            ..
-        } => (
-            collection.clone(),
-            payload_label.clone(),
-            label.clone(),
-            key_field.clone(),
-        ),
-    };
-
-    if !is_valid_ident(&label) {
-        return Err(crate::error::Error::Ingest(IngestError::Type(format!(
-            "invalid label '{label}' in side effect"
-        ))));
-    }
-    if !is_valid_ident(&key_field) {
-        return Err(crate::error::Error::Ingest(IngestError::Type(format!(
-            "invalid key field '{key_field}' in side effect"
-        ))));
-    }
-
-    // Build the row payload. Each row is `{key: <pk>, vec: <embedding>}`.
-    let mut rows: Vec<Literal> = Vec::with_capacity(group.len());
-    for (eff, vec) in group {
-        let SideEffect::EmbedAndStore { key_value, .. } = eff;
-        let mut row: BTreeMap<String, Literal> = BTreeMap::new();
-        row.insert("key".to_string(), key_value.clone());
-        row.insert(
-            "vec".to_string(),
-            Literal::List(vec.iter().map(|f| Literal::Float(*f as f64)).collect()),
-        );
-        rows.push(Literal::Object(row));
-    }
-
-    let mut params: BTreeMap<String, Literal> = BTreeMap::new();
-    params.insert("coll".to_string(), Literal::String(collection));
-    params.insert("rows".to_string(), Literal::List(rows));
-
-    let text = if let Some(plabel) = payload_label {
-        params.insert("label".to_string(), Literal::String(plabel));
-        format!(
-            "UNWIND $rows AS row\n\
-             MATCH (n:{label} {{{key_field}: row.key}})\n\
-             CALL libqlink.insert_labeled($coll, id(n), row.vec, $label) YIELD success\n\
-             RETURN count(success) AS inserted",
-        )
-    } else {
-        format!(
-            "UNWIND $rows AS row\n\
-             MATCH (n:{label} {{{key_field}: row.key}})\n\
-             CALL libqlink.insert($coll, id(n), row.vec) YIELD success\n\
-             RETURN count(success) AS inserted",
-        )
-    };
-    Ok(CypherQuery::new(text, params))
-}
-
-fn is_valid_ident(s: &str) -> bool {
-    let mut chars = s.chars();
-    let first = chars.next();
-    matches!(first, Some(c) if c.is_ascii_alphabetic() || c == '_')
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 #[derive(Default)]
@@ -682,6 +628,28 @@ fn db_value_to_json(value: &DbValue) -> serde_json::Value {
     }
 }
 
+/// Walk a [`crate::ast::query::FilterExpression`] tree and collect mutable
+/// references to every `Typed` predicate, grouped by `type_id`.
+fn collect_typed_predicates_mut<'a>(
+    expr: &'a mut crate::ast::query::FilterExpression,
+    out: &mut std::collections::HashMap<crate::types::TypeId, Vec<&'a mut crate::types::TypedPredicate>>,
+) {
+    use crate::ast::query::FilterExpression;
+    match expr {
+        FilterExpression::Predicate(_) => {}
+        FilterExpression::Typed(t) => {
+            let key = t.type_id.clone();
+            out.entry(key).or_default().push(t);
+        }
+        FilterExpression::And(parts) | FilterExpression::Or(parts) => {
+            for p in parts.iter_mut() {
+                collect_typed_predicates_mut(p, out);
+            }
+        }
+        FilterExpression::Not(inner) => collect_typed_predicates_mut(inner, out),
+    }
+}
+
 /// Marker re-export so the embedder trait can be referenced via
 /// `pipeline::Embedder` in the README/tests without exposing the whole
 /// `embeddings` path.
@@ -712,6 +680,131 @@ mod tests {
             graph_specification: GraphSpecificationConfig::default(),
             types: Default::default(),
         }
+    }
+
+    #[test]
+    fn prepare_invokes_each_typed_handler_exactly_once_per_query() {
+        use crate::ast::query::{
+            Action, Alias, FilterExpression, Literal, Node, PropertyRef, ReadQuery, ReturnClause,
+        };
+        use crate::types::{
+            Capabilities, EmitCtx, IngestCtx, LowerCtx, PrepareCtx, PromptHint, RegistryBuilder,
+            TypeError, TypeHandler, TypeId, TypedOp, TypedPredicate,
+        };
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc as StdArc;
+
+        #[derive(Debug)]
+        struct CountingHandler {
+            id: &'static str,
+            prepared_size: StdArc<AtomicUsize>,
+            prepared_calls: StdArc<AtomicUsize>,
+        }
+
+        impl TypeHandler for CountingHandler {
+            fn type_id(&self) -> TypeId {
+                TypeId::new(self.id)
+            }
+            fn capabilities(&self) -> Capabilities {
+                Capabilities::EXACT_MATCH
+            }
+            fn supported_ops(&self) -> Vec<TypedOp> {
+                vec![TypedOp::Eq]
+            }
+            fn on_ingest(&self, _: &mut IngestCtx<'_>) -> std::result::Result<(), TypeError> {
+                Ok(())
+            }
+            fn lower(&self, _: &mut LowerCtx<'_>) -> std::result::Result<TypedPredicate, TypeError> {
+                unreachable!("test pre-builds the AST")
+            }
+            fn prepare(&self, ctx: &mut PrepareCtx<'_>) -> std::result::Result<(), TypeError> {
+                self.prepared_size.store(ctx.len(), Ordering::SeqCst);
+                self.prepared_calls.fetch_add(1, Ordering::SeqCst);
+                // Mark each predicate so we can verify the mutation
+                // crossed the lifetime boundary cleanly.
+                for p in ctx.predicates_mut() {
+                    p.params
+                        .insert("prepared".into(), Literal::Bool(true));
+                }
+                Ok(())
+            }
+            fn emit(&self, _: &mut EmitCtx<'_>, _: &TypedPredicate) -> std::result::Result<(), TypeError> {
+                unreachable!("prepare-only test")
+            }
+            fn prompt_hint(&self) -> PromptHint {
+                PromptHint::from_capabilities(self.type_id(), self.capabilities())
+            }
+        }
+
+        let prepared_size = StdArc::new(AtomicUsize::new(0));
+        let prepared_calls = StdArc::new(AtomicUsize::new(0));
+
+        let registry: SharedRegistry = StdArc::new(
+            RegistryBuilder::new()
+                .register(CountingHandler {
+                    id: "Counted",
+                    prepared_size: prepared_size.clone(),
+                    prepared_calls: prepared_calls.clone(),
+                })
+                .build(),
+        );
+        let pipeline =
+            Pipeline::new(Arc::new(MockClient::new()), &cfg()).with_registry(registry);
+
+        // Build an AST with two `Counted` predicates AND-ed together.
+        let mk_pred = |alias: &str| {
+            FilterExpression::Typed(TypedPredicate {
+                type_id: TypeId::new("Counted"),
+                field: PropertyRef {
+                    alias: Alias::new(alias),
+                    property: Some("x".into()),
+                },
+                op: TypedOp::Eq,
+                value: Literal::Int(1),
+                params: Default::default(),
+            })
+        };
+        let mut ast = ReadQuery {
+            action: Action::Find,
+            start: Node {
+                label: "T".into(),
+                alias: Alias::new("p"),
+            },
+            traversals: vec![],
+            filter: Some(FilterExpression::And(vec![mk_pred("p"), mk_pred("p")])),
+            returns: vec![ReturnClause::Field {
+                field: PropertyRef {
+                    alias: Alias::new("p"),
+                    property: Some("x".into()),
+                },
+                alias: None,
+            }],
+            group_by: vec![],
+            sort: vec![],
+            limit: None,
+        };
+
+        pipeline.prepare(&mut ast).unwrap();
+
+        assert_eq!(prepared_calls.load(Ordering::SeqCst), 1, "one batched call");
+        assert_eq!(prepared_size.load(Ordering::SeqCst), 2, "both predicates batched");
+
+        // Both predicates carry the mutation written through PrepareCtx.
+        fn assert_prepared(e: &FilterExpression) {
+            match e {
+                FilterExpression::Typed(t) => {
+                    assert_eq!(t.params.get("prepared"), Some(&Literal::Bool(true)));
+                }
+                FilterExpression::And(parts) | FilterExpression::Or(parts) => {
+                    for p in parts {
+                        assert_prepared(p);
+                    }
+                }
+                FilterExpression::Not(inner) => assert_prepared(inner),
+                FilterExpression::Predicate(_) => {}
+            }
+        }
+        assert_prepared(ast.filter.as_ref().unwrap());
     }
 
     #[tokio::test]

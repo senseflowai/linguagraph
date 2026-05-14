@@ -6,21 +6,16 @@
 //! to splice here. The builder itself never inspects the type id.
 
 use crate::ast::query::*;
-use crate::types::{TypeError, TypeRegistry};
+use crate::types::TypeRegistry;
 
 use super::cursor::Cursor;
-
-#[derive(Debug, thiserror::Error)]
-pub enum WhereError {
-    #[error("type system error: {0}")]
-    Type(#[from] TypeError),
-}
+use super::cypher::BuilderError;
 
 pub(super) fn write_where(
     cur: &mut Cursor,
     expr: &FilterExpression,
     registry: &TypeRegistry,
-) -> Result<(), WhereError> {
+) -> Result<(), BuilderError> {
     // Lower the expression into a string buffer first so typed
     // predicates can contribute prelude/with/order_by *before* we lay
     // down the WHERE keyword. Without this two-pass approach, a
@@ -39,7 +34,7 @@ fn write_expr(
     expr: &FilterExpression,
     registry: &TypeRegistry,
     out: &mut String,
-) -> Result<(), WhereError> {
+) -> Result<(), BuilderError> {
     match expr {
         FilterExpression::Predicate(p) => {
             write_predicate(cur, p, out);
@@ -75,7 +70,7 @@ fn write_joined(
     sep: &str,
     registry: &TypeRegistry,
     out: &mut String,
-) -> Result<(), WhereError> {
+) -> Result<(), BuilderError> {
     if parts.is_empty() {
         return Ok(());
     }

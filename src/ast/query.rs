@@ -98,6 +98,7 @@ pub struct EdgeTraversal {
     pub direction: Direction,
     pub target: Node,
     pub depth: Option<Depth>,
+    pub optional: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

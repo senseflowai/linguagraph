@@ -138,6 +138,7 @@ pub fn lower_full(
                 min: r.min,
                 max: r.max,
             }),
+            optional: t.optional,
         });
     }
 
@@ -313,6 +314,7 @@ fn parse_typed_op(s: &str) -> Option<TypedOp> {
         "starts_with" => TypedOp::StartsWith,
         "ends_with" => TypedOp::EndsWith,
         "search" => TypedOp::Search,
+        "search_reranked" => TypedOp::SearchReranked,
         "hybrid_search" | "hybrid" => TypedOp::HybridSearch,
         "near" => TypedOp::Near,
         _ => return None,

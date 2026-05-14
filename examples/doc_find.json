@@ -1,0 +1,9 @@
+{
+  "entities": ["статья",  "пенсия"],
+  "goal": "Найти статью в которой написано про пенсию",
+  "query": "Статья 94",
+  "mentions_rel": "mention",
+  "entity_label": "heading",
+  "entity_field": "name",
+  "limit": 30
+}

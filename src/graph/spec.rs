@@ -184,7 +184,10 @@ impl GraphSpecification {
         reranker: Option<&dyn Reranker>,
         reranking_threshold: f64,
     ) -> Result<Vec<EntitySpecMatch<'_>>, EmbedError> {
-        let text = format!("User query:{}\nTask: Identify database schema elements need for answering this query", text.as_ref());
+        let text = format!(
+            "User query:{}\nTask: Identify database schema elements need for answering this query",
+            text.as_ref()
+        );
         let query = embedder.embed(text.as_str())?;
         let mut matches = Vec::new();
 

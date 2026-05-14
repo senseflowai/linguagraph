@@ -22,6 +22,9 @@ pub(super) fn write_match(cur: &mut Cursor, q: &ReadQuery) {
     let mut current_endpoint = q.start.alias.clone();
 
     for t in &q.traversals {
+        if t.optional {
+            continue;
+        }
         if t.from_alias != current_endpoint {
             cur.buf.push_str("\nMATCH ");
             // Reference the already-bound alias without repeating its
@@ -30,6 +33,14 @@ pub(super) fn write_match(cur: &mut Cursor, q: &ReadQuery) {
         }
         write_traversal_tail(cur, t);
         current_endpoint = t.target.alias.clone();
+    }
+}
+
+pub(super) fn write_optional_matches(cur: &mut Cursor, q: &ReadQuery) {
+    for t in q.traversals.iter().filter(|t| t.optional) {
+        cur.buf.push_str("\nOPTIONAL MATCH ");
+        let _ = write!(cur.buf, "({})", t.from_alias);
+        write_traversal_tail(cur, t);
     }
 }
 

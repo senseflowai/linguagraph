@@ -26,6 +26,9 @@ pub enum Error {
     #[error("Mapper error: {0}")]
     Mapper(#[from] crate::mapper::MapperError),
 
+    #[error("Graph build error: {0}")]
+    GraphBuild(#[from] crate::graph::GraphBuildError),
+
     #[error("Ingest error: {0}")]
     Ingest(#[from] crate::ingest::IngestError),
 

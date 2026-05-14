@@ -52,6 +52,8 @@ pub struct Traversal {
     pub target: NodePattern,
     #[serde(default)]
     pub depth: Option<DepthRange>,
+    #[serde(default)]
+    pub optional: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -187,20 +189,13 @@ pub enum SortOrder {
 /// hand-built MATCH pattern: instead of describing the Cypher
 /// shape, the client lists the entities it cares about, the
 /// search goal, and the verbatim user query. The pipeline turns
-/// that into a [`DslQuery`] that:
+/// that into a small retrieval pipeline:
 ///
-/// 1. **Semantically searches** chunk text using
-///    [`crate::types::handlers::SemanticTextHandler`] — combining
-///    the goal, query, and entity names into the search string so
-///    `libqlink.search_reranked` can rank against a label-filtered
-///    embedding index (one of the "labeled" qlink indexes).
-/// 2. **Traverses outward** at most two hops from each matched
-///    chunk: one hop along [`Self::mentions_rel`] to entities the
-///    chunk mentions, one hop along [`Self::part_of_rel`] to the
-///    chunk's source document.
-/// 3. **Returns** the chunk text, the source it came from, and the
-///    names of entities mentioned — the minimum the caller needs
-///    to ground the LLM's answer.
+/// 1. Search entities by each supplied name and traverse back to
+///    the chunks that mention them.
+/// 2. Search chunks by the goal text.
+/// 3. Merge both result streams into unique chunks with their
+///    associated entities.
 ///
 /// Defaults match the built-ins used by document ingestion:
 /// `Chunk`/`text` for the chunk node, `MENTIONS` for chunk→entity,
@@ -208,16 +203,21 @@ pub enum SortOrder {
 /// Override any of them for graphs that use different labels.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TraversalQuery {
-    /// Entity names (or labels) the caller is searching for, e.g.
-    /// `["Elon Musk", "Company"]`. Folded into the semantic search
-    /// query so chunks that mention these entities rank higher.
+    /// Entity names the caller is searching for, e.g.
+    /// `["Elon Musk", "SpaceX"]`. Each non-empty name becomes one
+    /// entity lookup query in the traversal pipeline.
     #[serde(default)]
     pub entities: Vec<String>,
+
+    #[serde(default = "default_entity_field")]
+    pub entity_field: String,
     /// High-level search goal, e.g. "Find companies founded by Elon
     /// Musk". Used as part of the semantic search query.
     pub goal: String,
     /// Raw verbatim client query, e.g. "What companies did Elon
-    /// Musk found?". Used as part of the semantic search query.
+    /// Musk found?". Kept for callers that want the original user
+    /// text alongside the more structured goal. The traversal
+    /// pipeline uses it as a fallback when `goal` is empty.
     pub query: String,
     /// Cypher label of the searchable chunk node. Defaults to
     /// `"Chunk"`.
@@ -239,11 +239,8 @@ pub struct TraversalQuery {
     #[serde(default = "default_source_label")]
     pub source_label: String,
     /// Optional label restriction for the entity target of the
-    /// `MENTIONS` traversal. When `None`, the traversal target is
-    /// label-less — matching entities of any type — so a single
-    /// query can fan across all the indexes mentioned by the
-    /// chunks. Set this when you know the caller cares about one
-    /// specific entity label.
+    /// `MENTIONS` traversal. When `None`, the target is label-less
+    /// and matches entities of any type.
     #[serde(default)]
     pub entity_label: Option<String>,
     /// Optional max number of result rows.
@@ -256,6 +253,10 @@ fn default_chunk_label() -> String {
 }
 fn default_chunk_text_field() -> String {
     "text".into()
+}
+
+fn default_entity_field() -> String {
+    "name".into()
 }
 fn default_mentions_rel() -> String {
     "MENTIONS".into()
@@ -285,15 +286,16 @@ impl TraversalQuery {
             mentions_rel: default_mentions_rel(),
             part_of_rel: default_part_of_rel(),
             source_label: default_source_label(),
+            entity_field: default_entity_field(),
             entity_label: None,
             limit: None,
         }
     }
 
     /// Concatenate `query`, `goal`, and entity names into a single
-    /// string handed to the embedder. The verbatim user query goes
-    /// first so it dominates the embedding; the goal and entity
-    /// names follow as light reinforcement.
+    /// string. Kept for backwards compatibility with callers/tests
+    /// that inspect the old combined search text; traversal execution
+    /// now uses [`Self::goal_search_text`] instead.
     pub fn search_text(&self) -> String {
         let mut s = self.query.trim().to_string();
         if !self.goal.trim().is_empty() {
@@ -318,9 +320,36 @@ impl TraversalQuery {
         s
     }
 
+    /// Text used for the chunk-search leg of traversal retrieval.
+    /// The explicit goal is preferred; the raw query is a fallback for
+    /// older callers that only populated `query`.
+    pub fn goal_search_text(&self) -> String {
+        let goal = self.goal.trim();
+        if goal.is_empty() {
+            self.query.trim().to_string()
+        } else {
+            goal.to_string()
+        }
+    }
+
+    /// Build one DSL query per supplied entity name. Each query starts
+    /// from a seed entity, filters by `name`, walks incoming
+    /// `MENTIONS` edges to chunks, then fans back out from each chunk
+    /// to all mentioned entities and its source.
+    pub fn entity_dsls(&self) -> Vec<DslQuery> {
+        self.entities
+            .iter()
+            .map(|name| name.trim())
+            .filter(|name| !name.is_empty())
+            .map(|name| self.entity_dsl(&self.entity_field, name))
+            .collect()
+    }
+
     /// Lower the traversal query into the equivalent [`DslQuery`].
     ///
     /// The resulting DSL has:
+    ///
+    /// This is the goal-search leg of the full traversal pipeline:
     ///
     /// * `start = (c:<chunk_label>)`
     /// * traversal 1: `c -[m:<mentions_rel>]-> (e[:<entity_label>])`
@@ -328,31 +357,18 @@ impl TraversalQuery {
     /// * traversal 2: `c -[po:<part_of_rel>]-> (s:<source_label>)`
     ///   — at most one hop.
     /// * one typed `SemanticText` filter on `c.<chunk_text_field>`
-    ///   carrying the combined search string.
+    ///   carrying the goal text.
     /// * returns: chunk text + id, source name + id, entity name.
     ///
     /// The total hop count is bounded at two by construction —
     /// both traversals start from the same chunk, so no path is
     /// ever longer than one edge from `c`.
     pub fn into_dsl(self) -> DslQuery {
-        let search_text = self.search_text();
+        let search_text = self.goal_search_text();
         let text_field = format!("c.{}", self.chunk_text_field);
 
         let mut traversals = Vec::with_capacity(2);
-        // Hop 1: chunk → entity (label-optional via empty target label).
-        traversals.push(Traversal {
-            from: Some("c".into()),
-            edge: EdgePattern {
-                label: self.mentions_rel,
-                alias: "m".into(),
-                direction: Direction::Out,
-            },
-            target: NodePattern {
-                label: self.entity_label.unwrap_or_default(),
-                alias: "e".into(),
-            },
-            depth: None,
-        });
+
         // Hop 2: chunk → source.
         traversals.push(Traversal {
             from: Some("c".into()),
@@ -366,6 +382,23 @@ impl TraversalQuery {
                 alias: "s".into(),
             },
             depth: None,
+            optional: false,
+        });
+
+        // Hop 1: chunk → mentioned entity.
+        traversals.push(Traversal {
+            from: Some("c".into()),
+            edge: EdgePattern {
+                label: self.mentions_rel.clone(),
+                alias: "m".into(),
+                direction: Direction::In,
+            },
+            target: NodePattern {
+                label: self.entity_label.clone().unwrap_or_default(),
+                alias: "e".into(),
+            },
+            depth: None,
+            optional: true,
         });
 
         let filters = vec![Filter {
@@ -375,28 +408,7 @@ impl TraversalQuery {
             field_type: Some("SemanticText".into()),
         }];
 
-        let return_ = vec![
-            ReturnItem::Field {
-                field: "c.text".into(),
-                alias: Some("chunk_text".into()),
-            },
-            ReturnItem::Field {
-                field: "c.id".into(),
-                alias: Some("chunk_id".into()),
-            },
-            ReturnItem::Field {
-                field: "s.name".into(),
-                alias: Some("source_name".into()),
-            },
-            ReturnItem::Field {
-                field: "s.id".into(),
-                alias: Some("source_id".into()),
-            },
-            ReturnItem::Field {
-                field: "e.name".into(),
-                alias: Some("entity_name".into()),
-            },
-        ];
+        let return_ = traversal_return_items(&self.chunk_text_field);
 
         DslQuery {
             action: Action::Find,
@@ -412,6 +424,82 @@ impl TraversalQuery {
             limit: self.limit,
         }
     }
+
+    fn entity_dsl(&self, field: &str, value: &str) -> DslQuery {
+        let entity_label = self.entity_label.clone().unwrap_or_default();
+        DslQuery {
+            action: Action::Find,
+            start: NodePattern {
+                label: entity_label,
+                alias: "e".into(),
+            },
+            traversals: vec![
+                Traversal {
+                    from: Some("e".into()),
+                    edge: EdgePattern {
+                        label: self.mentions_rel.clone(),
+                        alias: "seed_m".into(),
+                        direction: Direction::Out,
+                    },
+                    target: NodePattern {
+                        label: self.chunk_label.clone(),
+                        alias: "c".into(),
+                    },
+                    depth: None,
+                    optional: false,
+                },
+                Traversal {
+                    from: Some("c".into()),
+                    edge: EdgePattern {
+                        label: self.part_of_rel.clone(),
+                        alias: "po".into(),
+                        direction: Direction::Out,
+                    },
+                    target: NodePattern {
+                        label: self.source_label.clone(),
+                        alias: "s".into(),
+                    },
+                    depth: None,
+                    optional: false,
+                },
+            ],
+            filters: vec![Filter {
+                field: format!("e.{}", field).into(),
+                op: "search_reranked".into(),
+                value: serde_json::Value::String(value.to_string()),
+                field_type: Some("SemanticText".into()),
+            }],
+            return_: traversal_return_items(&self.chunk_text_field),
+            group_by: Vec::new(),
+            sort: Vec::new(),
+            limit: self.limit,
+        }
+    }
+}
+
+fn traversal_return_items(chunk_text_field: &str) -> Vec<ReturnItem> {
+    vec![
+        ReturnItem::Field {
+            field: format!("c.{chunk_text_field}"),
+            alias: Some("chunk_text".into()),
+        },
+        ReturnItem::Field {
+            field: "c.id".into(),
+            alias: Some("chunk_id".into()),
+        },
+        ReturnItem::Field {
+            field: "s.name".into(),
+            alias: Some("source_name".into()),
+        },
+        ReturnItem::Field {
+            field: "s.id".into(),
+            alias: Some("source_id".into()),
+        },
+        ReturnItem::Field {
+            field: "e".into(),
+            alias: Some("entity".into()),
+        },
+    ]
 }
 
 #[cfg(test)]
@@ -465,6 +553,30 @@ mod traversal_tests {
     }
 
     #[test]
+    fn traversal_optional_defaults_false_and_deserializes() {
+        let raw = r#"
+        {
+          "from": "p",
+          "edge": {"label": "WORKS_AT", "alias": "w", "direction": "out"},
+          "target": {"label": "Company", "alias": "c"}
+        }
+        "#;
+        let traversal: Traversal = serde_json::from_str(raw).unwrap();
+        assert!(!traversal.optional);
+
+        let raw = r#"
+        {
+          "from": "p",
+          "edge": {"label": "WORKS_AT", "alias": "w", "direction": "out"},
+          "target": {"label": "Company", "alias": "c"},
+          "optional": true
+        }
+        "#;
+        let traversal: Traversal = serde_json::from_str(raw).unwrap();
+        assert!(traversal.optional);
+    }
+
+    #[test]
     fn into_dsl_emits_semantic_text_filter_with_combined_query() {
         let t = TraversalQuery::new(
             ["Elon Musk"],
@@ -479,8 +591,8 @@ mod traversal_tests {
         assert_eq!(f.op, "search");
         assert_eq!(f.field_type.as_deref(), Some("SemanticText"));
         let v = f.value.as_str().expect("filter value is a string");
-        assert!(v.contains("Elon Musk"));
         assert!(v.contains("Find companies founded by Elon Musk"));
+        assert!(!v.contains("What companies did Elon Musk found?"));
     }
 
     #[test]
@@ -496,7 +608,7 @@ mod traversal_tests {
             .collect();
         assert!(aliases.contains(&"chunk_text"));
         assert!(aliases.contains(&"source_name"));
-        assert!(aliases.contains(&"entity_name"));
+        assert!(aliases.contains(&"entity"));
     }
 
     #[test]
@@ -511,5 +623,24 @@ mod traversal_tests {
     fn search_text_handles_empty_entities_and_goal() {
         let t = TraversalQuery::new(Vec::<String>::new(), "", "hello world");
         assert_eq!(t.search_text(), "hello world");
+        assert_eq!(t.goal_search_text(), "hello world");
+    }
+
+    #[test]
+    fn entity_name_dsls_search_entities_then_chunks() {
+        let t = TraversalQuery::new(["Elon Musk"], "find companies", "query");
+        let dsls = t.entity_dsls();
+        assert_eq!(dsls.len(), 1);
+        let dsl = &dsls[0];
+        assert_eq!(dsl.start.alias, "seed");
+        assert_eq!(dsl.start.label, "");
+        assert_eq!(dsl.filters[0].field, "seed.name");
+        assert_eq!(dsl.filters[0].op, "search");
+        assert_eq!(dsl.traversals[0].from.as_deref(), Some("seed"));
+        assert_eq!(dsl.traversals[0].edge.direction, Direction::In);
+        assert_eq!(dsl.traversals[0].target.label, "Chunk");
+        assert_eq!(dsl.traversals[1].from.as_deref(), Some("c"));
+        assert_eq!(dsl.traversals[1].edge.direction, Direction::Out);
+        assert_eq!(dsl.traversals[1].target.alias, "e");
     }
 }

@@ -1,11 +1,12 @@
 //! End-to-end orchestration: DSL/mapping → AST → Cypher → DB.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::ast::{from_dsl, query::InsertQuery, query::Literal, query::ReadQuery};
 use crate::builder::{self, CypherQuery};
 use crate::config::Config;
-use crate::db::{GraphClient, QueryResult};
+use crate::db::{GraphClient, QueryResult, Row, Value as DbValue};
 use crate::dsl::{DslQuery, TraversalQuery};
 use crate::embeddings::SharedEmbedder;
 use crate::error::Result;
@@ -188,31 +189,47 @@ impl Pipeline {
     // ── Traversal path ──────────────────────────────────────────────────────
     //
     // [`TraversalQuery`] is a higher-level, traversal-oriented shape
-    // for text retrieval: the caller hands over the entities they
-    // care about, the search goal, and the verbatim user query, and
-    // the pipeline lowers that to a `SemanticText`-driven DSL that
-    // traverses chunks → entities (one hop, `MENTIONS`) and chunks →
-    // sources (one hop, `part_of`). The methods below mirror the
-    // DSL path so callers can choose which surface to use right at
-    // the call site.
+    // for text retrieval. Compilation still exposes the goal-based
+    // chunk-search leg as a normal DSL query; execution runs the full
+    // retrieval pipeline: entity-name lookups, goal chunk search, then
+    // chunk-level deduplication.
 
-    /// Lower a [`TraversalQuery`] into the typed AST by first
-    /// converting it to a [`DslQuery`].
+    /// Lower a [`TraversalQuery`] goal-search leg into the typed AST by
+    /// first converting it to a [`DslQuery`].
     pub fn lower_traversal(&self, traversal: TraversalQuery) -> Result<ReadQuery> {
         self.lower(traversal.into_dsl())
     }
 
-    /// Compile a [`TraversalQuery`] all the way to a parameterized
-    /// Cypher query.
+    /// Compile a [`TraversalQuery`] goal-search leg all the way to a
+    /// parameterized Cypher query.
     pub fn compile_traversal(&self, traversal: TraversalQuery) -> Result<CypherQuery> {
         self.compile(traversal.into_dsl())
     }
 
-    /// Compile and execute a [`TraversalQuery`] against the configured
-    /// graph client.
+    /// Execute the traversal retrieval pipeline:
+    ///
+    /// 1. Search every supplied entity name and collect chunks that
+    ///    mention matching entities.
+    /// 2. Search chunks by the goal text.
+    /// 3. Return unique chunks with the union of associated entities.
     pub async fn run_traversal(&self, traversal: TraversalQuery) -> Result<QueryResult> {
+        let limit = traversal.limit.or(Some(self.default_limit));
+        let mut merged = TraversalMerge::default();
+
+        for dsl in traversal.entity_dsls() {
+            let cypher = self.compile(dsl)?;
+            println!("{}", cypher.text);
+            let result = self.client.execute(&cypher).await?;
+            println!("{:?}", result);
+            merged.extend(result);
+        }
+
         let cypher = self.compile_traversal(traversal)?;
-        Ok(self.client.execute(&cypher).await?)
+        println!("{}", cypher.text);
+        let result = self.client.execute(&cypher).await?;
+        merged.extend(result);
+
+        Ok(merged.finish(limit))
     }
 
     // ── Insert path ─────────────────────────────────────────────────────────
@@ -464,6 +481,207 @@ fn is_valid_ident(s: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+#[derive(Default)]
+struct TraversalMerge {
+    order: Vec<String>,
+    chunks: BTreeMap<String, ChunkHit>,
+}
+
+#[derive(Default)]
+struct ChunkHit {
+    chunk_id: Option<DbValue>,
+    chunk_text: Option<DbValue>,
+    source_id: Option<DbValue>,
+    source_name: Option<DbValue>,
+    score: f64,
+    entities: Vec<serde_json::Value>,
+    entity_keys: BTreeSet<String>,
+}
+
+impl TraversalMerge {
+    fn extend(&mut self, result: QueryResult) {
+        for row in result.rows {
+            let Some(key) = chunk_key(&row) else {
+                continue;
+            };
+            let hit = self.chunks.entry(key.clone()).or_insert_with(|| {
+                self.order.push(key);
+                ChunkHit::default()
+            });
+
+            fill_if_missing(&mut hit.chunk_id, row.fields.get("chunk_id"));
+            fill_if_missing(&mut hit.chunk_text, row.fields.get("chunk_text"));
+            fill_if_missing(&mut hit.source_id, row.fields.get("source_id"));
+            fill_if_missing(&mut hit.source_name, row.fields.get("source_name"));
+            hit.score += score_from_row(&row);
+
+            if let Some((entity_key, entity)) = entity_from_row(&row) {
+                if hit.entity_keys.insert(entity_key) {
+                    hit.entities.push(entity);
+                }
+            }
+        }
+    }
+
+    fn finish(self, limit: Option<u32>) -> QueryResult {
+        let take = limit.map(|n| n as usize).unwrap_or(usize::MAX);
+        let mut ordered = self
+            .order
+            .into_iter()
+            .enumerate()
+            .filter_map(|(idx, key)| self.chunks.get(&key).map(|hit| (idx, key, hit.score)))
+            .collect::<Vec<_>>();
+        ordered.sort_by(|a, b| b.2.total_cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
+
+        let rows = ordered
+            .into_iter()
+            .take(take)
+            .filter_map(|(_, key, _)| self.chunks.get(&key))
+            .map(|hit| {
+                let mut fields = BTreeMap::new();
+                fields.insert(
+                    "chunk_id".into(),
+                    hit.chunk_id
+                        .clone()
+                        .unwrap_or(DbValue::String(String::new())),
+                );
+                fields.insert(
+                    "chunk_text".into(),
+                    hit.chunk_text.clone().unwrap_or(DbValue::Null),
+                );
+                fields.insert(
+                    "source_id".into(),
+                    hit.source_id.clone().unwrap_or(DbValue::Null),
+                );
+                fields.insert(
+                    "source_name".into(),
+                    hit.source_name.clone().unwrap_or(DbValue::Null),
+                );
+                fields.insert("score".into(), DbValue::Float(hit.score));
+                fields.insert(
+                    "entities".into(),
+                    DbValue::Json(serde_json::Value::Array(hit.entities.clone())),
+                );
+                Row { fields }
+            })
+            .collect();
+
+        QueryResult {
+            columns: vec![
+                "chunk_id".into(),
+                "chunk_text".into(),
+                "source_id".into(),
+                "source_name".into(),
+                "score".into(),
+                "entities".into(),
+            ],
+            rows,
+        }
+    }
+}
+
+fn chunk_key(row: &Row) -> Option<String> {
+    row.fields
+        .get("chunk_id")
+        .and_then(db_value_key)
+        .or_else(|| row.fields.get("chunk_text").and_then(db_value_key))
+}
+
+fn entity_from_row(row: &Row) -> Option<(String, serde_json::Value)> {
+    if let Some(entity) = row.fields.get("entity") {
+        Some((
+            db_value_key(entity).unwrap_or_else(|| "entity".into()),
+            db_value_to_json(entity),
+        ))
+    } else if row.fields.contains_key("entity_id")
+        || row.fields.contains_key("entity_name")
+        || row.fields.contains_key("entity_type")
+    {
+        let key = row
+            .fields
+            .get("entity_id")
+            .and_then(db_value_key)
+            .or_else(|| row.fields.get("entity_name").and_then(db_value_key))
+            .unwrap_or_else(|| "entity".into());
+        let mut entity = serde_json::Map::new();
+        if let Some(value) = row.fields.get("entity_id") {
+            entity.insert("id".into(), db_value_to_json(value));
+        }
+        if let Some(value) = row.fields.get("entity_name") {
+            entity.insert("name".into(), db_value_to_json(value));
+        }
+        if let Some(value) = row.fields.get("entity_type") {
+            entity.insert("type".into(), db_value_to_json(value));
+        }
+        Some((key, serde_json::Value::Object(entity)))
+    } else {
+        None
+    }
+}
+
+fn score_from_row(row: &Row) -> f64 {
+    row.fields
+        .iter()
+        .filter(|(key, _)| {
+            key.as_str() == "score"
+                || key.as_str() == "chunk_score"
+                || key.as_str() == "entity_score"
+                || key.contains("__score")
+        })
+        .filter_map(|(_, value)| db_value_as_f64(value))
+        .sum()
+}
+
+fn db_value_as_f64(value: &DbValue) -> Option<f64> {
+    match value {
+        DbValue::Int(v) => Some(*v as f64),
+        DbValue::Float(v) => Some(*v),
+        DbValue::String(v) => v.parse().ok(),
+        DbValue::Json(v) => match v {
+            serde_json::Value::Number(n) => n.as_f64(),
+            serde_json::Value::String(s) => s.parse().ok(),
+            _ => None,
+        },
+        DbValue::Null | DbValue::Bool(_) => None,
+    }
+}
+
+fn fill_if_missing(slot: &mut Option<DbValue>, value: Option<&DbValue>) {
+    if slot.is_none() {
+        if let Some(value) = value {
+            *slot = Some(value.clone());
+        }
+    }
+}
+
+fn db_value_key(value: &DbValue) -> Option<String> {
+    match value {
+        DbValue::Null => None,
+        DbValue::Bool(v) => Some(v.to_string()),
+        DbValue::Int(v) => Some(v.to_string()),
+        DbValue::Float(v) => Some(v.to_string()),
+        DbValue::String(v) => Some(v.clone()),
+        DbValue::Json(v) => match v {
+            serde_json::Value::Null => None,
+            serde_json::Value::String(s) => Some(s.clone()),
+            other => Some(other.to_string()),
+        },
+    }
+}
+
+fn db_value_to_json(value: &DbValue) -> serde_json::Value {
+    match value {
+        DbValue::Null => serde_json::Value::Null,
+        DbValue::Bool(v) => serde_json::Value::Bool(*v),
+        DbValue::Int(v) => serde_json::Value::Number((*v).into()),
+        DbValue::Float(v) => serde_json::Number::from_f64(*v)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
+        DbValue::String(v) => serde_json::Value::String(v.clone()),
+        DbValue::Json(v) => v.clone(),
+    }
+}
+
 /// Marker re-export so the embedder trait can be referenced via
 /// `pipeline::Embedder` in the README/tests without exposing the whole
 /// `embeddings` path.
@@ -537,8 +755,7 @@ mod tests {
                 ))
                 .build(),
         );
-        let pipeline =
-            Pipeline::new(Arc::new(MockClient::new()), &cfg()).with_registry(registry);
+        let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg()).with_registry(registry);
 
         let cypher = pipeline
             .compile_traversal(crate::dsl::TraversalQuery::new(
@@ -567,12 +784,210 @@ mod tests {
             "expected (s:Source) part_of hop; got: {}",
             cypher.text
         );
-        // Semantic search routes through the qlink reranker.
+        // Semantic search routes through the labeled qlink search.
         assert!(
-            cypher.text.contains("libqlink.search_reranked"),
-            "expected libqlink.search_reranked; got: {}",
+            cypher.text.contains("libqlink.search_labeled"),
+            "expected libqlink.search_labeled; got: {}",
             cypher.text
         );
+        assert!(
+            cypher
+                .text
+                .contains("WITH c, e, s, c__score_0\nOPTIONAL MATCH"),
+            "expected source projection to carry semantic score; got: {}",
+            cypher.text
+        );
+        assert!(
+            cypher.text.contains("c__score_0 AS score"),
+            "expected RETURN projection to expose semantic score; got: {}",
+            cypher.text
+        );
+    }
+
+    #[tokio::test]
+    async fn run_traversal_merges_unique_chunks_and_entities() {
+        use crate::embeddings::MockEmbedder;
+        use crate::types::handlers::{SemanticTextConfig, SemanticTextHandler};
+        use crate::types::RegistryBuilder;
+        use std::sync::Arc as StdArc;
+
+        let registry: SharedRegistry = StdArc::new(
+            crate::types::handlers::register_core(RegistryBuilder::new())
+                .register(SemanticTextHandler::new(
+                    SemanticTextConfig {
+                        embedding_model: None,
+                        collection: "test".into(),
+                        top_k: 10,
+                        search_threshold: 0.8,
+                        reranker_threshold: 0.3,
+                    },
+                    StdArc::new(MockEmbedder::new(8)),
+                ))
+                .build(),
+        );
+
+        let mock = Arc::new(MockClient::new());
+        // MockClient pops from the back. run_traversal executes entity
+        // lookups first, then the goal-search query.
+        mock.enqueue(QueryResult {
+            columns: vec![],
+            rows: vec![traversal_row("c1", "chunk one", "e2", "SpaceX", "Company")],
+        });
+        mock.enqueue(QueryResult {
+            columns: vec![],
+            rows: vec![
+                traversal_row("c1", "chunk one", "e1", "Elon Musk", "Person"),
+                traversal_row("c2", "chunk two", "e1", "Elon Musk", "Person"),
+            ],
+        });
+
+        let pipeline = Pipeline::new(mock, &cfg()).with_registry(registry);
+        let result = pipeline
+            .run_traversal(crate::dsl::TraversalQuery::new(
+                ["Elon Musk"],
+                "find companies",
+                "query",
+            ))
+            .await
+            .expect("traversal runs");
+
+        assert_eq!(
+            result.columns,
+            vec![
+                "chunk_id",
+                "chunk_text",
+                "source_id",
+                "source_name",
+                "score",
+                "entities"
+            ]
+        );
+        assert_eq!(result.rows.len(), 2);
+        assert_eq!(
+            result.rows[0].fields.get("chunk_id"),
+            Some(&DbValue::String("c1".into()))
+        );
+        let DbValue::Json(serde_json::Value::Array(entities)) =
+            result.rows[0].fields.get("entities").unwrap()
+        else {
+            panic!("entities should be a JSON array");
+        };
+        assert_eq!(entities.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn run_traversal_sums_scores_and_orders_chunks() {
+        use crate::embeddings::MockEmbedder;
+        use crate::types::handlers::{SemanticTextConfig, SemanticTextHandler};
+        use crate::types::RegistryBuilder;
+        use std::sync::Arc as StdArc;
+
+        let registry: SharedRegistry = StdArc::new(
+            crate::types::handlers::register_core(RegistryBuilder::new())
+                .register(SemanticTextHandler::new(
+                    SemanticTextConfig {
+                        embedding_model: None,
+                        collection: "test".into(),
+                        top_k: 10,
+                        search_threshold: 0.8,
+                        reranker_threshold: 0.3,
+                    },
+                    StdArc::new(MockEmbedder::new(8)),
+                ))
+                .build(),
+        );
+
+        let mock = Arc::new(MockClient::new());
+        mock.enqueue(QueryResult {
+            columns: vec![],
+            rows: vec![traversal_row_with_score(
+                "c2",
+                "chunk two",
+                "e2",
+                "SpaceX",
+                "Company",
+                "c__score_0",
+                0.7,
+            )],
+        });
+        mock.enqueue(QueryResult {
+            columns: vec![],
+            rows: vec![
+                traversal_row_with_score(
+                    "c1",
+                    "chunk one",
+                    "e1",
+                    "Elon Musk",
+                    "Person",
+                    "seed__score_0",
+                    0.4,
+                ),
+                traversal_row_with_score(
+                    "c2",
+                    "chunk two",
+                    "e1",
+                    "Elon Musk",
+                    "Person",
+                    "seed__score_0",
+                    0.2,
+                ),
+            ],
+        });
+
+        let pipeline = Pipeline::new(mock, &cfg()).with_registry(registry);
+        let result = pipeline
+            .run_traversal(crate::dsl::TraversalQuery::new(
+                ["Elon Musk"],
+                "find companies",
+                "query",
+            ))
+            .await
+            .expect("traversal runs");
+
+        assert_eq!(
+            result.rows[0].fields.get("chunk_id"),
+            Some(&DbValue::String("c2".into()))
+        );
+        assert_eq!(
+            result.rows[0].fields.get("score"),
+            Some(&DbValue::Float(0.8999999999999999))
+        );
+        assert_eq!(
+            result.rows[1].fields.get("chunk_id"),
+            Some(&DbValue::String("c1".into()))
+        );
+    }
+
+    fn traversal_row(
+        chunk_id: &str,
+        chunk_text: &str,
+        entity_id: &str,
+        entity_name: &str,
+        entity_type: &str,
+    ) -> Row {
+        let mut fields = BTreeMap::new();
+        fields.insert("chunk_id".into(), DbValue::String(chunk_id.into()));
+        fields.insert("chunk_text".into(), DbValue::String(chunk_text.into()));
+        fields.insert("source_id".into(), DbValue::String("s1".into()));
+        fields.insert("source_name".into(), DbValue::String("source".into()));
+        fields.insert("entity_id".into(), DbValue::String(entity_id.into()));
+        fields.insert("entity_name".into(), DbValue::String(entity_name.into()));
+        fields.insert("entity_type".into(), DbValue::String(entity_type.into()));
+        Row { fields }
+    }
+
+    fn traversal_row_with_score(
+        chunk_id: &str,
+        chunk_text: &str,
+        entity_id: &str,
+        entity_name: &str,
+        entity_type: &str,
+        score_field: &str,
+        score: f64,
+    ) -> Row {
+        let mut row = traversal_row(chunk_id, chunk_text, entity_id, entity_name, entity_type);
+        row.fields.insert(score_field.into(), DbValue::Float(score));
+        row
     }
 
     #[tokio::test]

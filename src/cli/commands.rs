@@ -12,7 +12,7 @@ use crate::dsl;
 use crate::embeddings::{self, SharedEmbedder};
 use crate::error::Result;
 use crate::graph::{
-    FileGraphSpecificationStorage, GraphSpecificationStorage,
+    FileGraphSpecificationStorage, GraphBuilder, GraphSpecificationStorage,
     DEFAULT_GRAPH_SPECIFICATION_CACHE_PATH,
 };
 use crate::mapper::{self, Mapping};
@@ -59,6 +59,11 @@ pub enum Command {
     Cypher { path: PathBuf },
     /// Compile and execute a DSL file against the configured database.
     Run { path: PathBuf },
+    /// Compile and execute a traversal-query JSON file against the configured database.
+    Traversal {
+        /// Path to the traversal-query JSON file.
+        path: PathBuf,
+    },
     /// Print a schema-aware system prompt for an LLM.
     Prompt {
         /// Natural-language query used to select relevant graph types.
@@ -106,6 +111,18 @@ pub enum Command {
         /// Path to the graph specification cache file.
         #[arg(long = "spec-cache", default_value = DEFAULT_GRAPH_SPECIFICATION_CACHE_PATH)]
         spec_cache: PathBuf,
+        /// Maximum rows per UNWIND batch.
+        #[arg(long, default_value_t = 1000)]
+        batch_size: usize,
+    },
+    /// Ingest a GraphBuilder JSON file directly into the configured database.
+    ///
+    /// The file must contain `entities` and `relations`/`relationships`
+    /// arrays in the compact graph JSON shape accepted by
+    /// `GraphBuilder::from_json`.
+    IngestGraph {
+        /// Path to the graph JSON file.
+        path: PathBuf,
         /// Maximum rows per UNWIND batch.
         #[arg(long, default_value_t = 1000)]
         batch_size: usize,
@@ -181,6 +198,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Dsl { path } => cmd_dsl(path).await,
         Command::Cypher { path } => cmd_cypher(&cli.config, path).await,
         Command::Run { path } => cmd_run(&cli.config, path).await,
+        Command::Traversal { path } => cmd_traversal(&cli.config, path).await,
         Command::Prompt {
             query,
             schema,
@@ -199,6 +217,9 @@ pub async fn run(cli: Cli) -> Result<()> {
             spec_cache,
             batch_size,
         } => cmd_ingest_json(&cli.config, data, mapper, spec_cache, batch_size).await,
+        Command::IngestGraph { path, batch_size } => {
+            cmd_ingest_graph(&cli.config, path, batch_size).await
+        }
         Command::Query { path } => cmd_query(&cli.config, path).await,
         Command::GeneratePrompt {
             path,
@@ -373,6 +394,27 @@ async fn cmd_run(config_path: &std::path::Path, path: PathBuf) -> Result<()> {
     Ok(())
 }
 
+async fn cmd_traversal(config_path: &std::path::Path, path: PathBuf) -> Result<()> {
+    let cfg = config::load(config_path).await?;
+    let client = MemgraphClient::connect(&cfg.database).await?;
+    let (registry, embedder) = build_registry(&cfg)?;
+    let meta_store: Arc<dyn MetadataStore> =
+        Arc::new(FileMetadataStore::new(&cfg.metadata.cache_path));
+    let mut pipeline = Pipeline::new(Arc::new(client), &cfg)
+        .with_registry(registry)
+        .with_metadata_store(meta_store);
+    if let Some(e) = embedder {
+        pipeline = pipeline.with_embedder(e);
+    }
+    pipeline.load_metadata().await?;
+
+    let raw = fs::read_to_string(&path).await?;
+    let traversal: dsl::TraversalQuery = serde_json::from_str(&raw)?;
+    let result = pipeline.run_traversal(traversal).await?;
+    println!("{}", serde_json::to_string_pretty(&result)?);
+    Ok(())
+}
+
 async fn cmd_prompt(
     config_path: &std::path::Path,
     query: Option<String>,
@@ -519,6 +561,31 @@ async fn cmd_ingest_json(
     }
 
     let summary = pipeline.ingest(&mapped.graph).await?;
+    println!("{}", serde_json::to_string_pretty(&summary)?);
+    Ok(())
+}
+
+async fn cmd_ingest_graph(
+    config_path: &std::path::Path,
+    path: PathBuf,
+    batch_size: usize,
+) -> Result<()> {
+    let cfg = config::load(config_path).await?;
+    let raw = fs::read_to_string(&path).await?;
+    let graph = GraphBuilder::from_json(&raw)?;
+    let (registry, embedder) = build_registry(&cfg)?;
+
+    let client = MemgraphClient::connect(&cfg.database).await?;
+    let store: Arc<dyn MetadataStore> = Arc::new(FileMetadataStore::new(&cfg.metadata.cache_path));
+    let mut pipeline = Pipeline::new(Arc::new(client), &cfg)
+        .with_ingest_batch_size(batch_size)
+        .with_metadata_store(store)
+        .with_registry(registry);
+    if let Some(e) = embedder {
+        pipeline = pipeline.with_embedder(e);
+    }
+
+    let summary = pipeline.ingest(&graph).await?;
     println!("{}", serde_json::to_string_pretty(&summary)?);
     Ok(())
 }

@@ -154,6 +154,33 @@ fn sibling_traversals_emit_separate_match_clauses() {
 }
 
 #[test]
+fn optional_traversal_emits_optional_match_clause() {
+    let cypher = compile(
+        r#"{
+            "action": "find",
+            "start": { "label": "Person", "alias": "p" },
+            "traversals": [
+                {
+                    "optional": true,
+                    "edge": { "label": "WORKS_AT", "alias": "w", "direction": "out" },
+                    "target": { "label": "Company", "alias": "c" }
+                }
+            ],
+            "filters": [{ "field": "p.active", "op": "eq", "value": true }],
+            "return": [{ "field": "c.name" }]
+        }"#,
+    );
+
+    assert!(
+        cypher.text.contains(
+            "MATCH (p:Person)\nWHERE p.active = $p0\nOPTIONAL MATCH (p)-[w:WORKS_AT]->(c:Company)"
+        ),
+        "got: {}",
+        cypher.text
+    );
+}
+
+#[test]
 fn explicit_from_chains_traversals() {
     // `from` lets the author keep the legacy chained behavior on demand:
     // (p)-[k1]->(f1)-[k2]->(f2).

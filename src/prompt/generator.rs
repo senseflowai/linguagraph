@@ -78,8 +78,8 @@ pub fn generate_system_prompt(schema: &GraphSchema, opts: &PromptOptions) -> Str
 }
 
 pub fn generate_query_prompt(query: &str, schema: &GraphSchema, opts: &PromptOptions) -> String {
-    //let selected_schema = select_query_schema(query, schema, opts);
-    render_prompt(&schema, opts)
+    let selected_schema = select_query_schema(query, schema, opts);
+    render_prompt(&selected_schema, opts)
 }
 
 fn render_prompt(schema: &GraphSchema, opts: &PromptOptions) -> String {

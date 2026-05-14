@@ -151,6 +151,7 @@ impl TypeHandler for SemanticTextHandler {
             TypedOp::Neq,
             TypedOp::Contains,
             TypedOp::Search,
+            TypedOp::SearchReranked,
             TypedOp::HybridSearch,
         ]
     }
@@ -305,7 +306,7 @@ impl TypeHandler for SemanticTextHandler {
             // The yield is the surviving (id, reranker_score) pairs in
             // descending order, so we don't need our own threshold
             // filter or WITH gate. The MATCH then joins by id.
-            TypedOp::Eq | TypedOp::Neq | TypedOp::Contains | TypedOp::Search => {
+            TypedOp::Eq | TypedOp::Neq | TypedOp::Contains | TypedOp::SearchReranked => {
                 let alias = pred.field.alias.as_str();
                 let coll = pred
                     .params
@@ -347,6 +348,46 @@ impl TypeHandler for SemanticTextHandler {
                 let score = format!("{alias}__score_{n}");
                 ctx.push_pre_match(format!(
                     "CALL libqlink.search_reranked({coll_p}, {q_p}, {emb_p}, {label_p}, \"{prop}\", {r_thr_p}) \
+                     YIELD id AS {qid}, score AS {score}"
+                ));
+                ctx.set_where(format!("id({alias}) = {qid}"));
+                ctx.contribution_mut()
+                    .order_by
+                    .push((score, OrderDir::Desc));
+                Ok(())
+            }
+
+            TypedOp::Search => {
+                let alias = pred.field.alias.as_str();
+                let coll = pred
+                    .params
+                    .get("collection")
+                    .cloned()
+                    .ok_or_else(|| TypeError::Handler("missing 'collection' param".into()))?;
+                let emb = pred
+                    .params
+                    .get("embedding")
+                    .cloned()
+                    .ok_or_else(|| TypeError::Handler("missing 'embedding' param".into()))?;
+                let label = pred
+                    .params
+                    .get("label")
+                    .cloned()
+                    .ok_or_else(|| TypeError::Handler("missing 'label' param".into()))?;
+
+                let coll_p = ctx.bind(coll);
+                let emb_p = ctx.bind(emb);
+                let label_p = ctx.bind(label);
+                // let r_thr_p = ctx.bind(rerank_thr);
+                // let prop = pred.field.property.clone().unwrap_or("name".to_string());
+                // Each call gets a unique suffix so multiple semantic
+                // searches against the same alias don't collide on
+                // `<alias>__qid` / `<alias>__score`.
+                let n = ctx.fresh_id();
+                let qid = format!("{alias}__qid_{n}");
+                let score = format!("{alias}__score_{n}");
+                ctx.push_pre_match(format!(
+                    "CALL libqlink.search_labeled([{coll_p}], {emb_p}, 30, {label_p}) \
                      YIELD id AS {qid}, score AS {score}"
                 ));
                 ctx.set_where(format!("id({alias}) = {qid}"));

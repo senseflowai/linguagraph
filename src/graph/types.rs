@@ -29,7 +29,18 @@ pub enum GraphBuildError {
     #[error("unknown entity reference {0}")]
     UnknownEntityRef(usize),
 
-    #[error("cannot add a Chunk: the GraphBuilder has no active Source. \
-             Call GraphBuilder::with_source(name) or add_source(name) first.")]
+    #[error("failed to parse graph JSON: {0}")]
+    Json(String),
+
+    #[error("duplicate entity id '{0}' in graph JSON")]
+    DuplicateEntityId(String),
+
+    #[error("relationship references unknown entity id '{0}'")]
+    UnknownEntityId(String),
+
+    #[error(
+        "cannot add a Chunk: the GraphBuilder has no active Source. \
+             Call GraphBuilder::with_source(name) or add_source(name) first."
+    )]
     ChunkWithoutSource,
 }

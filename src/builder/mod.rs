@@ -10,6 +10,7 @@ mod cursor;
 mod cypher;
 mod insert;
 mod match_part;
+pub mod normalize;
 pub mod plan;
 mod return_part;
 mod where_part;

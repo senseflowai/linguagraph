@@ -28,6 +28,12 @@ pub struct IngestCtx<'a> {
     pub node_key: &'a Literal,
     /// Property name being ingested (the field's *name*, not its value).
     pub field_name: &'a str,
+    /// Optional prefix applied to every embedding-index / collection
+    /// name a handler emits. Mirrors `Pipeline::with_prefix_index` —
+    /// when set, handlers that queue `SideEffect::EmbedAndStore` should
+    /// scope their Qdrant collection so vectors from different prefixes
+    /// don't share an index.
+    pub prefix_index: Option<&'a str>,
     /// Raw extracted JSON value. Some types (SemanticText) read the
     /// string and don't store it; others store the typed view.
     raw: &'a Value,
@@ -57,11 +63,19 @@ impl<'a> IngestCtx<'a> {
             node_key_field,
             node_key,
             field_name,
+            prefix_index: None,
             raw,
             output: None,
             skip: false,
             side_effects,
         }
+    }
+
+    /// Attach a prefix that handlers should fold into every embedding
+    /// collection name they emit. `None` keeps the historic behaviour.
+    pub fn with_prefix_index(mut self, prefix_index: Option<&'a str>) -> Self {
+        self.prefix_index = prefix_index.filter(|s| !s.is_empty());
+        self
     }
 
     /// Raw JSON value as it came out of the mapper.
@@ -128,6 +142,11 @@ pub struct LowerCtx<'a> {
     pub raw: RawTypedFilter<'a>,
     pub type_id: TypeId,
     pub field_label: Option<&'a str>,
+    /// Optional prefix to fold into embedding-index / collection names
+    /// when lowering typed filters (e.g. `SemanticText` search). Must
+    /// match the prefix used at ingest time, otherwise the query
+    /// searches an empty collection.
+    pub prefix_index: Option<&'a str>,
 }
 
 // ─── Stage 2.5: batched preparation ─────────────────────────────────

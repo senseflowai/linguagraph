@@ -32,10 +32,30 @@ pub fn plan_graph_with_registry_and_prefix(
     effects: &mut SideEffectQueue,
     prefix_label: Option<&str>,
 ) -> Result<InsertQuery, IngestError> {
+    plan_graph_with_registry_and_prefixes(graph, opts, registry, effects, prefix_label, None)
+}
+
+/// Like [`plan_graph_with_registry_and_prefix`] but additionally folds
+/// `prefix_index` into every embedding-index / Qdrant collection name a
+/// type handler emits during ingestion. The two prefixes are
+/// independent: `prefix_label` scopes the Memgraph data; `prefix_index`
+/// scopes the vector store. Most callers pass the same value for both.
+pub fn plan_graph_with_registry_and_prefixes(
+    graph: &Graph,
+    opts: PlannerOptions,
+    registry: &TypeRegistry,
+    effects: &mut SideEffectQueue,
+    prefix_label: Option<&str>,
+    prefix_index: Option<&str>,
+) -> Result<InsertQuery, IngestError> {
     if opts.max_batch_size == 0 {
         return Err(IngestError::InvalidBatchSize);
     }
     let prefix_label = prefix_label
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let prefix_index = prefix_index
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string);
@@ -48,7 +68,14 @@ pub fn plan_graph_with_registry_and_prefix(
         let entity_ref = EntityRef::from_index(idx);
         let shape = node_shape(entity)?;
         let id = entity_id(entity, &shape.merge_on, idx)?;
-        let props = lower_entity_properties(entity, &shape, &id, registry, effects)?;
+        let props = lower_entity_properties(
+            entity,
+            &shape,
+            &id,
+            registry,
+            effects,
+            prefix_index.as_deref(),
+        )?;
 
         entity_keys.insert(
             entity_ref,
@@ -198,6 +225,7 @@ fn lower_entity_properties(
     id: &Literal,
     registry: &TypeRegistry,
     effects: &mut SideEffectQueue,
+    prefix_index: Option<&str>,
 ) -> Result<BTreeMap<String, Literal>, IngestError> {
     let mut out = BTreeMap::new();
     for property in entity.properties.values() {
@@ -208,6 +236,7 @@ fn lower_entity_properties(
             property,
             registry,
             effects,
+            prefix_index,
         )? {
             out.insert(property.name.clone(), lit);
         }
@@ -222,6 +251,7 @@ fn lower_node_property(
     property: &Property,
     registry: &TypeRegistry,
     effects: &mut SideEffectQueue,
+    prefix_index: Option<&str>,
 ) -> Result<Option<Literal>, IngestError> {
     let type_id = node_type_id(property.property_type);
     let handler = registry
@@ -235,7 +265,8 @@ fn lower_node_property(
         &property.name,
         &property.value,
         effects,
-    );
+    )
+    .with_prefix_index(prefix_index);
     handler
         .on_ingest(&mut ctx)
         .map_err(|e| IngestError::Type(e.to_string()))?;
@@ -620,6 +651,42 @@ mod tests {
         }
         for batch in &insert.relation_batches {
             assert_eq!(batch.prefix_label.as_deref(), Some("Tenant1"));
+        }
+    }
+
+    #[test]
+    fn prefix_index_scopes_embedding_side_effects() {
+        // SemanticText fields produce embedding side effects; the
+        // ingest-side prefix_index must land in every queued
+        // collection name so vectors don't collide across prefixes.
+        use crate::types::SideEffect;
+        let mut graph = GraphBuilder::new();
+        graph
+            .entity("Person")
+            .strict_primary_key("id")
+            .property("id", PropertyType::String, "a")
+            .property("name", PropertyType::Text, "Alice")
+            .add();
+
+        let mut effects = SideEffectQueue::new();
+        plan_graph_with_registry_and_prefixes(
+            &graph.build(),
+            PlannerOptions::default(),
+            &registry(),
+            &mut effects,
+            None,
+            Some("Tenant1"),
+        )
+        .unwrap();
+
+        assert_eq!(effects.len(), 1);
+        match &effects.into_vec()[0] {
+            SideEffect::EmbedAndStore { collection, .. } => {
+                assert!(
+                    collection.starts_with("Tenant1__"),
+                    "expected prefix in collection name, got {collection}"
+                );
+            }
         }
     }
 

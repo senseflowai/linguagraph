@@ -154,12 +154,23 @@ pub fn lower_full(
         });
     }
 
+    // Normalise the query-wide prefix_index the same way as
+    // prefix_label: trim, drop empties, then pass it through to typed
+    // filter lowering so handlers fold it into collection names.
+    let query_prefix_index = dsl
+        .prefix_index
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+
     let filter = lower_filters(
         &dsl.filters,
         &bound,
         &alias_labels,
         registry,
         graph_specification,
+        query_prefix_index.as_deref(),
     )?;
     let returns = lower_returns(&dsl.return_, &bound)?;
 
@@ -204,6 +215,7 @@ fn lower_filters(
     alias_labels: &HashMap<String, String>,
     registry: &TypeRegistry,
     graph_specification: Option<&GraphSpecification>,
+    prefix_index: Option<&str>,
 ) -> Result<Option<FilterExpression>, AstError> {
     if filters.is_empty() {
         return Ok(None);
@@ -267,6 +279,7 @@ fn lower_filters(
                     },
                     type_id: type_id.clone(),
                     field_label,
+                    prefix_index,
                 };
                 let typed = handler.lower(&mut ctx)?;
                 preds.push(FilterExpression::Typed(typed));

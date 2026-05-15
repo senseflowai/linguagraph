@@ -46,6 +46,12 @@ pub struct Pipeline {
     /// thread the label through the DSL/Graph by hand. `None` keeps the
     /// historic behaviour (no extra label).
     prefix_label: Option<String>,
+    /// Optional prefix folded into the embedding-index / Qdrant
+    /// collection names a type handler emits during ingestion and
+    /// query. Scopes the vector store the way `prefix_label` scopes the
+    /// Memgraph data; the two are configured independently so callers
+    /// who only need one of them don't pay for the other.
+    prefix_index: Option<String>,
 }
 
 impl std::fmt::Debug for Pipeline {
@@ -92,6 +98,7 @@ impl Pipeline {
             embedder: None,
             graph_specification: Arc::new(RwLock::new(None)),
             prefix_label: None,
+            prefix_index: None,
         }
     }
 
@@ -110,6 +117,22 @@ impl Pipeline {
 
     pub fn prefix_label(&self) -> Option<&str> {
         self.prefix_label.as_deref()
+    }
+
+    /// Set the prefix folded into every embedding-index / Qdrant
+    /// collection name. Applied at ingest (when handlers queue
+    /// embedding side effects) and at query (when typed filters resolve
+    /// their collection parameter). Empty / `None` disables the prefix.
+    pub fn with_prefix_index(mut self, prefix_index: Option<impl Into<String>>) -> Self {
+        self.prefix_index = prefix_index
+            .map(Into::into)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        self
+    }
+
+    pub fn prefix_index(&self) -> Option<&str> {
+        self.prefix_index.as_deref()
     }
 
     /// Override the ingestion batch size. Useful for tests and for callers
@@ -194,13 +217,19 @@ impl Pipeline {
     /// without any DSL change.
     pub fn lower(&self, dsl: DslQuery) -> Result<ReadQuery> {
         let graph_specification = self.graph_specification();
-        // The DSL's own `prefix_label` wins over the Pipeline's
-        // configured one: a per-query override (e.g. for a one-off
-        // search across all tenants) can drop or replace the default.
+        // The DSL's own `prefix_label` / `prefix_index` win over the
+        // Pipeline's configured defaults: a per-query override (e.g.
+        // for a one-off search across all tenants) can drop or replace
+        // the default.
         let mut dsl = dsl;
         if dsl.prefix_label.is_none() {
             if let Some(p) = &self.prefix_label {
                 dsl.prefix_label = Some(p.clone());
+            }
+        }
+        if dsl.prefix_index.is_none() {
+            if let Some(p) = &self.prefix_index {
+                dsl.prefix_index = Some(p.clone());
             }
         }
         let mut q = from_dsl::lower_full(
@@ -337,12 +366,13 @@ impl Pipeline {
             max_batch_size: self.ingest_batch_size,
         };
         let mut effects = SideEffectQueue::new();
-        let insert = ingest::plan_graph_with_registry_and_prefix(
+        let insert = ingest::plan_graph_with_registry_and_prefixes(
             graph,
             opts,
             &self.registry,
             &mut effects,
             self.prefix_label.as_deref(),
+            self.prefix_index.as_deref(),
         )?;
         Ok((insert, effects))
     }

@@ -18,7 +18,10 @@ pub use document::{
     EntityInput, RelationInput,
 };
 pub use dsl::{InsertPlan, NodePlan, RelationPlan};
-pub use graph::{plan_graph_with_registry, plan_graph_with_registry_and_prefix};
+pub use graph::{
+    plan_graph_with_registry, plan_graph_with_registry_and_prefix,
+    plan_graph_with_registry_and_prefixes,
+};
 pub use planner::{plan, plan_with_options, plan_with_registry, PlannerOptions};
 
 use crate::ast::AstError;

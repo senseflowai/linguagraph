@@ -125,6 +125,106 @@ async fn prefix_label_scopes_inserts_and_queries() {
 }
 
 #[tokio::test]
+async fn prefix_index_scopes_embedding_collections() {
+    // The pipeline's prefix_index must reach both the ingest-side
+    // embedding side effects (qlink.insert_labeled) and the read-side
+    // collection parameter passed to qlink.search_*.
+    use linguagraph::embeddings::MockEmbedder;
+    use linguagraph::types::handlers::{SemanticTextConfig, SemanticTextHandler};
+    use linguagraph::types::{handlers, RegistryBuilder, SharedRegistry};
+
+    let registry: SharedRegistry = std::sync::Arc::new(
+        handlers::register_core(RegistryBuilder::new())
+            .register(SemanticTextHandler::new(
+                SemanticTextConfig {
+                    embedding_model: None,
+                    collection: "docs".into(),
+                    top_k: 10,
+                    search_threshold: 0.1,
+                    reranker_threshold: 0.2,
+                },
+                std::sync::Arc::new(MockEmbedder::new(8)),
+            ))
+            .build(),
+    );
+    let embedder: linguagraph::embeddings::SharedEmbedder =
+        std::sync::Arc::new(MockEmbedder::new(8));
+
+    let mock = Arc::new(MockClient::new());
+    let cfg = test_config();
+    let pipeline = Pipeline::new(mock.clone(), &cfg)
+        .with_registry(registry)
+        .with_embedder(embedder)
+        .with_prefix_index(Some("Tenant1"));
+
+    // Ingest a SemanticText property.
+    let mut g = GraphBuilder::new();
+    g.entity("Person")
+        .strict_primary_key("id")
+        .property("id", PropertyType::String, "a")
+        .property("name", PropertyType::Text, "Alice")
+        .add();
+    pipeline.ingest(&g.build()).await.unwrap();
+
+    {
+        let captured = mock.captured.lock().unwrap();
+        // The last batch is the qlink insert; its `coll` parameter must
+        // be the prefixed collection name.
+        let insert = captured
+            .iter()
+            .find(|c| c.text.contains("libqlink.insert_labeled"))
+            .expect("expected a qlink insert batch");
+        let coll = insert
+            .params
+            .get("coll")
+            .expect("qlink insert must bind 'coll'");
+        let coll = match coll {
+            linguagraph::ast::query::Literal::String(s) => s.clone(),
+            other => panic!("coll should be a String, got {other:?}"),
+        };
+        assert!(
+            coll.starts_with("Tenant1__"),
+            "ingest collection missing prefix; got {coll}"
+        );
+    }
+
+    // Query: typed SemanticText search must also use the prefixed
+    // collection.
+    mock.enqueue(QueryResult {
+        columns: vec![],
+        rows: vec![],
+    });
+    let dsl = dsl::parse_str(
+        r#"{
+            "action": "find",
+            "start": { "label": "Person", "alias": "p" },
+            "filters": [
+                {"field": "p.name", "type": "SemanticText", "op": "search", "value": "alice"}
+            ],
+            "return": [{ "field": "p.name" }]
+        }"#,
+    )
+    .unwrap();
+    let _ = pipeline.run(dsl).await.unwrap();
+    let captured = mock.captured.lock().unwrap();
+    let last = captured.last().unwrap();
+    let coll = match last.params.get("p0").or_else(|| last.params.get("p1")) {
+        Some(linguagraph::ast::query::Literal::String(s)) => Some(s.clone()),
+        _ => None,
+    };
+    let has_prefixed_coll = last
+        .params
+        .values()
+        .any(|v| matches!(v, linguagraph::ast::query::Literal::String(s) if s.starts_with("Tenant1__")));
+    assert!(
+        has_prefixed_coll,
+        "query collection param missing prefix; params={:?}; cypher={}",
+        last.params, last.text
+    );
+    let _ = coll;
+}
+
+#[tokio::test]
 async fn dsl_prefix_label_overrides_pipeline_default() {
     let mock = Arc::new(MockClient::new());
     let cfg = test_config();

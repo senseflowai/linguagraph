@@ -30,6 +30,12 @@ pub struct DslQuery {
     /// matched.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefix_label: Option<String>,
+    /// Optional prefix folded into the embedding-index / Qdrant
+    /// collection names used by typed filters (e.g. `SemanticText`
+    /// `search` / `hybrid_search`). Must match the prefix used at
+    /// ingest time, otherwise the typed query hits an empty index.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_index: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -257,6 +263,11 @@ pub struct TraversalQuery {
     /// into both the entity-search leg and the goal-search leg.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefix_label: Option<String>,
+    /// Optional prefix folded into the embedding-index / Qdrant
+    /// collection names used by the goal-search and entity-search
+    /// legs. Must match the prefix used at ingest time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_index: Option<String>,
 }
 
 fn default_chunk_label() -> String {
@@ -301,6 +312,7 @@ impl TraversalQuery {
             entity_label: None,
             limit: None,
             prefix_label: None,
+            prefix_index: None,
         }
     }
 
@@ -379,6 +391,7 @@ impl TraversalQuery {
         let search_text = self.goal_search_text();
         let text_field = format!("c.{}", self.chunk_text_field);
         let prefix_label = self.prefix_label.clone();
+        let prefix_index = self.prefix_index.clone();
 
         let mut traversals = Vec::with_capacity(2);
 
@@ -436,6 +449,7 @@ impl TraversalQuery {
             sort: Vec::new(),
             limit: self.limit,
             prefix_label,
+            prefix_index,
         }
     }
 
@@ -488,6 +502,7 @@ impl TraversalQuery {
             sort: Vec::new(),
             limit: self.limit,
             prefix_label: self.prefix_label.clone(),
+            prefix_index: self.prefix_index.clone(),
         }
     }
 }

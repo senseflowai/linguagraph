@@ -72,6 +72,15 @@ fn validate(q: &DslQuery) -> Result<(), DslError> {
             check_identifier(prefix)?;
         }
     }
+    // `prefix_index` is interpolated into Qdrant collection names — we
+    // hold it to the same identifier grammar so a mapping/DSL author
+    // can't smuggle a fragment that breaks downstream tooling. Empty
+    // is a no-op.
+    if let Some(prefix) = q.prefix_index.as_deref() {
+        if !prefix.is_empty() {
+            check_identifier(prefix)?;
+        }
+    }
 
     for t in &q.traversals {
         if let Some(from) = &t.from {

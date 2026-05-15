@@ -229,6 +229,7 @@ mod tests {
             raw,
             type_id: TypeId::new("Text"),
             field_label: Some("Car"),
+            prefix_index: None,
         };
         let pred = handler.lower(&mut lower_ctx).unwrap();
 
@@ -365,6 +366,7 @@ mod tests {
             },
             type_id: TypeId::new("Text"),
             field_label: Some("Car"),
+            prefix_index: None,
         };
         assert!(matches!(
             handler.lower(&mut prefix_ctx),
@@ -379,6 +381,7 @@ mod tests {
             },
             type_id: TypeId::new("Text"),
             field_label: Some("Car"),
+            prefix_index: None,
         };
         assert!(matches!(
             handler.lower(&mut in_ctx),

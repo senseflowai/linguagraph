@@ -232,6 +232,31 @@ pub enum Command {
         #[arg(long, default_value_t = 1000)]
         batch_size: usize,
     },
+    /// Delete every node belonging to a single ingest `Source`:
+    /// chunks attached via `:part_of` (always — they're 1:1 with the
+    /// source) and user entities whose only `:mention` link was to
+    /// this source (orphans only — shared entities survive). Vectors
+    /// in Qdrant are cleaned up via `libqlink.delete_batch` across
+    /// every collection inferred from the cached graph specification.
+    DeleteBySource {
+        /// `id` property of the `Source` node to delete.
+        #[arg(long = "source", alias = "source-id")]
+        source: String,
+        /// Optional Cypher prefix label, must match the one used at
+        /// ingest time. Scopes the deletion to that tenant / dataset.
+        #[arg(long)]
+        prefix_label: Option<String>,
+        /// Optional prefix folded into Qdrant collection names, must
+        /// match the one used at ingest time.
+        #[arg(long)]
+        prefix_index: Option<String>,
+        /// Path to the graph specification cache. Used to enumerate
+        /// the Qdrant collections that may hold vectors for the
+        /// doomed entities (one collection per `Text` property name).
+        /// Defaults to the same path the ingest commands use.
+        #[arg(long = "spec-cache", default_value = DEFAULT_GRAPH_SPECIFICATION_CACHE_PATH)]
+        spec_cache: PathBuf,
+    },
     /// Emit a prompt instructing an LLM to extract entities and
     /// relations from a legal text fragment, in the JSON shape
     /// consumed by `ingest-document`.
@@ -332,6 +357,14 @@ pub async fn run(cli: Cli) -> Result<()> {
             relation_types,
             output,
         } => cmd_knowledge_prompt(path, entity_types, relation_types, output).await,
+        Command::DeleteBySource {
+            source,
+            prefix_label,
+            prefix_index,
+            spec_cache,
+        } => {
+            cmd_delete_by_source(&cli.config, source, prefix_label, prefix_index, spec_cache).await
+        }
     }
 }
 
@@ -816,6 +849,38 @@ async fn cmd_ingest_document_cypher(
         "document ingest-cypher was removed; build a graph::Graph and call Pipeline::compile_insert(&graph)"
             .into(),
     )))
+}
+
+async fn cmd_delete_by_source(
+    config_path: &std::path::Path,
+    source: String,
+    prefix_label: Option<String>,
+    prefix_index: Option<String>,
+    spec_cache: PathBuf,
+) -> Result<()> {
+    let cfg = config::load(config_path).await?;
+    let (registry, embedder) = build_registry(&cfg)?;
+
+    // Load the spec snapshot so the pipeline can enumerate per-property
+    // Qdrant collections. Missing cache is fine — the deletion still
+    // covers the two built-in collections (Source.name, Chunk.text).
+    let spec_storage: Arc<dyn GraphSpecificationStorage> =
+        Arc::new(FileGraphSpecificationStorage::new(spec_cache));
+
+    let client = MemgraphClient::connect(&cfg.database).await?;
+    let mut pipeline = Pipeline::new(Arc::new(client), &cfg)
+        .with_registry(registry)
+        .with_graph_specification_storage(spec_storage)
+        .with_prefix_label(prefix_label)
+        .with_prefix_index(prefix_index);
+    if let Some(e) = embedder {
+        pipeline = pipeline.with_embedder(e);
+    }
+    pipeline.load_graph_specification().await?;
+
+    let summary = pipeline.delete_by_source(source).await?;
+    println!("{}", serde_json::to_string_pretty(&summary)?);
+    Ok(())
 }
 
 async fn cmd_knowledge_prompt(

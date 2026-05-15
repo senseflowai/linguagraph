@@ -11,7 +11,7 @@ use crate::dsl::{DslQuery, TraversalQuery};
 use crate::embeddings::SharedEmbedder;
 use crate::error::Result;
 use crate::graph::{Graph, GraphSpecification, GraphSpecificationStorage};
-use crate::ingest::{self, IngestError, PlannerOptions};
+use crate::ingest::{self, DeletePlan, DiscoveredNodes, IngestError, PlannerOptions};
 use crate::types::{handlers, SharedRegistry, SideEffect, SideEffectQueue};
 
 use std::sync::RwLock;
@@ -52,6 +52,11 @@ pub struct Pipeline {
     /// Memgraph data; the two are configured independently so callers
     /// who only need one of them don't pay for the other.
     prefix_index: Option<String>,
+    /// Base name of the SemanticText Qdrant collection, as read from
+    /// `[types.SemanticText].collection`. Captured at construction time
+    /// so `delete_by_source` can enumerate collections without having
+    /// to downcast handlers out of the registry.
+    semantic_collection: String,
 }
 
 impl std::fmt::Debug for Pipeline {
@@ -82,8 +87,36 @@ pub struct IngestSummary {
     pub side_effect_rows: usize,
 }
 
+/// Summary returned by [`Pipeline::delete_by_source`].
+///
+/// `source_found = false` means the source id was unknown to the
+/// database and the call was a no-op — every other counter will be
+/// zero in that case.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct DeleteBySourceSummary {
+    /// Whether the `Source {id: $source_id}` node existed at all.
+    pub source_found: bool,
+    /// Number of orphan user entities removed (entities mentioned only
+    /// by the source being deleted).
+    pub orphan_entities: usize,
+    /// Number of chunks removed. Chunks are 1:1 with their source, so
+    /// they always go.
+    pub chunks: usize,
+    /// 1 when the source node itself was deleted, 0 otherwise.
+    pub sources: usize,
+    /// Number of Qdrant collections we issued `delete_batch` calls
+    /// against. Each call is a no-op for ids the collection doesn't
+    /// know, so this is an upper bound on the work qlink actually did.
+    pub qlink_collections: usize,
+}
+
 impl Pipeline {
     pub fn new(client: Arc<dyn GraphClient>, config: &Config) -> Self {
+        let semantic_collection = config
+            .types
+            .get("SemanticText")
+            .and_then(|t| t.collection.clone())
+            .unwrap_or_else(|| "semantic_text".into());
         Self {
             client,
             max_depth: config.query.max_traversal_depth,
@@ -99,6 +132,7 @@ impl Pipeline {
             graph_specification: Arc::new(RwLock::new(None)),
             prefix_label: None,
             prefix_index: None,
+            semantic_collection,
         }
     }
 
@@ -410,6 +444,79 @@ impl Pipeline {
         })
     }
 
+    // ── Delete path ─────────────────────────────────────────────────────────
+
+    /// Delete a source-rooted subgraph: the `Source {id: $source_id}`
+    /// node, every `Chunk` attached to it via `:part_of`, and every
+    /// user entity whose only `:mention` link was to that source.
+    ///
+    /// Chunks are removed unconditionally — by construction they belong
+    /// to exactly one source. User entities are removed only when they
+    /// have no remaining `:mention` edges to a different source, so
+    /// shared entities survive when a single source is deleted.
+    ///
+    /// The matching Qdrant vectors are cleaned up via
+    /// `libqlink.delete_batch` (no-op for ids the collection doesn't
+    /// know, so we can safely fan a single id list across every
+    /// collection enumerated from the cached graph specification + the
+    /// two built-ins, `name` and `text`).
+    ///
+    /// The three phases — discover, qlink cleanup, `DETACH DELETE` —
+    /// each run as a separate Cypher statement so a failure mid-flight
+    /// leaves the graph in a well-defined intermediate state: a partial
+    /// qlink cleanup is idempotent (running the whole call again is
+    /// fine), and the final `DETACH DELETE` only fires once we know
+    /// every relevant Qdrant point has been removed.
+    pub async fn delete_by_source(
+        &self,
+        source_id: impl Into<String>,
+    ) -> Result<DeleteBySourceSummary> {
+        let plan = DeletePlan::new(source_id, self.semantic_collection_base())
+            .map_err(|e| IngestError::Type(e.to_string()))?
+            .with_prefix_label(self.prefix_label.clone())
+            .map_err(|e| IngestError::Type(e.to_string()))?
+            .with_prefix_index(self.prefix_index.clone());
+
+        let discovered = self
+            .client
+            .execute(&plan.discover_query())
+            .await
+            .map_err(crate::error::Error::Db)
+            .and_then(|r| parse_discovered_nodes(&r).map_err(crate::error::Error::Ingest))?;
+
+        if discovered.is_empty() {
+            return Ok(DeleteBySourceSummary::default());
+        }
+
+        let all_ids = discovered.all_ids();
+
+        // ── qlink cleanup: one call per collection, full id list. ────
+        let collections = plan.qlink_collections(self.graph_specification().as_deref());
+        for coll in &collections {
+            let q = plan.qlink_delete_batch_query(coll, &all_ids);
+            let _ = self.client.execute(&q).await?;
+        }
+
+        // ── DETACH DELETE everything. ────────────────────────────────
+        let _ = self.client.execute(&plan.detach_delete_query(&all_ids)).await?;
+
+        Ok(DeleteBySourceSummary {
+            source_found: true,
+            orphan_entities: discovered.orphan_ids.len(),
+            chunks: discovered.chunk_ids.len(),
+            sources: usize::from(discovered.source_id.is_some()),
+            qlink_collections: collections.len(),
+        })
+    }
+
+    /// Base name of the SemanticText Qdrant collection used by this
+    /// pipeline. Captured from `[types.SemanticText].collection` at
+    /// construction time so we don't have to downcast through the
+    /// type-handler registry.
+    fn semantic_collection_base(&self) -> &str {
+        &self.semantic_collection
+    }
+
     /// Drain the side-effect queue. Currently handles
     /// [`SideEffect::EmbedAndStore`].
     ///
@@ -603,6 +710,53 @@ impl TraversalMerge {
             ],
             rows,
         }
+    }
+}
+
+/// Decode the single-row result of [`DeletePlan::discover_query`] into
+/// a typed [`DiscoveredNodes`]. The query always returns one row with
+/// three columns; an empty result (or a null `source_id`) means the
+/// source did not exist.
+fn parse_discovered_nodes(result: &QueryResult) -> std::result::Result<DiscoveredNodes, IngestError> {
+    let Some(row) = result.rows.first() else {
+        return Ok(DiscoveredNodes::default());
+    };
+    let source_id = row.fields.get("source_id").and_then(db_value_as_i64);
+    if source_id.is_none() {
+        return Ok(DiscoveredNodes::default());
+    }
+    let orphan_ids = id_list(row.fields.get("orphan_ids"))
+        .ok_or_else(|| IngestError::Type("delete: orphan_ids missing or malformed".into()))?;
+    let chunk_ids = id_list(row.fields.get("chunk_ids"))
+        .ok_or_else(|| IngestError::Type("delete: chunk_ids missing or malformed".into()))?;
+    Ok(DiscoveredNodes {
+        source_id,
+        orphan_ids,
+        chunk_ids,
+    })
+}
+
+fn id_list(value: Option<&DbValue>) -> Option<Vec<i64>> {
+    match value? {
+        DbValue::Null => Some(Vec::new()),
+        DbValue::Json(serde_json::Value::Null) => Some(Vec::new()),
+        DbValue::Json(serde_json::Value::Array(items)) => items
+            .iter()
+            .map(|v| match v {
+                serde_json::Value::Number(n) => n.as_i64(),
+                _ => None,
+            })
+            .collect(),
+        _ => None,
+    }
+}
+
+fn db_value_as_i64(value: &DbValue) -> Option<i64> {
+    match value {
+        DbValue::Int(v) => Some(*v),
+        DbValue::Json(serde_json::Value::Number(n)) => n.as_i64(),
+        DbValue::Null | DbValue::Json(serde_json::Value::Null) => None,
+        _ => None,
     }
 }
 
@@ -1190,5 +1344,142 @@ mod tests {
             .add();
 
         pipeline.ingest(&graph.build()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn delete_by_source_runs_discover_qlink_and_detach_phases() {
+        use crate::ast::query::Literal;
+        // MockClient pops from the back, so the LAST enqueued result
+        // is returned by the FIRST `execute` call. That first call is
+        // the discover query, so its row goes in last.
+        let mock = Arc::new(MockClient::new());
+        // qlink + detach calls return empty results — fine.
+        mock.enqueue(QueryResult::empty()); // detach delete
+        // qlink deletes — we don't know how many collections, just
+        // enqueue enough empty results. With no spec set there are 2
+        // collections (name, text).
+        mock.enqueue(QueryResult::empty());
+        mock.enqueue(QueryResult::empty());
+        // discover query — returns one row with the source's id and
+        // some orphan/chunk ids. Mock client builds Value::Json cells
+        // by hand to mirror the production decode path.
+        let mut fields = BTreeMap::new();
+        fields.insert("source_id".into(), DbValue::Json(serde_json::json!(42)));
+        fields.insert(
+            "orphan_ids".into(),
+            DbValue::Json(serde_json::json!([1, 2, 3])),
+        );
+        fields.insert(
+            "chunk_ids".into(),
+            DbValue::Json(serde_json::json!([10, 11])),
+        );
+        mock.enqueue(QueryResult {
+            columns: vec![
+                "source_id".into(),
+                "orphan_ids".into(),
+                "chunk_ids".into(),
+            ],
+            rows: vec![Row { fields }],
+        });
+
+        let pipeline = Pipeline::new(mock.clone(), &cfg());
+        let summary = pipeline
+            .delete_by_source("src-123")
+            .await
+            .expect("delete runs");
+
+        assert!(summary.source_found);
+        assert_eq!(summary.orphan_entities, 3);
+        assert_eq!(summary.chunks, 2);
+        assert_eq!(summary.sources, 1);
+        // Two built-in collections: semantic_text__name + semantic_text__text.
+        assert_eq!(summary.qlink_collections, 2);
+
+        let captured = mock.captured.lock().unwrap();
+        // 1 discover + 2 qlink + 1 detach.
+        assert_eq!(captured.len(), 4);
+        assert!(captured[0].text.contains("MATCH (s:Source"));
+        assert!(captured[1].text.contains("libqlink.delete_batch"));
+        assert!(captured[3].text.contains("DETACH DELETE"));
+        // The detach call must receive every doomed id: 3 orphans + 2 chunks + 1 source = 6.
+        match captured[3].params.get("ids").unwrap() {
+            Literal::List(items) => assert_eq!(items.len(), 6),
+            other => panic!("expected list, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn delete_by_source_is_a_noop_when_source_missing() {
+        let mock = Arc::new(MockClient::new());
+        // Discover returns a row with null source_id — source not found.
+        let mut fields = BTreeMap::new();
+        fields.insert("source_id".into(), DbValue::Null);
+        fields.insert(
+            "orphan_ids".into(),
+            DbValue::Json(serde_json::json!([])),
+        );
+        fields.insert(
+            "chunk_ids".into(),
+            DbValue::Json(serde_json::json!([])),
+        );
+        mock.enqueue(QueryResult {
+            columns: vec![],
+            rows: vec![Row { fields }],
+        });
+
+        let pipeline = Pipeline::new(mock.clone(), &cfg());
+        let summary = pipeline.delete_by_source("nope").await.unwrap();
+
+        assert!(!summary.source_found);
+        assert_eq!(summary.orphan_entities, 0);
+        assert_eq!(summary.chunks, 0);
+        assert_eq!(summary.sources, 0);
+        assert_eq!(summary.qlink_collections, 0);
+
+        // Only the discover query should have run.
+        let captured = mock.captured.lock().unwrap();
+        assert_eq!(captured.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn delete_by_source_threads_prefix_label_into_cypher() {
+        use crate::ast::query::Literal;
+        let mock = Arc::new(MockClient::new());
+        mock.enqueue(QueryResult::empty());
+        mock.enqueue(QueryResult::empty());
+        mock.enqueue(QueryResult::empty());
+        let mut fields = BTreeMap::new();
+        fields.insert("source_id".into(), DbValue::Json(serde_json::json!(1)));
+        fields.insert(
+            "orphan_ids".into(),
+            DbValue::Json(serde_json::json!([])),
+        );
+        fields.insert(
+            "chunk_ids".into(),
+            DbValue::Json(serde_json::json!([])),
+        );
+        mock.enqueue(QueryResult {
+            columns: vec![],
+            rows: vec![Row { fields }],
+        });
+
+        let pipeline = Pipeline::new(mock.clone(), &cfg())
+            .with_prefix_label(Some("Tenant1".to_string()))
+            .with_prefix_index(Some("tenant1".to_string()));
+        pipeline.delete_by_source("src-1").await.unwrap();
+
+        let captured = mock.captured.lock().unwrap();
+        // Discover query carries the prefix on every MATCH.
+        assert!(captured[0].text.contains("(s:Source:Tenant1"));
+        // qlink collection names carry the prefix_index.
+        let coll = captured[1]
+            .params
+            .get("coll")
+            .and_then(|v| match v {
+                Literal::String(s) => Some(s.as_str()),
+                _ => None,
+            })
+            .unwrap_or("");
+        assert!(coll.starts_with("tenant1__semantic_text__"), "got {coll}");
     }
 }

@@ -45,6 +45,13 @@ fn render_node_batch(batch: &NodeBatch) -> Result<CypherQuery, InsertError> {
     }
     check_ident(&batch.label)?;
     check_ident(&batch.merge_on)?;
+    let prefix_suffix = match batch.prefix_label.as_deref() {
+        Some(p) if !p.is_empty() => {
+            check_ident(p)?;
+            format!(":{p}")
+        }
+        _ => String::new(),
+    };
 
     // Each row becomes `{ id: <pk>, props: { ...other props... } }`. The
     // builder is the single place that knows the row layout — the planner
@@ -67,9 +74,10 @@ fn render_node_batch(batch: &NodeBatch) -> Result<CypherQuery, InsertError> {
 
     let text = format!(
         "UNWIND $rows AS row\n\
-         MERGE (n:{label} {{{key}: row.id}})\n\
+         MERGE (n:{label}{prefix} {{{key}: row.id}})\n\
          SET n += row.props",
         label = batch.label,
+        prefix = prefix_suffix,
         key = batch.merge_on,
     );
 
@@ -88,6 +96,13 @@ fn render_relation_batch(batch: &RelationBatch) -> Result<CypherQuery, InsertErr
     check_ident(&batch.to_label)?;
     check_ident(&batch.from_key)?;
     check_ident(&batch.to_key)?;
+    let prefix_suffix = match batch.prefix_label.as_deref() {
+        Some(p) if !p.is_empty() => {
+            check_ident(p)?;
+            format!(":{p}")
+        }
+        _ => String::new(),
+    };
 
     let mut rows = Vec::with_capacity(batch.rows.len());
     for row in &batch.rows {
@@ -103,8 +118,8 @@ fn render_relation_batch(batch: &RelationBatch) -> Result<CypherQuery, InsertErr
 
     let text = format!(
         "UNWIND $rels AS rel\n\
-         MATCH (a:{from_label} {{{from_key}: rel.from}})\n\
-         MATCH (b:{to_label} {{{to_key}: rel.to}})\n\
+         MATCH (a:{from_label}{prefix} {{{from_key}: rel.from}})\n\
+         MATCH (b:{to_label}{prefix} {{{to_key}: rel.to}})\n\
          MERGE (a)-[r:{rel_type}]->(b)\n\
          SET r += rel.props",
         from_label = batch.from_label,
@@ -112,6 +127,7 @@ fn render_relation_batch(batch: &RelationBatch) -> Result<CypherQuery, InsertErr
         to_label = batch.to_label,
         to_key = batch.to_key,
         rel_type = batch.rel_type,
+        prefix = prefix_suffix,
     );
 
     let mut params = BTreeMap::new();
@@ -151,6 +167,7 @@ mod tests {
         let batch = NodeBatch {
             label: "Camera".into(),
             merge_on: "id".into(),
+            prefix_label: None,
             rows: vec![NodeRow { id: s("c1"), props }],
         };
 
@@ -166,6 +183,25 @@ mod tests {
     }
 
     #[test]
+    fn renders_node_batch_with_prefix_label() {
+        let mut props = BTreeMap::new();
+        props.insert("name".into(), s("cam-1"));
+        let batch = NodeBatch {
+            label: "Camera".into(),
+            merge_on: "id".into(),
+            prefix_label: Some("Tenant1".into()),
+            rows: vec![NodeRow { id: s("c1"), props }],
+        };
+
+        let out = render_node_batch(&batch).unwrap();
+        assert!(
+            out.text.contains("MERGE (n:Camera:Tenant1 {id: row.id})"),
+            "got: {}",
+            out.text
+        );
+    }
+
+    #[test]
     fn renders_relation_batch() {
         let batch = RelationBatch {
             rel_type: "LOCATED_IN".into(),
@@ -173,6 +209,7 @@ mod tests {
             from_key: "id".into(),
             to_label: "Place".into(),
             to_key: "id".into(),
+            prefix_label: None,
             rows: vec![RelationRow {
                 from_id: s("c1"),
                 to_id: s("p1"),
@@ -188,10 +225,56 @@ mod tests {
     }
 
     #[test]
+    fn renders_relation_batch_with_prefix_label() {
+        let batch = RelationBatch {
+            rel_type: "LOCATED_IN".into(),
+            from_label: "Camera".into(),
+            from_key: "id".into(),
+            to_label: "Place".into(),
+            to_key: "id".into(),
+            prefix_label: Some("Tenant1".into()),
+            rows: vec![RelationRow {
+                from_id: s("c1"),
+                to_id: s("p1"),
+                props: BTreeMap::new(),
+            }],
+        };
+        let out = render_relation_batch(&batch).unwrap();
+        assert!(
+            out.text.contains("MATCH (a:Camera:Tenant1 {id: rel.from})"),
+            "got: {}",
+            out.text
+        );
+        assert!(
+            out.text.contains("MATCH (b:Place:Tenant1 {id: rel.to})"),
+            "got: {}",
+            out.text
+        );
+    }
+
+    #[test]
     fn rejects_bad_label() {
         let batch = NodeBatch {
             label: "1Bad".into(),
             merge_on: "id".into(),
+            prefix_label: None,
+            rows: vec![NodeRow {
+                id: s("x"),
+                props: BTreeMap::new(),
+            }],
+        };
+        assert!(matches!(
+            render_node_batch(&batch),
+            Err(InsertError::InvalidIdentifier(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_bad_prefix_label() {
+        let batch = NodeBatch {
+            label: "Camera".into(),
+            merge_on: "id".into(),
+            prefix_label: Some("1Bad".into()),
             rows: vec![NodeRow {
                 id: s("x"),
                 props: BTreeMap::new(),
@@ -208,6 +291,7 @@ mod tests {
         let batch = NodeBatch {
             label: "Camera) MATCH (x".into(),
             merge_on: "id".into(),
+            prefix_label: None,
             rows: vec![NodeRow {
                 id: s("x"),
                 props: BTreeMap::new(),
@@ -224,6 +308,7 @@ mod tests {
         let batch = NodeBatch {
             label: "Camera".into(),
             merge_on: "id".into(),
+            prefix_label: None,
             rows: vec![NodeRow {
                 id: Literal::Null,
                 props: BTreeMap::new(),

@@ -96,9 +96,20 @@ pub fn lower_full(
     let mut alias_labels: HashMap<String, String> = HashMap::new();
     alias_labels.insert(dsl.start.alias.clone(), dsl.start.label.clone());
 
+    // A query-wide prefix label is propagated to every node (start +
+    // traversal targets) so the emitter scopes every MATCH pattern
+    // with the same extra label. Empty strings are normalised to None.
+    let query_prefix_label = dsl
+        .prefix_label
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+
     let start = Node {
         label: dsl.start.label.clone(),
         alias: Alias::new(dsl.start.alias.clone()),
+        prefix_label: query_prefix_label.clone(),
     };
 
     let mut traversals = Vec::with_capacity(dsl.traversals.len());
@@ -133,6 +144,7 @@ pub fn lower_full(
             target: Node {
                 label: t.target.label,
                 alias: Alias::new(t.target.alias),
+                prefix_label: query_prefix_label.clone(),
             },
             depth: t.depth.map(|r| Depth {
                 min: r.min,

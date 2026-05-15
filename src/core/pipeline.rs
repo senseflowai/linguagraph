@@ -40,6 +40,12 @@ pub struct Pipeline {
     /// [`Self::lower`] to auto-resolve filter types when the DSL omits
     /// `"type"`.
     graph_specification: Arc<RwLock<Option<Arc<GraphSpecification>>>>,
+    /// Optional Cypher label stamped onto every ingested entity and
+    /// onto every node in lowered queries. Lets a caller scope inserts
+    /// and reads to a tenant, dataset or document without having to
+    /// thread the label through the DSL/Graph by hand. `None` keeps the
+    /// historic behaviour (no extra label).
+    prefix_label: Option<String>,
 }
 
 impl std::fmt::Debug for Pipeline {
@@ -85,7 +91,25 @@ impl Pipeline {
             registry: Arc::new(handlers::core_registry()),
             embedder: None,
             graph_specification: Arc::new(RwLock::new(None)),
+            prefix_label: None,
         }
+    }
+
+    /// Set the prefix label that scopes both ingestion and query
+    /// matching. Pass `None` (or an empty string) to disable. The same
+    /// prefix is applied to every node in queries (start + traversal
+    /// targets) and to every MERGE pattern at ingest, so entities only
+    /// merge with — and queries only return — same-prefix nodes.
+    pub fn with_prefix_label(mut self, prefix_label: Option<impl Into<String>>) -> Self {
+        self.prefix_label = prefix_label
+            .map(Into::into)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        self
+    }
+
+    pub fn prefix_label(&self) -> Option<&str> {
+        self.prefix_label.as_deref()
     }
 
     /// Override the ingestion batch size. Useful for tests and for callers
@@ -170,6 +194,15 @@ impl Pipeline {
     /// without any DSL change.
     pub fn lower(&self, dsl: DslQuery) -> Result<ReadQuery> {
         let graph_specification = self.graph_specification();
+        // The DSL's own `prefix_label` wins over the Pipeline's
+        // configured one: a per-query override (e.g. for a one-off
+        // search across all tenants) can drop or replace the default.
+        let mut dsl = dsl;
+        if dsl.prefix_label.is_none() {
+            if let Some(p) = &self.prefix_label {
+                dsl.prefix_label = Some(p.clone());
+            }
+        }
         let mut q = from_dsl::lower_full(
             dsl,
             self.max_depth,
@@ -304,7 +337,13 @@ impl Pipeline {
             max_batch_size: self.ingest_batch_size,
         };
         let mut effects = SideEffectQueue::new();
-        let insert = ingest::plan_graph_with_registry(graph, opts, &self.registry, &mut effects)?;
+        let insert = ingest::plan_graph_with_registry_and_prefix(
+            graph,
+            opts,
+            &self.registry,
+            &mut effects,
+            self.prefix_label.as_deref(),
+        )?;
         Ok((insert, effects))
     }
 
@@ -785,6 +824,7 @@ mod tests {
             start: Node {
                 label: "T".into(),
                 alias: Alias::new("p"),
+                    prefix_label: None,
             },
             traversals: vec![],
             filter: Some(FilterExpression::And(vec![mk_pred("p"), mk_pred("p")])),

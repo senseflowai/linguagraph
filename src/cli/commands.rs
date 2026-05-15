@@ -57,13 +57,32 @@ pub enum Command {
         path: PathBuf,
     },
     /// Compile a DSL JSON file into Cypher and print it with parameters.
-    Cypher { path: PathBuf },
+    Cypher {
+        path: PathBuf,
+        /// Optional Cypher label appended to every node pattern so the
+        /// query only matches entities ingested under the same
+        /// `prefix_label`.
+        #[arg(long)]
+        prefix_label: Option<String>,
+    },
     /// Compile and execute a DSL file against the configured database.
-    Run { path: PathBuf },
+    Run {
+        path: PathBuf,
+        /// Optional Cypher label appended to every node pattern so the
+        /// query only matches entities ingested under the same
+        /// `prefix_label`.
+        #[arg(long)]
+        prefix_label: Option<String>,
+    },
     /// Compile and execute a traversal-query JSON file against the configured database.
     Traversal {
         /// Path to the traversal-query JSON file.
         path: PathBuf,
+        /// Optional Cypher label appended to every node pattern so the
+        /// traversal only matches entities ingested under the same
+        /// `prefix_label`.
+        #[arg(long)]
+        prefix_label: Option<String>,
     },
     /// Print a schema-aware system prompt for an LLM.
     Prompt {
@@ -115,6 +134,10 @@ pub enum Command {
         /// Maximum rows per UNWIND batch.
         #[arg(long, default_value_t = 1000)]
         batch_size: usize,
+        /// Optional Cypher label stamped onto every ingested entity.
+        /// Entities only merge with same-prefix siblings.
+        #[arg(long)]
+        prefix_label: Option<String>,
     },
     /// Ingest a GraphBuilder JSON file directly into the configured database.
     ///
@@ -127,6 +150,10 @@ pub enum Command {
         /// Maximum rows per UNWIND batch.
         #[arg(long, default_value_t = 1000)]
         batch_size: usize,
+        /// Optional Cypher label stamped onto every ingested entity.
+        /// Entities only merge with same-prefix siblings.
+        #[arg(long)]
+        prefix_label: Option<String>,
     },
     /// Compile a DSL JSON file with the configured type registry and
     /// print the generated Cypher (including any qlink fragments).
@@ -134,6 +161,11 @@ pub enum Command {
     Query {
         /// Path to the DSL JSON file.
         path: PathBuf,
+        /// Optional Cypher label appended to every node pattern so the
+        /// query only matches entities ingested under the same
+        /// `prefix_label`.
+        #[arg(long)]
+        prefix_label: Option<String>,
     },
     /// Analyse an arbitrary JSON document and emit a prompt that
     /// instructs an LLM to produce a linguagraph mapping JSON for it.
@@ -197,9 +229,13 @@ pub enum Command {
 pub async fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Dsl { path } => cmd_dsl(path).await,
-        Command::Cypher { path } => cmd_cypher(&cli.config, path).await,
-        Command::Run { path } => cmd_run(&cli.config, path).await,
-        Command::Traversal { path } => cmd_traversal(&cli.config, path).await,
+        Command::Cypher { path, prefix_label } => {
+            cmd_cypher(&cli.config, path, prefix_label).await
+        }
+        Command::Run { path, prefix_label } => cmd_run(&cli.config, path, prefix_label).await,
+        Command::Traversal { path, prefix_label } => {
+            cmd_traversal(&cli.config, path, prefix_label).await
+        }
         Command::Prompt {
             query,
             schema,
@@ -217,11 +253,24 @@ pub async fn run(cli: Cli) -> Result<()> {
             mapper,
             spec_cache,
             batch_size,
-        } => cmd_ingest_json(&cli.config, data, mapper, spec_cache, batch_size).await,
-        Command::IngestGraph { path, batch_size } => {
-            cmd_ingest_graph(&cli.config, path, batch_size).await
+            prefix_label,
+        } => {
+            cmd_ingest_json(
+                &cli.config,
+                data,
+                mapper,
+                spec_cache,
+                batch_size,
+                prefix_label,
+            )
+            .await
         }
-        Command::Query { path } => cmd_query(&cli.config, path).await,
+        Command::IngestGraph {
+            path,
+            batch_size,
+            prefix_label,
+        } => cmd_ingest_graph(&cli.config, path, batch_size, prefix_label).await,
+        Command::Query { path, prefix_label } => cmd_query(&cli.config, path, prefix_label).await,
         Command::GeneratePrompt {
             path,
             hints,
@@ -299,7 +348,11 @@ async fn cmd_dsl(path: PathBuf) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_cypher(config_path: &std::path::Path, path: PathBuf) -> Result<()> {
+async fn cmd_cypher(
+    config_path: &std::path::Path,
+    path: PathBuf,
+    prefix_label: Option<String>,
+) -> Result<()> {
     let cfg = load_config_or_default(config_path).await;
     let (registry, embedder) = build_registry(&cfg)?;
     // Load the graph specification snapshot so a DSL filter like
@@ -311,7 +364,8 @@ async fn cmd_cypher(config_path: &std::path::Path, path: PathBuf) -> Result<()> 
     );
     let mut pipeline = Pipeline::new(Arc::new(crate::db::MockClient::new()), &cfg)
         .with_registry(registry)
-        .with_graph_specification_storage(spec_storage);
+        .with_graph_specification_storage(spec_storage)
+        .with_prefix_label(prefix_label);
     if let Some(e) = embedder {
         pipeline = pipeline.with_embedder(e);
     }
@@ -339,10 +393,14 @@ async fn cmd_cypher(config_path: &std::path::Path, path: PathBuf) -> Result<()> 
     Ok(())
 }
 
-async fn cmd_query(config_path: &std::path::Path, path: PathBuf) -> Result<()> {
+async fn cmd_query(
+    config_path: &std::path::Path,
+    path: PathBuf,
+    prefix_label: Option<String>,
+) -> Result<()> {
     // Same as `cypher` today; kept as a separate command so future
     // natural-language pipelines can hang off the more obvious name.
-    cmd_cypher(config_path, path).await
+    cmd_cypher(config_path, path, prefix_label).await
 }
 
 async fn cmd_generate_prompt(
@@ -377,7 +435,11 @@ async fn cmd_generate_prompt(
     Ok(())
 }
 
-async fn cmd_run(config_path: &std::path::Path, path: PathBuf) -> Result<()> {
+async fn cmd_run(
+    config_path: &std::path::Path,
+    path: PathBuf,
+    prefix_label: Option<String>,
+) -> Result<()> {
     let cfg = config::load(config_path).await?;
     let client = MemgraphClient::connect(&cfg.database).await?;
     let (registry, embedder) = build_registry(&cfg)?;
@@ -386,7 +448,8 @@ async fn cmd_run(config_path: &std::path::Path, path: PathBuf) -> Result<()> {
     );
     let mut pipeline = Pipeline::new(Arc::new(client), &cfg)
         .with_registry(registry)
-        .with_graph_specification_storage(spec_storage);
+        .with_graph_specification_storage(spec_storage)
+        .with_prefix_label(prefix_label);
     if let Some(e) = embedder {
         pipeline = pipeline.with_embedder(e);
     }
@@ -397,7 +460,11 @@ async fn cmd_run(config_path: &std::path::Path, path: PathBuf) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_traversal(config_path: &std::path::Path, path: PathBuf) -> Result<()> {
+async fn cmd_traversal(
+    config_path: &std::path::Path,
+    path: PathBuf,
+    prefix_label: Option<String>,
+) -> Result<()> {
     let cfg = config::load(config_path).await?;
     let client = MemgraphClient::connect(&cfg.database).await?;
     let (registry, embedder) = build_registry(&cfg)?;
@@ -406,14 +473,23 @@ async fn cmd_traversal(config_path: &std::path::Path, path: PathBuf) -> Result<(
     );
     let mut pipeline = Pipeline::new(Arc::new(client), &cfg)
         .with_registry(registry)
-        .with_graph_specification_storage(spec_storage);
+        .with_graph_specification_storage(spec_storage)
+        .with_prefix_label(prefix_label.clone());
     if let Some(e) = embedder {
         pipeline = pipeline.with_embedder(e);
     }
     pipeline.load_graph_specification().await?;
 
     let raw = fs::read_to_string(&path).await?;
-    let traversal: dsl::TraversalQuery = serde_json::from_str(&raw)?;
+    let mut traversal: dsl::TraversalQuery = serde_json::from_str(&raw)?;
+    // The CLI flag wins over what the traversal JSON declared, so a
+    // user can scope an ad-hoc lookup without editing the file.
+    if let Some(prefix) = prefix_label {
+        let trimmed = prefix.trim().to_string();
+        if !trimmed.is_empty() {
+            traversal.prefix_label = Some(trimmed);
+        }
+    }
     let result = pipeline.run_traversal(traversal).await?;
     print_query_result_table(&result);
     Ok(())
@@ -596,6 +672,7 @@ async fn cmd_ingest_json(
     mapper: PathBuf,
     spec_cache: PathBuf,
     batch_size: usize,
+    prefix_label: Option<String>,
 ) -> Result<()> {
     let cfg = config::load(config_path).await?;
     let mapping = Mapping::load(&mapper).await?;
@@ -620,7 +697,8 @@ async fn cmd_ingest_json(
     let client = MemgraphClient::connect(&cfg.database).await?;
     let mut pipeline = Pipeline::new(Arc::new(client), &cfg)
         .with_ingest_batch_size(batch_size)
-        .with_registry(registry);
+        .with_registry(registry)
+        .with_prefix_label(prefix_label);
     if let Some(e) = embedder {
         pipeline = pipeline.with_embedder(e);
     }
@@ -634,6 +712,7 @@ async fn cmd_ingest_graph(
     config_path: &std::path::Path,
     path: PathBuf,
     batch_size: usize,
+    prefix_label: Option<String>,
 ) -> Result<()> {
     let cfg = config::load(config_path).await?;
     let raw = fs::read_to_string(&path).await?;
@@ -643,7 +722,8 @@ async fn cmd_ingest_graph(
     let client = MemgraphClient::connect(&cfg.database).await?;
     let mut pipeline = Pipeline::new(Arc::new(client), &cfg)
         .with_ingest_batch_size(batch_size)
-        .with_registry(registry);
+        .with_registry(registry)
+        .with_prefix_label(prefix_label);
     if let Some(e) = embedder {
         pipeline = pipeline.with_embedder(e);
     }

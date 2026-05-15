@@ -18,9 +18,27 @@ pub fn plan_graph_with_registry(
     registry: &TypeRegistry,
     effects: &mut SideEffectQueue,
 ) -> Result<InsertQuery, IngestError> {
+    plan_graph_with_registry_and_prefix(graph, opts, registry, effects, None)
+}
+
+/// Like [`plan_graph_with_registry`] but also stamps every emitted
+/// node and relation batch with `prefix_label`. When set, the resulting
+/// Cypher carries the prefix as an extra Cypher label on every MERGE
+/// pattern, so entities only merge with their same-prefix siblings.
+pub fn plan_graph_with_registry_and_prefix(
+    graph: &Graph,
+    opts: PlannerOptions,
+    registry: &TypeRegistry,
+    effects: &mut SideEffectQueue,
+    prefix_label: Option<&str>,
+) -> Result<InsertQuery, IngestError> {
     if opts.max_batch_size == 0 {
         return Err(IngestError::InvalidBatchSize);
     }
+    let prefix_label = prefix_label
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
 
     let mut entity_keys: HashMap<EntityRef, EntityKey> =
         HashMap::with_capacity(graph.entities().len());
@@ -80,6 +98,7 @@ pub fn plan_graph_with_registry(
                 .map(|chunk| NodeBatch {
                     label: shape.label.clone(),
                     merge_on: shape.merge_on.clone(),
+                    prefix_label: prefix_label.clone(),
                     rows: chunk.to_vec(),
                 })
                 .collect::<Vec<_>>()
@@ -99,6 +118,7 @@ pub fn plan_graph_with_registry(
                     from_key: shape.from_key.clone(),
                     to_label: shape.to_label.clone(),
                     to_key: shape.to_key.clone(),
+                    prefix_label: prefix_label.clone(),
                     rows: chunk.to_vec(),
                 })
                 .collect::<Vec<_>>()
@@ -568,6 +588,59 @@ mod tests {
         // 3 PropertyType::Text fields → 3 embedding side effects:
         // Source.name, Person.name, Chunk.text.
         assert_eq!(effects.len(), 3);
+    }
+
+    #[test]
+    fn prefix_label_is_propagated_to_every_batch() {
+        let mut graph = GraphBuilder::new();
+        let a = graph
+            .entity("Person")
+            .strict_primary_key("id")
+            .property("id", PropertyType::String, "a")
+            .add();
+        let b = graph
+            .entity("Person")
+            .strict_primary_key("id")
+            .property("id", PropertyType::String, "b")
+            .add();
+        graph.relationship(a, "KNOWS", b).add().unwrap();
+
+        let mut effects = SideEffectQueue::new();
+        let insert = plan_graph_with_registry_and_prefix(
+            &graph.build(),
+            PlannerOptions::default(),
+            &registry(),
+            &mut effects,
+            Some("Tenant1"),
+        )
+        .unwrap();
+
+        for batch in &insert.node_batches {
+            assert_eq!(batch.prefix_label.as_deref(), Some("Tenant1"));
+        }
+        for batch in &insert.relation_batches {
+            assert_eq!(batch.prefix_label.as_deref(), Some("Tenant1"));
+        }
+    }
+
+    #[test]
+    fn empty_prefix_label_is_normalised_to_none() {
+        let mut graph = GraphBuilder::new();
+        graph
+            .entity("Person")
+            .strict_primary_key("id")
+            .property("id", PropertyType::String, "a")
+            .add();
+
+        let insert = plan_graph_with_registry_and_prefix(
+            &graph.build(),
+            PlannerOptions::default(),
+            &registry(),
+            &mut SideEffectQueue::new(),
+            Some("   "),
+        )
+        .unwrap();
+        assert!(insert.node_batches[0].prefix_label.is_none());
     }
 
     #[test]

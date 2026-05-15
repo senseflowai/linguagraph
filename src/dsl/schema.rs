@@ -24,6 +24,12 @@ pub struct DslQuery {
     pub sort: Vec<SortItem>,
     #[serde(default)]
     pub limit: Option<u32>,
+    /// Optional Cypher label to apply to every node in the query
+    /// (start + traversal targets). When set, only entities that
+    /// carry this label alongside their declared type label are
+    /// matched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_label: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -246,6 +252,11 @@ pub struct TraversalQuery {
     /// Optional max number of result rows.
     #[serde(default)]
     pub limit: Option<u32>,
+    /// Optional Cypher label applied to every node in the lowered
+    /// queries (start + traversal targets). Propagated identically
+    /// into both the entity-search leg and the goal-search leg.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_label: Option<String>,
 }
 
 fn default_chunk_label() -> String {
@@ -289,6 +300,7 @@ impl TraversalQuery {
             entity_field: default_entity_field(),
             entity_label: None,
             limit: None,
+            prefix_label: None,
         }
     }
 
@@ -366,6 +378,7 @@ impl TraversalQuery {
     pub fn into_dsl(self) -> DslQuery {
         let search_text = self.goal_search_text();
         let text_field = format!("c.{}", self.chunk_text_field);
+        let prefix_label = self.prefix_label.clone();
 
         let mut traversals = Vec::with_capacity(2);
 
@@ -422,6 +435,7 @@ impl TraversalQuery {
             group_by: Vec::new(),
             sort: Vec::new(),
             limit: self.limit,
+            prefix_label,
         }
     }
 
@@ -473,6 +487,7 @@ impl TraversalQuery {
             group_by: Vec::new(),
             sort: Vec::new(),
             limit: self.limit,
+            prefix_label: self.prefix_label.clone(),
         }
     }
 }

@@ -267,6 +267,7 @@ pub(crate) fn lower_plan(plan: InsertPlan, opts: PlannerOptions) -> InsertQuery 
             node_batches.push(NodeBatch {
                 label: n.label.clone(),
                 merge_on: n.merge_on.clone(),
+                prefix_label: None,
                 rows: chunk
                     .iter()
                     .map(|r| NodeRow {
@@ -290,6 +291,7 @@ pub(crate) fn lower_plan(plan: InsertPlan, opts: PlannerOptions) -> InsertQuery 
                 from_key: r.from_key.clone(),
                 to_label: r.to_label.clone(),
                 to_key: r.to_key.clone(),
+                prefix_label: None,
                 rows: chunk
                     .iter()
                     .map(|d| RelationRow {

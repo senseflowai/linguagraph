@@ -49,11 +49,21 @@ fn write_node(cur: &mut Cursor, node: &Node) {
     // when the caller doesn't pin the entity type. In Cypher,
     // `MATCH (e)` matches a node of any label, so we just drop the
     // `:Label` suffix instead of emitting `(:)` (which would be a
-    // syntax error).
+    // syntax error). When `prefix_label` is set, it is appended as
+    // an extra label so the match is scoped to that prefix even
+    // when no entity label is given.
+    let prefix_suffix = match node.prefix_label.as_deref() {
+        Some(p) if !p.is_empty() => format!(":{p}"),
+        _ => String::new(),
+    };
     if node.label.is_empty() {
-        let _ = write!(cur.buf, "({})", node.alias);
+        if prefix_suffix.is_empty() {
+            let _ = write!(cur.buf, "({})", node.alias);
+        } else {
+            let _ = write!(cur.buf, "({}{})", node.alias, prefix_suffix);
+        }
     } else {
-        let _ = write!(cur.buf, "({}:{})", node.alias, node.label);
+        let _ = write!(cur.buf, "({}:{}{})", node.alias, node.label, prefix_suffix);
     }
 }
 

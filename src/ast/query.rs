@@ -84,6 +84,11 @@ pub enum Action {
 pub struct Node {
     pub label: String,
     pub alias: Alias,
+    /// Optional Cypher label added alongside `label` to scope matches.
+    /// When set, the emitter renders `(alias:label:prefix_label)`, so
+    /// MATCH (and MERGE) only resolve nodes that carry both labels.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_label: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -289,6 +294,11 @@ pub struct NodeBatch {
     pub label: String,
     /// Property name used as the merge key (typically `id`).
     pub merge_on: String,
+    /// Optional Cypher label appended to the MERGE pattern. When set,
+    /// the MERGE matches only nodes that already carry both `label`
+    /// and `prefix_label`, scoping deduplication to that prefix.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_label: Option<String>,
     /// Each row contributes one MERGE.
     pub rows: Vec<NodeRow>,
 }
@@ -309,6 +319,12 @@ pub struct RelationBatch {
     pub from_key: String,
     pub to_label: String,
     pub to_key: String,
+    /// Optional Cypher label applied to both endpoints of the
+    /// relationship. When set, the MATCH patterns become
+    /// `(:from_label:prefix_label {...})` / `(:to_label:prefix_label {...})`,
+    /// so a relation only merges between entities that share the prefix.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_label: Option<String>,
     pub rows: Vec<RelationRow>,
 }
 

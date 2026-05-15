@@ -174,8 +174,14 @@ impl TypeHandler for SemanticTextHandler {
 
         // Queue the embed-and-store side effect. The collection name is
         // derived from the configured default plus the field name so
-        // multiple SemanticText fields don't collide.
-        let collection = format!("{}__{}", self.config.collection, ctx.field_name);
+        // multiple SemanticText fields don't collide. When a
+        // `prefix_index` is set, it's folded in as the outermost
+        // segment so the same field in different prefixes lands in
+        // separate Qdrant collections.
+        let collection = with_prefix_index(
+            ctx.prefix_index,
+            &format!("{}__{}", self.config.collection, ctx.field_name),
+        );
         ctx.push_side_effect(SideEffect::EmbedAndStore {
             collection,
             label: ctx.node_label.to_string(),
@@ -247,7 +253,7 @@ impl TypeHandler for SemanticTextHandler {
         params.insert("embedding".to_string(), lit_vec);
         params.insert(
             "collection".to_string(),
-            Literal::String(collection_for(self, &ctx.raw.field)),
+            Literal::String(collection_for(self, &ctx.raw.field, ctx.prefix_index)),
         );
         params.insert("query_str".to_string(), Literal::String(text.to_string()));
         params.insert("label".to_string(), Literal::String(label.to_string()));
@@ -479,10 +485,26 @@ fn json_kind(v: &Value) -> &'static str {
 /// Per-field collection name. The handler's configured `collection` is
 /// the prefix; the field name is appended so `Person.bio` and
 /// `Company.description` end up in distinct Qdrant collections (a
-/// requirement for vector-dim sanity).
-fn collection_for(h: &SemanticTextHandler, field: &PropertyRef) -> String {
+/// requirement for vector-dim sanity). An optional `prefix_index`
+/// is folded in as the outermost segment so the same field across
+/// different prefixes routes to separate collections.
+fn collection_for(
+    h: &SemanticTextHandler,
+    field: &PropertyRef,
+    prefix_index: Option<&str>,
+) -> String {
     let prop = field.property.as_deref().unwrap_or(field.alias.as_str());
-    format!("{}__{}", h.config.collection, prop)
+    with_prefix_index(prefix_index, &format!("{}__{}", h.config.collection, prop))
+}
+
+/// Fold an optional prefix into a Qdrant collection name. Empty
+/// prefixes are normalised to "no prefix" so call sites don't need to
+/// distinguish `Some("")` from `None`.
+fn with_prefix_index(prefix_index: Option<&str>, base: &str) -> String {
+    match prefix_index {
+        Some(p) if !p.is_empty() => format!("{p}__{base}"),
+        _ => base.to_string(),
+    }
 }
 
 /// Errors produced by [`build_embed_insert_batch`]. Kept separate from
@@ -629,6 +651,7 @@ mod tests {
             raw: RawTypedFilter { field, op, value },
             type_id: TypeId::new(SemanticTextHandler::TYPE_ID),
             field_label: Some(label),
+            prefix_index: None,
         }
     }
 
@@ -670,11 +693,58 @@ mod tests {
         assert_eq!(stored, Some(Some(Literal::String("Hello world".into()))));
         assert_eq!(q.len(), 1);
         match &q.into_vec()[0] {
-            SideEffect::EmbedAndStore { text, label, .. } => {
+            SideEffect::EmbedAndStore {
+                text,
+                label,
+                collection,
+                ..
+            } => {
                 assert_eq!(text, "Hello world");
                 assert_eq!(label, "Company");
+                // Without a prefix_index the collection name is just
+                // `<base>__<field>`.
+                assert_eq!(collection, "test__name");
             }
         }
+    }
+
+    #[test]
+    fn ingest_prefix_index_scopes_embedding_collection() {
+        let h = handler();
+        let mut q = SideEffectQueue::new();
+        let key = Literal::String("c1".into());
+        let raw = serde_json::json!("Hello world");
+        let mut ctx = IC::new("Company", "id", &key, "name", &raw, &mut q)
+            .with_prefix_index(Some("Tenant1"));
+        h.on_ingest(&mut ctx).unwrap();
+        ctx.finish();
+        match &q.into_vec()[0] {
+            SideEffect::EmbedAndStore { collection, .. } => {
+                assert_eq!(collection, "Tenant1__test__name");
+            }
+        }
+    }
+
+    #[test]
+    fn lower_prefix_index_propagates_into_collection_param() {
+        let h = handler();
+        let field = pref("c", "name");
+        let value = serde_json::json!("apple");
+        let mut ctx = LC {
+            raw: RawTypedFilter {
+                field: &field,
+                op: TypedOp::Search,
+                value: &value,
+            },
+            type_id: TypeId::new(SemanticTextHandler::TYPE_ID),
+            field_label: Some("Company"),
+            prefix_index: Some("Tenant1"),
+        };
+        let pred = h.lower(&mut ctx).unwrap();
+        assert_eq!(
+            pred.params.get("collection").unwrap(),
+            &Literal::String("Tenant1__test__name".into())
+        );
     }
 
     #[test]
@@ -732,6 +802,7 @@ mod tests {
             },
             type_id: TypeId::new(SemanticTextHandler::TYPE_ID),
             field_label: None,
+            prefix_index: None,
         };
         let err = h.lower(&mut ctx).unwrap_err();
         assert!(

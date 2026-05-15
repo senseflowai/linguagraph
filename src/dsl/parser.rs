@@ -63,6 +63,25 @@ fn validate(q: &DslQuery) -> Result<(), DslError> {
     check_identifier(&q.start.alias)?;
     insert_alias(&mut aliases, &q.start.alias)?;
 
+    // A query-wide `prefix_label` is inlined as an extra Cypher label
+    // on every node pattern, so it must match the same conservative
+    // identifier grammar as a regular label. An empty string is a
+    // no-op (treated as None by downstream consumers).
+    if let Some(prefix) = q.prefix_label.as_deref() {
+        if !prefix.is_empty() {
+            check_identifier(prefix)?;
+        }
+    }
+    // `prefix_index` is interpolated into Qdrant collection names — we
+    // hold it to the same identifier grammar so a mapping/DSL author
+    // can't smuggle a fragment that breaks downstream tooling. Empty
+    // is a no-op.
+    if let Some(prefix) = q.prefix_index.as_deref() {
+        if !prefix.is_empty() {
+            check_identifier(prefix)?;
+        }
+    }
+
     for t in &q.traversals {
         if let Some(from) = &t.from {
             check_identifier(from)?;

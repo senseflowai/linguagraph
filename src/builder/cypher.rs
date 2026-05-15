@@ -264,6 +264,7 @@ mod tests {
             start: Node {
                 label: "Person".into(),
                 alias: alias("p"),
+                    prefix_label: None,
             },
             traversals: vec![],
             filter: Some(FilterExpression::Predicate(Predicate {
@@ -294,6 +295,7 @@ mod tests {
             start: Node {
                 label: "Person".into(),
                 alias: alias("p"),
+                    prefix_label: None,
             },
             traversals: vec![EdgeTraversal {
                 from_alias: alias("p"),
@@ -303,6 +305,7 @@ mod tests {
                 target: Node {
                     label: "Person".into(),
                     alias: alias("p2"),
+                    prefix_label: None,
                 },
                 depth: Some(Depth { min: 1, max: 3 }),
                 optional: false,
@@ -330,6 +333,7 @@ mod tests {
             start: Node {
                 label: "Person".into(),
                 alias: alias("p"),
+                    prefix_label: None,
             },
             traversals: vec![EdgeTraversal {
                 from_alias: alias("p"),
@@ -339,6 +343,7 @@ mod tests {
                 target: Node {
                     label: "Company".into(),
                     alias: alias("c"),
+                    prefix_label: None,
                 },
                 depth: None,
                 optional: true,
@@ -373,6 +378,7 @@ mod tests {
             start: Node {
                 label: "Customer".into(),
                 alias: alias("c"),
+                    prefix_label: None,
             },
             traversals: vec![EdgeTraversal {
                 from_alias: alias("c"),
@@ -382,6 +388,7 @@ mod tests {
                 target: Node {
                     label: "Order".into(),
                     alias: alias("o"),
+                    prefix_label: None,
                 },
                 depth: None,
                 optional: false,
@@ -417,6 +424,7 @@ mod tests {
             start: Node {
                 label: "Person".into(),
                 alias: alias("p"),
+                    prefix_label: None,
             },
             traversals: vec![],
             filter: None,
@@ -455,6 +463,7 @@ mod tests {
             start: Node {
                 label: "Order".into(),
                 alias: alias("o"),
+                    prefix_label: None,
             },
             traversals: vec![],
             filter: None,
@@ -484,6 +493,7 @@ mod tests {
             start: Node {
                 label: "Person".into(),
                 alias: alias("p"),
+                    prefix_label: None,
             },
             traversals: vec![],
             filter: Some(FilterExpression::And(vec![

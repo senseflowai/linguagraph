@@ -6,6 +6,7 @@
 //! inspect — and the planner that turns extracted rows into
 //! deterministic [`crate::ast::query::InsertQuery`] batches.
 
+pub mod delete;
 pub mod document;
 pub mod dsl;
 pub mod graph;
@@ -13,6 +14,7 @@ pub mod planner;
 
 use thiserror::Error;
 
+pub use delete::{DeletePlan, DeletePlanError, DiscoveredNodes};
 pub use document::{
     build_document_plan, ChunkInput, DocumentBody, DocumentIngestOptions, DocumentInput,
     EntityInput, RelationInput,

@@ -38,9 +38,6 @@ pub enum Error {
     #[error("Configuration error: {0}")]
     Config(#[from] crate::config::ConfigError),
 
-    #[error("Metadata error: {0}")]
-    Metadata(#[from] crate::metadata::MetadataError),
-
     #[error("Graph specification storage error: {0}")]
     GraphSpecificationStorage(#[from] crate::graph::GraphSpecificationStorageError),
 

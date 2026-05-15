@@ -154,10 +154,18 @@ fn entity_id(entity: &EntityGraph, key_field: &str, index: usize) -> Result<Lite
                     field: key_field.to_string(),
                 }
             })?;
-            literal_from_json(&property.value, &property.name)
+            literal_from_json(
+                &property.value,
+                &property.name,
+                Some(property.property_type),
+            )
         }
         Some(PrimaryKey::Soft(_)) => match entity.properties.get(key_field) {
-            Some(property) => literal_from_json(&property.value, &property.name),
+            Some(property) => literal_from_json(
+                &property.value,
+                &property.name,
+                Some(property.property_type),
+            ),
             None => Ok(Literal::String(format!("{}:{index}", entity.r#type))),
         },
         None => Err(IngestError::MissingGraphPrimaryKey(entity.r#type.clone())),
@@ -213,7 +221,11 @@ fn lower_node_property(
         .map_err(|e| IngestError::Type(e.to_string()))?;
 
     Ok(match ctx.finish() {
-        None => Some(literal_from_json(&property.value, &property.name)?),
+        None => Some(literal_from_json(
+            &property.value,
+            &property.name,
+            Some(property.property_type),
+        )?),
         Some(Some(lit)) => Some(lit),
         Some(None) => None,
     })
@@ -259,7 +271,11 @@ fn lower_relation_property(
         ));
     }
     Ok(match lowered {
-        None => literal_from_json(&property.value, &property.name)?,
+        None => literal_from_json(
+            &property.value,
+            &property.name,
+            Some(property.property_type),
+        )?,
         Some(Some(lit)) => lit,
         Some(None) => Literal::Null,
     })
@@ -284,12 +300,148 @@ fn relation_type_id(property_type: PropertyType) -> &'static str {
     }
 }
 
-fn literal_from_json(value: &Value, property_name: &str) -> Result<Literal, IngestError> {
+fn literal_from_json(
+    value: &Value,
+    property_name: &str,
+    property_type: Option<PropertyType>,
+) -> Result<Literal, IngestError> {
+    if let Some(property_type) = property_type {
+        return literal_from_json_as_type(value, property_name, property_type);
+    }
+
+    literal_from_json_untyped(value, property_name)
+}
+
+fn literal_from_json_as_type(
+    value: &Value,
+    property_name: &str,
+    property_type: PropertyType,
+) -> Result<Literal, IngestError> {
+    match property_type {
+        PropertyType::String | PropertyType::Text => Ok(Literal::String(json_to_string(value))),
+        PropertyType::Number => json_to_number(value, property_name),
+        PropertyType::Boolean => json_to_bool(value, property_name).map(Literal::Bool),
+        PropertyType::DateTime | PropertyType::Timestamp => match value {
+            Value::Null => Ok(Literal::Null),
+            Value::String(s) => Ok(Literal::String(s.clone())),
+            Value::Number(n) => Ok(Literal::String(n.to_string())),
+            other => Err(type_conversion_error(
+                property_name,
+                property_type,
+                json_kind(other),
+            )),
+        },
+    }
+}
+
+fn literal_from_json_untyped(value: &Value, property_name: &str) -> Result<Literal, IngestError> {
     Literal::from_json_any(value).ok_or_else(|| {
         IngestError::Type(format!(
             "property '{property_name}' contains a value that cannot be represented as a Cypher parameter"
         ))
     })
+}
+
+fn json_to_string(value: &Value) -> String {
+    match value {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
+
+fn json_to_number(value: &Value, property_name: &str) -> Result<Literal, IngestError> {
+    match value {
+        Value::Null => Ok(Literal::Null),
+        Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Ok(Literal::Int(i))
+            } else if let Some(f) = n.as_f64() {
+                if f.is_finite() {
+                    Ok(Literal::Float(f))
+                } else {
+                    Err(type_conversion_error(
+                        property_name,
+                        PropertyType::Number,
+                        "non-finite number",
+                    ))
+                }
+            } else {
+                Err(type_conversion_error(
+                    property_name,
+                    PropertyType::Number,
+                    "unsupported number",
+                ))
+            }
+        }
+        Value::String(s) => {
+            let trimmed = s.trim();
+            if let Ok(i) = trimmed.parse::<i64>() {
+                Ok(Literal::Int(i))
+            } else if let Ok(f) = trimmed.parse::<f64>() {
+                if f.is_finite() {
+                    Ok(Literal::Float(f))
+                } else {
+                    Err(type_conversion_error(
+                        property_name,
+                        PropertyType::Number,
+                        "non-finite number",
+                    ))
+                }
+            } else {
+                Err(type_conversion_error(
+                    property_name,
+                    PropertyType::Number,
+                    "string",
+                ))
+            }
+        }
+        other => Err(type_conversion_error(
+            property_name,
+            PropertyType::Number,
+            json_kind(other),
+        )),
+    }
+}
+
+fn json_to_bool(value: &Value, property_name: &str) -> Result<bool, IngestError> {
+    match value {
+        Value::Bool(b) => Ok(*b),
+        Value::String(s) => match s.trim().to_ascii_lowercase().as_str() {
+            "true" | "yes" | "y" | "1" | "on" => Ok(true),
+            "false" | "no" | "n" | "0" | "off" => Ok(false),
+            _ => Err(type_conversion_error(
+                property_name,
+                PropertyType::Boolean,
+                "string",
+            )),
+        },
+        other => Err(type_conversion_error(
+            property_name,
+            PropertyType::Boolean,
+            json_kind(other),
+        )),
+    }
+}
+
+fn type_conversion_error(
+    property_name: &str,
+    property_type: PropertyType,
+    actual: &str,
+) -> IngestError {
+    IngestError::Type(format!(
+        "property '{property_name}' with type {property_type:?} cannot be converted from {actual}"
+    ))
+}
+
+fn json_kind(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "bool",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
 }
 
 fn literal_cmp(a: &Literal, b: &Literal) -> std::cmp::Ordering {
@@ -311,6 +463,7 @@ mod tests {
     use crate::graph::{GraphBuilder, PropertyType};
     use crate::types::handlers::{self, SemanticTextConfig, SemanticTextHandler};
     use crate::types::RegistryBuilder;
+    use serde_json::json;
 
     use super::*;
 
@@ -434,5 +587,44 @@ mod tests {
             err,
             IngestError::MissingGraphPrimaryKeyValue { .. }
         ));
+    }
+
+    #[test]
+    fn string_primary_key_converts_numeric_json_to_string() {
+        let mut graph = GraphBuilder::new();
+        graph
+            .entity("Person")
+            .strict_primary_key("id")
+            .property("id", PropertyType::String, 100)
+            .add();
+
+        let insert = plan_graph_with_registry(
+            &graph.build(),
+            PlannerOptions::default(),
+            &registry(),
+            &mut SideEffectQueue::new(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            insert.node_batches[0].rows[0].id,
+            Literal::String("100".into())
+        );
+    }
+
+    #[test]
+    fn literal_from_json_uses_requested_property_type() {
+        assert_eq!(
+            literal_from_json(&json!("42"), "count", Some(PropertyType::Number)).unwrap(),
+            Literal::Int(42)
+        );
+        assert_eq!(
+            literal_from_json(&json!("yes"), "active", Some(PropertyType::Boolean)).unwrap(),
+            Literal::Bool(true)
+        );
+        assert_eq!(
+            literal_from_json(&json!(["a", 1]), "label", Some(PropertyType::String)).unwrap(),
+            Literal::String(r#"["a",1]"#.into())
+        );
     }
 }

@@ -4,12 +4,10 @@
 //! storage-ready [`Literal`] during ingestion. They share no state with
 //! each other so a registry can compose any subset without coupling.
 //!
-//! The handlers are deliberately schema-only: they don't queue side
-//! effects, they don't need an embedder, and they don't touch the
-//! query path. `lower`/`emit` route plain ops (eq/neq/lt/contains/…)
-//! through Cypher unchanged — the planner falls back to the standard
-//! property comparison emitter when no pre/post fragments are
-//! contributed.
+//! The handlers are deliberately local: they don't queue side effects and
+//! they don't need an embedder. `Text` participates in query lowering so it
+//! can normalize comparison values the same way it normalizes stored values;
+//! the remaining scalar handlers are ingestion-only.
 //!
 //! Adding a new scalar type follows a recipe:
 //!
@@ -19,14 +17,15 @@
 //! 3. Register the handler via [`super::register_default`] (or an
 //!    explicit `RegistryBuilder::register(...)` for tests).
 //!
-//! The handler's [`TypeHandler::on_ingest`] delegates to the parser; the
-//! query stages are inherited from the generic implementation.
-
-use serde_json::Value;
+//! The handler's [`TypeHandler::on_ingest`] delegates to its parser. `Text`
+//! implements query stages directly; other scalar query stages keep the
+//! generic loud-failure implementation.
 
 use crate::ast::query::Literal;
 use crate::types::context::{EmitCtx, IngestCtx, LowerCtx};
 use crate::types::{Capabilities, TypeError, TypeHandler, TypeId, TypedOp, TypedPredicate};
+use serde_json::Value;
+use tracing::warn;
 
 /// Pure parser from raw JSON to a storable [`Literal`].
 ///
@@ -134,13 +133,27 @@ impl TypeHandler for ScalarTypeHandler {
 #[derive(Debug, Default)]
 pub struct TextParser;
 
+impl TextParser {
+    /// Normalize text for storage and query comparisons.
+    ///
+    /// Keeps letters and numbers, removes whitespace/punctuation/symbols,
+    /// and lowercases with Unicode-aware case conversion.
+    pub fn normalize(value: &str) -> String {
+        value
+            .chars()
+            .filter(|ch| ch.is_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect()
+    }
+}
+
 impl ScalarParser for TextParser {
     fn parse(&self, raw: &Value) -> Result<Option<Literal>, TypeError> {
         match raw {
             Value::Null => Ok(None),
-            Value::String(s) => Ok(Some(Literal::String(s.clone()))),
-            Value::Bool(b) => Ok(Some(Literal::String(b.to_string()))),
-            Value::Number(n) => Ok(Some(Literal::String(n.to_string()))),
+            Value::String(s) => Ok(Some(Literal::String(Self::normalize(s)))),
+            Value::Bool(b) => Ok(Some(Literal::String(Self::normalize(&b.to_string())))),
+            Value::Number(n) => Ok(Some(Literal::String(Self::normalize(&n.to_string())))),
             Value::Array(items) => {
                 let lits = items
                     .iter()
@@ -215,10 +228,12 @@ impl ScalarParser for NumberParser {
 fn parse_number_string(s: &str) -> Result<Literal, TypeError> {
     let trimmed = s.trim();
     if trimmed.is_empty() {
-        return Err(TypeError::InvalidValue {
-            ty: "Number".into(),
-            reason: "empty string is not a number".into(),
-        });
+        // return Err(TypeError::InvalidValue {
+        //     ty: "Number".into(),
+        //     reason: "empty string is not a number".into(),
+        // });
+        warn!("empty string is not a number");
+        return Ok(Literal::Int(0));
     }
 
     // Percentage: divide by 100, always a float.
@@ -624,7 +639,7 @@ fn epoch_to_ymdhms(secs: i64) -> (i64, u32, u32, u32, u32, u32) {
     (year, m, d, h, mi, s)
 }
 
-fn json_kind(v: &Value) -> &'static str {
+pub(super) fn json_kind(v: &Value) -> &'static str {
     match v {
         Value::Null => "null",
         Value::Bool(_) => "bool",
@@ -636,11 +651,6 @@ fn json_kind(v: &Value) -> &'static str {
 }
 
 // ─── Convenience constructors ───────────────────────────────────────────
-
-/// Build a [`ScalarTypeHandler`] for the built-in `Text` type.
-pub fn text_handler() -> ScalarTypeHandler {
-    ScalarTypeHandler::new("Text", Box::new(TextParser))
-}
 
 /// Build a [`ScalarTypeHandler`] for the built-in `Number` type.
 pub fn number_handler() -> ScalarTypeHandler {
@@ -665,14 +675,15 @@ pub fn timestamp_handler() -> ScalarTypeHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use serde_json::json;
 
     #[test]
     fn text_parses_strings_numbers_bools_and_arrays() {
         let p = TextParser;
         assert_eq!(
-            p.parse(&json!("hello")).unwrap(),
-            Some(Literal::String("hello".into()))
+            p.parse(&json!("Hello, World!")).unwrap(),
+            Some(Literal::String("helloworld".into()))
         );
         assert_eq!(
             p.parse(&json!(42)).unwrap(),

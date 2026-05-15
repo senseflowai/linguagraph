@@ -87,6 +87,18 @@ fn resolve_value<'a>(
     }
 }
 
+#[derive(Debug, Clone)]
+enum PrimaryKeySpec {
+    Path(JsonPath),
+    Composite(Vec<PrimaryKeyPart>),
+}
+
+#[derive(Debug, Clone)]
+enum PrimaryKeyPart {
+    Literal(String),
+    Path(JsonPath),
+}
+
 /// Public entry-point — pure function over data + mapping.
 pub fn extract(mapping: &Mapping, data: &Value) -> Result<Extracted, MapperError> {
     let mut entities = Vec::with_capacity(mapping.entities.len());
@@ -98,7 +110,7 @@ pub fn extract(mapping: &Mapping, data: &Value) -> Result<Extracted, MapperError
 
 fn extract_entity(ent: &EntityMapping, data: &Value) -> Result<ExtractedEntity, MapperError> {
     let source = parse(&ent.source_path)?;
-    let pk_path = parse(&ent.primary_key)?;
+    let pk_spec = parse_primary_key_spec(&ent.primary_key)?;
 
     // Pre-parse property paths so a bad mapping fails before we walk the
     // potentially huge input. We *do not* require property paths to be
@@ -118,27 +130,7 @@ fn extract_entity(ent: &EntityMapping, data: &Value) -> Result<ExtractedEntity, 
     let mut rows = Vec::with_capacity(source_matches.len());
 
     for src in source_matches {
-        let pk_matches = resolve_value(&pk_path, &source, src.value, &src.context, data);
-        let id = match pk_matches.len() {
-            0 => {
-                return Err(MapperError::MissingPrimaryKey {
-                    label: ent.kind.clone(),
-                    context: src.context.clone(),
-                })
-            }
-            1 => Literal::from_json_any(pk_matches[0].value).ok_or_else(|| {
-                MapperError::MissingPrimaryKey {
-                    label: ent.kind.clone(),
-                    context: src.context.clone(),
-                }
-            })?,
-            n => {
-                return Err(MapperError::AmbiguousPrimaryKey {
-                    label: ent.kind.clone(),
-                    count: n,
-                })
-            }
-        };
+        let id = resolve_primary_key(&pk_spec, ent, &source, &src, data)?;
         if matches!(id, Literal::Null) {
             return Err(MapperError::MissingPrimaryKey {
                 label: ent.kind.clone(),
@@ -157,8 +149,8 @@ fn extract_entity(ent: &EntityMapping, data: &Value) -> Result<ExtractedEntity, 
             match matches.len() {
                 0 => {}
                 1 => {
-                    let raw = matches[0].value.clone();
-                    if let Some(v) = Literal::from_json_any(matches[0].value) {
+                    let raw = normalize_property_raw_value(matches[0].value.clone(), field_type);
+                    if let Some(v) = Literal::from_json_any(&raw) {
                         properties.insert(name.clone(), v);
                     }
                     if field_type.is_some() {
@@ -166,15 +158,17 @@ fn extract_entity(ent: &EntityMapping, data: &Value) -> Result<ExtractedEntity, 
                     }
                 }
                 _ => {
-                    let collected: Vec<Literal> = matches
-                        .iter()
-                        .filter_map(|m| Literal::from_json_any(m.value))
-                        .collect();
-                    properties.insert(name.clone(), Literal::List(collected));
+                    let raw_list: Vec<serde_json::Value> =
+                        matches.iter().map(|m| m.value.clone()).collect();
+                    let raw = normalize_property_raw_value(
+                        serde_json::Value::Array(raw_list.clone()),
+                        field_type,
+                    );
+                    if let Some(v) = Literal::from_json_any(&raw) {
+                        properties.insert(name.clone(), v);
+                    }
                     if field_type.is_some() {
-                        let raw_list: Vec<serde_json::Value> =
-                            matches.iter().map(|m| m.value.clone()).collect();
-                        raw_typed.insert(name.clone(), serde_json::Value::Array(raw_list));
+                        raw_typed.insert(name.clone(), raw);
                     }
                 }
             }
@@ -195,6 +189,115 @@ fn extract_entity(ent: &EntityMapping, data: &Value) -> Result<ExtractedEntity, 
     })
 }
 
+fn normalize_property_raw_value(
+    raw: serde_json::Value,
+    field_type: &Option<String>,
+) -> serde_json::Value {
+    if !is_list_string_type(field_type.as_deref()) {
+        return raw;
+    }
+
+    match raw {
+        serde_json::Value::Array(items) => serde_json::Value::String(
+            items
+                .iter()
+                .map(json_list_item_to_string)
+                .collect::<Vec<_>>()
+                .join(","),
+        ),
+        other => other,
+    }
+}
+
+fn is_list_string_type(field_type: Option<&str>) -> bool {
+    matches!(field_type, Some("String" | "SemanticText"))
+}
+
+fn json_list_item_to_string(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
+
+fn resolve_primary_key(
+    spec: &PrimaryKeySpec,
+    ent: &EntityMapping,
+    source: &JsonPath,
+    src: &Match<'_>,
+    data: &Value,
+) -> Result<Literal, MapperError> {
+    match spec {
+        PrimaryKeySpec::Path(path) => {
+            let pk_matches = resolve_value(path, source, src.value, &src.context, data);
+            resolve_single_primary_key_value(ent, &src.context, pk_matches)
+        }
+        PrimaryKeySpec::Composite(parts) => {
+            let mut out = String::new();
+            for part in parts {
+                match part {
+                    PrimaryKeyPart::Literal(s) => out.push_str(s),
+                    PrimaryKeyPart::Path(path) => {
+                        let pk_matches = resolve_value(path, source, src.value, &src.context, data);
+                        let value =
+                            resolve_single_primary_key_value(ent, &src.context, pk_matches)?;
+                        out.push_str(&primary_key_part_to_string(&value).ok_or_else(|| {
+                            MapperError::MissingPrimaryKey {
+                                label: ent.kind.clone(),
+                                context: src.context.clone(),
+                            }
+                        })?);
+                    }
+                }
+            }
+            if out.is_empty() {
+                return Err(MapperError::MissingPrimaryKey {
+                    label: ent.kind.clone(),
+                    context: src.context.clone(),
+                });
+            }
+            Ok(Literal::String(out))
+        }
+    }
+}
+
+fn resolve_single_primary_key_value(
+    ent: &EntityMapping,
+    context: &[usize],
+    pk_matches: Vec<Match<'_>>,
+) -> Result<Literal, MapperError> {
+    match pk_matches.len() {
+        0 => Err(MapperError::MissingPrimaryKey {
+            label: ent.kind.clone(),
+            context: context.to_vec(),
+        }),
+        1 => Ok(Literal::String(primary_key_json_to_string(
+            pk_matches[0].value,
+        ))),
+        n => Err(MapperError::AmbiguousPrimaryKey {
+            label: ent.kind.clone(),
+            count: n,
+        }),
+    }
+}
+
+fn primary_key_json_to_string(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
+
+fn primary_key_part_to_string(value: &Literal) -> Option<String> {
+    match value {
+        Literal::String(s) => Some(s.clone()),
+        Literal::Bool(b) => Some(b.to_string()),
+        Literal::Int(i) => Some(i.to_string()),
+        Literal::Float(f) if f.is_finite() => Some(f.to_string()),
+        Literal::Null | Literal::List(_) | Literal::Object(_) | Literal::Float(_) => None,
+    }
+}
+
 /// We use `id` as the merge-key field by default. If a property mapping
 /// already uses the same JSONPath as the primary key, reuse its declared
 /// name so the user's choice survives the round-trip.
@@ -205,6 +308,76 @@ fn derive_pk_field_name(ent: &EntityMapping) -> String {
         }
     }
     "id".to_string()
+}
+
+fn parse_primary_key_spec(raw: &str) -> Result<PrimaryKeySpec, MapperError> {
+    if !raw.contains('{') && !raw.contains('}') {
+        return parse(raw).map(PrimaryKeySpec::Path);
+    }
+
+    let mut parts = Vec::new();
+    let mut rest = raw;
+    let mut placeholders = 0usize;
+
+    while let Some(open) = rest.find('{') {
+        if let Some(close_before_open) = rest[..open].find('}') {
+            return Err(invalid_pk_format(
+                raw,
+                format!("unmatched '}}' at position {close_before_open}"),
+            ));
+        }
+
+        if open > 0 {
+            parts.push(PrimaryKeyPart::Literal(rest[..open].to_string()));
+        }
+
+        let after_open = &rest[open + 1..];
+        let close = after_open
+            .find('}')
+            .ok_or_else(|| invalid_pk_format(raw, "unmatched '{'".to_string()))?;
+        let path_raw = &after_open[..close];
+        if path_raw.trim().is_empty() {
+            return Err(invalid_pk_format(raw, "empty placeholder".to_string()));
+        }
+        if path_raw.contains('{') {
+            return Err(invalid_pk_format(
+                raw,
+                "nested placeholders are not supported".to_string(),
+            ));
+        }
+
+        parts.push(PrimaryKeyPart::Path(parse(path_raw)?));
+        placeholders += 1;
+        rest = &after_open[close + 1..];
+    }
+
+    if let Some(pos) = rest.find('}') {
+        return Err(invalid_pk_format(
+            raw,
+            format!(
+                "unmatched '}}' at position {}",
+                raw.len() - rest.len() + pos
+            ),
+        ));
+    }
+    if !rest.is_empty() {
+        parts.push(PrimaryKeyPart::Literal(rest.to_string()));
+    }
+    if placeholders == 0 {
+        return Err(invalid_pk_format(
+            raw,
+            "expected at least one '{JSONPath}' placeholder".to_string(),
+        ));
+    }
+
+    Ok(PrimaryKeySpec::Composite(parts))
+}
+
+fn invalid_pk_format(primary_key: &str, reason: String) -> MapperError {
+    MapperError::InvalidPrimaryKeyFormat {
+        primary_key: primary_key.to_string(),
+        reason,
+    }
 }
 
 fn parse(s: &str) -> Result<JsonPath, MapperError> {
@@ -232,6 +405,25 @@ mod tests {
                     source_path: (*p).into(),
                     description: None,
                     field_type: None,
+                })
+                .collect(),
+            name: None,
+            description: None,
+        }
+    }
+
+    fn typed_ent(kind: &str, src: &str, pk: &str, props: &[(&str, &str, &str)]) -> EntityMapping {
+        EntityMapping {
+            kind: kind.into(),
+            source_path: src.into(),
+            primary_key: pk.into(),
+            properties: props
+                .iter()
+                .map(|(n, p, t)| PropertyMapping {
+                    name: (*n).into(),
+                    source_path: (*p).into(),
+                    description: None,
+                    field_type: Some((*t).into()),
                 })
                 .collect(),
             name: None,
@@ -296,6 +488,18 @@ mod tests {
     }
 
     #[test]
+    fn numeric_primary_key_is_converted_to_string() {
+        let mapping = Mapping {
+            entities: vec![ent("Camera", "$.cameras[*]", "$.cameras[*].id", &[])],
+            relationships: vec![],
+        };
+        let data = json!({"cameras": [{"id": 100}]});
+
+        let out = extract(&mapping, &data).unwrap();
+        assert_eq!(out.entities[0].rows[0].id, Literal::String("100".into()));
+    }
+
+    #[test]
     fn nested_wildcards_carry_full_context() {
         let mapping = Mapping {
             entities: vec![ent(
@@ -317,6 +521,58 @@ mod tests {
         assert_eq!(e.rows.len(), 3);
         assert_eq!(e.rows[0].context, vec![0, 0]);
         assert_eq!(e.rows[2].context, vec![1, 0]);
+    }
+
+    #[test]
+    fn composite_primary_key_formats_multiple_contextual_paths() {
+        let mapping = Mapping {
+            entities: vec![ent(
+                "WorkItem",
+                "$[*].stationWorks[*]",
+                "{$[*].id}-{$[*].stationWorks[*].id}",
+                &[],
+            )],
+            relationships: vec![],
+        };
+        let data = json!([
+            {
+                "id": 100,
+                "stationWorks": [
+                    {"id": 2, "displayName": "diagnostics"},
+                    {"id": 3, "displayName": "repair"}
+                ]
+            },
+            {
+                "id": 101,
+                "stationWorks": [
+                    {"id": 1, "displayName": "wash"}
+                ]
+            }
+        ]);
+
+        let out = extract(&mapping, &data).unwrap();
+        let rows = &out.entities[0].rows;
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].id, Literal::String("100-2".into()));
+        assert_eq!(rows[1].id, Literal::String("100-3".into()));
+        assert_eq!(rows[2].id, Literal::String("101-1".into()));
+    }
+
+    #[test]
+    fn malformed_composite_primary_key_is_rejected() {
+        let mapping = Mapping {
+            entities: vec![ent(
+                "WorkItem",
+                "$[*].stationWorks[*]",
+                "{$[*].id-{$[*].stationWorks[*].id}",
+                &[],
+            )],
+            relationships: vec![],
+        };
+        let data = json!([]);
+
+        let err = extract(&mapping, &data).unwrap_err();
+        assert!(matches!(err, MapperError::InvalidPrimaryKeyFormat { .. }));
     }
 
     #[test]
@@ -344,5 +600,63 @@ mod tests {
         let data = json!({"cameras": [{"id": "c1"}]});
         let out = extract(&mapping, &data).unwrap();
         assert_eq!(out.entities[0].rows[0].properties.len(), 0);
+    }
+
+    #[test]
+    fn string_typed_array_property_is_joined_with_commas() {
+        let mapping = Mapping {
+            entities: vec![typed_ent(
+                "Item",
+                "$.items[*]",
+                "$.items[*].id",
+                &[("tags", "$.items[*].tags", "String")],
+            )],
+            relationships: vec![],
+        };
+        let data = json!({
+            "items": [
+                {"id": "i1", "tags": ["red", "large", 7]}
+            ]
+        });
+
+        let out = extract(&mapping, &data).unwrap();
+        let row = &out.entities[0].rows[0];
+        assert_eq!(
+            row.properties.get("tags"),
+            Some(&Literal::String("red,large,7".into()))
+        );
+        assert_eq!(
+            row.raw_typed.get("tags"),
+            Some(&serde_json::Value::String("red,large,7".into()))
+        );
+    }
+
+    #[test]
+    fn semantic_text_multiple_matches_are_joined_with_commas() {
+        let mapping = Mapping {
+            entities: vec![typed_ent(
+                "Item",
+                "$.items[*]",
+                "$.items[*].id",
+                &[("notes", "$.items[*].notes[*]", "SemanticText")],
+            )],
+            relationships: vec![],
+        };
+        let data = json!({
+            "items": [
+                {"id": "i1", "notes": ["first", "second"]}
+            ]
+        });
+
+        let out = extract(&mapping, &data).unwrap();
+        let row = &out.entities[0].rows[0];
+        assert_eq!(
+            row.properties.get("notes"),
+            Some(&Literal::String("first,second".into()))
+        );
+        assert_eq!(
+            row.raw_typed.get("notes"),
+            Some(&serde_json::Value::String("first,second".into()))
+        );
     }
 }

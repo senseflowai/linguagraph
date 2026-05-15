@@ -10,9 +10,8 @@ use crate::db::{GraphClient, QueryResult, Row, Value as DbValue};
 use crate::dsl::{DslQuery, TraversalQuery};
 use crate::embeddings::SharedEmbedder;
 use crate::error::Result;
-use crate::graph::Graph;
+use crate::graph::{Graph, GraphSpecification, GraphSpecificationStorage};
 use crate::ingest::{self, IngestError, PlannerOptions};
-use crate::metadata::{MetadataStore, PropertyMetadata};
 use crate::types::{handlers, SharedRegistry, SideEffect, SideEffectQueue};
 
 use std::sync::RwLock;
@@ -27,7 +26,7 @@ pub struct Pipeline {
     max_depth: u32,
     default_limit: u32,
     ingest_batch_size: usize,
-    metadata_store: Option<Arc<dyn MetadataStore>>,
+    graph_specification_storage: Option<Arc<dyn GraphSpecificationStorage>>,
     /// Registry of [`crate::types::TypeHandler`] instances. Defaults to
     /// an empty registry so plain (untyped) DSL queries don't need any
     /// configuration; the CLI / library callers register handlers via
@@ -37,10 +36,10 @@ pub struct Pipeline {
     /// pipeline). Optional: when not configured, queries that reference
     /// types requiring an embedder fail at lowering time, not at ingest.
     embedder: Option<SharedEmbedder>,
-    /// In-memory snapshot of [`PropertyMetadata`] consulted by
+    /// In-memory snapshot of [`GraphSpecification`] consulted by
     /// [`Self::lower`] to auto-resolve filter types when the DSL omits
     /// `"type"`.
-    metadata: Arc<RwLock<Option<Arc<PropertyMetadata>>>>,
+    graph_specification: Arc<RwLock<Option<Arc<GraphSpecification>>>>,
 }
 
 impl std::fmt::Debug for Pipeline {
@@ -49,7 +48,10 @@ impl std::fmt::Debug for Pipeline {
             .field("max_depth", &self.max_depth)
             .field("default_limit", &self.default_limit)
             .field("ingest_batch_size", &self.ingest_batch_size)
-            .field("metadata_store", &self.metadata_store.is_some())
+            .field(
+                "graph_specification_storage",
+                &self.graph_specification_storage.is_some(),
+            )
             .field("registry", &self.registry)
             .field("embedder", &self.embedder.is_some())
             .finish_non_exhaustive()
@@ -75,14 +77,14 @@ impl Pipeline {
             max_depth: config.query.max_traversal_depth,
             default_limit: config.query.default_limit,
             ingest_batch_size: 1000,
-            metadata_store: None,
+            graph_specification_storage: None,
             // Default registry contains the built-in scalar parsers.
             // Graph `Text` properties route through `SemanticText`, so
             // callers ingesting text-rich graphs should register that
             // handler via [`Self::with_registry`].
             registry: Arc::new(handlers::core_registry()),
             embedder: None,
-            metadata: Arc::new(RwLock::new(None)),
+            graph_specification: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -93,14 +95,17 @@ impl Pipeline {
         self
     }
 
-    /// Attach a metadata store for query-time type metadata.
-    pub fn with_metadata_store(mut self, store: Arc<dyn MetadataStore>) -> Self {
-        self.metadata_store = Some(store);
+    /// Attach graph specification storage for query-time type inference.
+    pub fn with_graph_specification_storage(
+        mut self,
+        storage: Arc<dyn GraphSpecificationStorage>,
+    ) -> Self {
+        self.graph_specification_storage = Some(storage);
         self
     }
 
-    pub fn metadata_store(&self) -> Option<&Arc<dyn MetadataStore>> {
-        self.metadata_store.as_ref()
+    pub fn graph_specification_storage(&self) -> Option<&Arc<dyn GraphSpecificationStorage>> {
+        self.graph_specification_storage.as_ref()
     }
 
     /// Attach a type-handler registry. Without one, typed DSL filters
@@ -124,31 +129,34 @@ impl Pipeline {
         self
     }
 
-    /// Pre-load the metadata snapshot used to auto-resolve filter
-    /// types. Pass a snapshot you already have (typically obtained via
-    /// `MetadataStore::load` at startup); pairs cleanly with
-    /// [`Self::with_metadata_store`] for the write-back side.
-    pub fn with_metadata(self, meta: Arc<PropertyMetadata>) -> Self {
-        *self.metadata.write().expect("metadata lock poisoned") = Some(meta);
+    /// Pre-load the graph specification snapshot used to auto-resolve
+    /// filter types.
+    pub fn with_graph_specification(self, specification: Arc<GraphSpecification>) -> Self {
+        *self
+            .graph_specification
+            .write()
+            .expect("graph specification lock poisoned") = Some(specification);
         self
     }
 
-    /// Eagerly load the metadata snapshot from the configured store.
-    /// No-op when no store is set. Intended to be called at startup so
-    /// the first query benefits from auto-typed filters.
-    pub async fn load_metadata(&self) -> Result<()> {
-        if let Some(store) = &self.metadata_store {
-            let m = store.load().await?;
-            *self.metadata.write().expect("metadata lock poisoned") = Some(Arc::new(m));
+    /// Eagerly load the graph specification snapshot from configured storage.
+    /// No-op when no storage is set.
+    pub async fn load_graph_specification(&self) -> Result<()> {
+        if let Some(storage) = &self.graph_specification_storage {
+            let specification = storage.load().await?;
+            *self
+                .graph_specification
+                .write()
+                .expect("graph specification lock poisoned") = Some(Arc::new(specification));
         }
         Ok(())
     }
 
-    /// Snapshot of the metadata currently informing query lowering.
-    pub fn metadata(&self) -> Option<Arc<PropertyMetadata>> {
-        self.metadata
+    /// Snapshot of the graph specification currently informing query lowering.
+    pub fn graph_specification(&self) -> Option<Arc<GraphSpecification>> {
+        self.graph_specification
             .read()
-            .expect("metadata lock poisoned")
+            .expect("graph specification lock poisoned")
             .clone()
     }
 
@@ -156,17 +164,17 @@ impl Pipeline {
 
     /// Lower a DSL document to the typed AST. Pure; no I/O.
     ///
-    /// When a [`PropertyMetadata`] snapshot is loaded, filters that
+    /// When a [`GraphSpecification`] snapshot is loaded, filters that
     /// omit `"type"` are auto-resolved against it: if the property's
     /// type is `SemanticText`, the SemanticText handler is selected
     /// without any DSL change.
     pub fn lower(&self, dsl: DslQuery) -> Result<ReadQuery> {
-        let meta_snapshot = self.metadata();
+        let graph_specification = self.graph_specification();
         let mut q = from_dsl::lower_full(
             dsl,
             self.max_depth,
             &self.registry,
-            meta_snapshot.as_deref(),
+            graph_specification.as_deref(),
         )?;
         if q.limit.is_none() {
             q.limit = Some(self.default_limit);
@@ -196,20 +204,23 @@ impl Pipeline {
         use crate::types::PrepareCtx;
 
         // Group typed predicates by their handler's type id.
-        let mut by_type: std::collections::HashMap<crate::types::TypeId, Vec<&mut crate::types::TypedPredicate>> =
-            std::collections::HashMap::new();
+        let mut by_type: std::collections::HashMap<
+            crate::types::TypeId,
+            Vec<&mut crate::types::TypedPredicate>,
+        > = std::collections::HashMap::new();
         if let Some(expr) = ast.filter.as_mut() {
             collect_typed_predicates_mut(expr, &mut by_type);
         }
 
         for (type_id, mut preds) in by_type {
-            let handler = self.registry.get(&type_id).map_err(|e| {
-                crate::error::Error::Ast(crate::ast::AstError::Type(e))
-            })?;
+            let handler = self
+                .registry
+                .get(&type_id)
+                .map_err(|e| crate::error::Error::Ast(crate::ast::AstError::Type(e)))?;
             let mut ctx = PrepareCtx::new(&mut preds);
-            handler.prepare(&mut ctx).map_err(|e| {
-                crate::error::Error::Ast(crate::ast::AstError::Type(e))
-            })?;
+            handler
+                .prepare(&mut ctx)
+                .map_err(|e| crate::error::Error::Ast(crate::ast::AstError::Type(e)))?;
         }
         Ok(())
     }
@@ -632,7 +643,10 @@ fn db_value_to_json(value: &DbValue) -> serde_json::Value {
 /// references to every `Typed` predicate, grouped by `type_id`.
 fn collect_typed_predicates_mut<'a>(
     expr: &'a mut crate::ast::query::FilterExpression,
-    out: &mut std::collections::HashMap<crate::types::TypeId, Vec<&'a mut crate::types::TypedPredicate>>,
+    out: &mut std::collections::HashMap<
+        crate::types::TypeId,
+        Vec<&'a mut crate::types::TypedPredicate>,
+    >,
 ) {
     use crate::ast::query::FilterExpression;
     match expr {
@@ -658,9 +672,7 @@ pub use crate::embeddings::Embedder as _Embedder;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{
-        DatabaseConfig, GraphSpecificationConfig, LlmConfig, MetadataConfig, QueryConfig,
-    };
+    use crate::config::{DatabaseConfig, GraphSpecificationConfig, LlmConfig, QueryConfig};
     use crate::db::MockClient;
     use crate::graph::{GraphBuilder, PropertyType};
 
@@ -676,7 +688,6 @@ mod tests {
             },
             llm: LlmConfig::default(),
             query: QueryConfig::default(),
-            metadata: MetadataConfig::default(),
             graph_specification: GraphSpecificationConfig::default(),
             types: Default::default(),
         }
@@ -714,7 +725,10 @@ mod tests {
             fn on_ingest(&self, _: &mut IngestCtx<'_>) -> std::result::Result<(), TypeError> {
                 Ok(())
             }
-            fn lower(&self, _: &mut LowerCtx<'_>) -> std::result::Result<TypedPredicate, TypeError> {
+            fn lower(
+                &self,
+                _: &mut LowerCtx<'_>,
+            ) -> std::result::Result<TypedPredicate, TypeError> {
                 unreachable!("test pre-builds the AST")
             }
             fn prepare(&self, ctx: &mut PrepareCtx<'_>) -> std::result::Result<(), TypeError> {
@@ -723,12 +737,15 @@ mod tests {
                 // Mark each predicate so we can verify the mutation
                 // crossed the lifetime boundary cleanly.
                 for p in ctx.predicates_mut() {
-                    p.params
-                        .insert("prepared".into(), Literal::Bool(true));
+                    p.params.insert("prepared".into(), Literal::Bool(true));
                 }
                 Ok(())
             }
-            fn emit(&self, _: &mut EmitCtx<'_>, _: &TypedPredicate) -> std::result::Result<(), TypeError> {
+            fn emit(
+                &self,
+                _: &mut EmitCtx<'_>,
+                _: &TypedPredicate,
+            ) -> std::result::Result<(), TypeError> {
                 unreachable!("prepare-only test")
             }
             fn prompt_hint(&self) -> PromptHint {
@@ -748,8 +765,7 @@ mod tests {
                 })
                 .build(),
         );
-        let pipeline =
-            Pipeline::new(Arc::new(MockClient::new()), &cfg()).with_registry(registry);
+        let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg()).with_registry(registry);
 
         // Build an AST with two `Counted` predicates AND-ed together.
         let mk_pred = |alias: &str| {
@@ -787,7 +803,11 @@ mod tests {
         pipeline.prepare(&mut ast).unwrap();
 
         assert_eq!(prepared_calls.load(Ordering::SeqCst), 1, "one batched call");
-        assert_eq!(prepared_size.load(Ordering::SeqCst), 2, "both predicates batched");
+        assert_eq!(
+            prepared_size.load(Ordering::SeqCst),
+            2,
+            "both predicates batched"
+        );
 
         // Both predicates carry the mutation written through PrepareCtx.
         fn assert_prepared(e: &FilterExpression) {

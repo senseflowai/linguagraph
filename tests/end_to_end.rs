@@ -25,7 +25,6 @@ fn test_config() -> Config {
             max_traversal_depth: 4,
             default_limit: 50,
         },
-        metadata: Default::default(),
         graph_specification: GraphSpecificationConfig::default(),
         types: Default::default(),
     }

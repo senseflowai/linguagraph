@@ -125,10 +125,7 @@ pub enum ReturnItem {
     /// Pre-rendered expression, e.g. `__sources__ AS sources`. Used
     /// by normalization passes (sources/score injection) that compute
     /// projections from already-resolved variables.
-    Expr {
-        expr: String,
-        alias: Option<String>,
-    },
+    Expr { expr: String, alias: Option<String> },
 }
 
 #[derive(Debug, Clone)]
@@ -178,7 +175,12 @@ impl LogicalPlan {
     /// the plan in follow-up work.
     pub fn from_read_query(q: &ReadQuery) -> Self {
         let mut plan = Self::new();
-        plan.push(Clause::Match(match_clause_for(&q.start.alias, &q.start.label, &q.traversals, false)));
+        plan.push(Clause::Match(match_clause_for(
+            &q.start.alias,
+            &q.start.label,
+            &q.traversals,
+            false,
+        )));
         // OPTIONAL MATCH per optional traversal.
         for t in q.traversals.iter().filter(|t| t.optional) {
             plan.push(Clause::OptionalMatch(MatchClause {

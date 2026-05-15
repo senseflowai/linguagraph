@@ -35,8 +35,6 @@ impl GraphClient for MockClient {
             .lock()
             .expect("captured poisoned")
             .push(q.clone());
-        println!("{:?}", q.text);
-        println!("{:?}", q.params);
         let next = self.queue.lock().expect("mock queue poisoned").pop();
         Ok(next.unwrap_or_default())
     }

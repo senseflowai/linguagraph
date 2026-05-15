@@ -345,5 +345,5 @@ impl Default for PromptHint {
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
-/// Trivially construct a property metadata map for tests / examples.
+/// Trivially accept a property-info map for tests / examples.
 pub fn _unused_param_kept_for_doc(_: BTreeMap<String, String>) {}

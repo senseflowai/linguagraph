@@ -35,6 +35,9 @@ pub enum MapperError {
     #[error("invalid JSONPath '{path}': {source}")]
     Path { path: String, source: PathError },
 
+    #[error("invalid primary key format '{primary_key}': {reason}")]
+    InvalidPrimaryKeyFormat { primary_key: String, reason: String },
+
     #[error("property path '{prop}' is not a child of entity source path '{src}'")]
     PropertyNotUnderSource { prop: String, src: String },
 

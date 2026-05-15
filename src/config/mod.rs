@@ -16,8 +16,6 @@ pub struct Config {
     #[serde(default)]
     pub query: QueryConfig,
     #[serde(default)]
-    pub metadata: MetadataConfig,
-    #[serde(default)]
     pub graph_specification: GraphSpecificationConfig,
     /// Per-type configuration. Each `[types.<TypeId>]` block becomes one
     /// entry in this map and is read by the corresponding handler at
@@ -105,32 +103,14 @@ fn default_limit() -> u32 {
     100
 }
 
-/// Property-metadata cache settings. The default backend is a JSON file;
-/// future SQL or KV backends will plug in via [`crate::metadata::MetadataStore`]
-/// without changing this config shape (add a `backend` field at that point).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MetadataConfig {
-    #[serde(default = "default_metadata_path")]
-    pub cache_path: String,
-}
-
-impl Default for MetadataConfig {
-    fn default() -> Self {
-        Self {
-            cache_path: default_metadata_path(),
-        }
-    }
-}
-
-fn default_metadata_path() -> String {
-    ".linguagraph/property_metadata.json".into()
-}
-
 /// Graph specification settings. The specification is used to annotate
 /// prompts and to select query-relevant entity types by embedding entity
 /// descriptions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphSpecificationConfig {
+    /// Path to the graph specification cache file.
+    #[serde(default = "default_graph_specification_cache_path")]
+    pub cache_path: String,
     /// Path to the embedding model used for graph-specification entity
     /// matching. When omitted, the configured embedder falls back to the
     /// default mock backend in builds without a concrete model.
@@ -153,12 +133,17 @@ pub struct GraphSpecificationConfig {
 impl Default for GraphSpecificationConfig {
     fn default() -> Self {
         Self {
+            cache_path: default_graph_specification_cache_path(),
             embedding_model: None,
             reranking_model: None,
             embedding_dim: default_graph_specification_embedding_dim(),
             reranking_threshold: default_graph_specification_reranking_threshold(),
         }
     }
+}
+
+fn default_graph_specification_cache_path() -> String {
+    crate::graph::DEFAULT_GRAPH_SPECIFICATION_CACHE_PATH.into()
 }
 
 fn default_graph_specification_embedding_dim() -> usize {

@@ -95,7 +95,10 @@ pub fn inject_sources_projection(plan: &mut LogicalPlan, opts: &SourceProjection
     );
 
     // Now extend the project clause with the sources column.
-    if let Some(Clause::Project(p)) = plan.clauses.iter_mut().find(|c| matches!(c, Clause::Project(_)))
+    if let Some(Clause::Project(p)) = plan
+        .clauses
+        .iter_mut()
+        .find(|c| matches!(c, Clause::Project(_)))
     {
         p.items.push(ReturnItem::Expr {
             expr: "__sources__".into(),
@@ -275,6 +278,9 @@ mod tests {
         let before = plan.clauses.len();
         inject_sources_projection(&mut plan, &SourceProjectionOpts::default());
         let after = plan.clauses.len();
-        assert_eq!(before, after, "pass is a no-op when sources is already projected");
+        assert_eq!(
+            before, after,
+            "pass is a no-op when sources is already projected"
+        );
     }
 }

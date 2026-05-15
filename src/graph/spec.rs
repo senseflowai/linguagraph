@@ -100,6 +100,16 @@ impl PropertySpecRecord {
     pub fn key(&self) -> String {
         property_key(&self.entity, &self.name)
     }
+
+    pub fn type_id(&self) -> &'static str {
+        match self.r#type {
+            PropertyType::String => "Text",
+            PropertyType::Text => "SemanticText",
+            PropertyType::Number => "Number",
+            PropertyType::Boolean => "Boolean",
+            PropertyType::DateTime | PropertyType::Timestamp => "Timestamp",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -290,6 +300,27 @@ impl GraphSpecification {
     ) -> Option<&PropertySpecRecord> {
         self.get(property_key(entity.as_ref(), property.as_ref()))
             .and_then(SpecRecord::as_property)
+    }
+
+    pub fn get_type(&self, entity: impl AsRef<str>, property: impl AsRef<str>) -> Option<&str> {
+        self.get_property(entity, property)
+            .map(PropertySpecRecord::type_id)
+    }
+
+    pub fn get_query_type(
+        &self,
+        entity: impl AsRef<str>,
+        property: impl AsRef<str>,
+    ) -> Option<&str> {
+        let property = self.get_property(entity, property)?;
+        match property.r#type {
+            PropertyType::String => Some(property.type_id()),
+            PropertyType::Text => Some(property.type_id()),
+            PropertyType::Number
+            | PropertyType::Boolean
+            | PropertyType::DateTime
+            | PropertyType::Timestamp => None,
+        }
     }
 
     pub fn records_for_entity(&self, entity: impl AsRef<str>) -> Vec<&SpecRecord> {

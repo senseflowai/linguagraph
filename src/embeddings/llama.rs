@@ -31,6 +31,7 @@ fn backend() -> Result<&'static LlamaBackend, EmbedError> {
     })
 }
 
+#[derive(Debug)]
 pub struct LLamaTokenizer {
     pub tokens: Vec<LlamaToken>,
 }

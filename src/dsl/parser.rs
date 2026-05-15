@@ -88,7 +88,7 @@ fn validate(q: &DslQuery) -> Result<(), DslError> {
     for f in &q.filters {
         check_field_ref(&f.field)?;
         // Op validation is deferred to the lowering step, which has
-        // both the registry and the property metadata at hand. The
+        // both the registry and the graph specification at hand. The
         // parser only checks the op is identifier-shaped — anything
         // beyond that requires knowing whether the filter ends up
         // typed (handler ops) or untyped (plain ops). The lowerer

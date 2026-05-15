@@ -1,0 +1,54 @@
+{
+  "entities": [
+    {
+      "type": "Client",
+      "source_path": "$.ArrayOfExportCar.ExportCar[*]",
+      "primary_key": "$.ArrayOfExportCar.ExportCar[*].OwnerId",
+      "description": "Service Center Customer."
+    },
+    {
+      "type": "Car",
+      "source_path": "$.ArrayOfExportCar.ExportCar[*]",
+      "primary_key": "$.ArrayOfExportCar.ExportCar[*].Id",
+      "description": "The customer's car is serviced at this service station.",
+      "properties": [
+        {
+          "name": "id",
+          "type": "String",
+          "source_path": "$.ArrayOfExportCar.ExportCar[*].Id"
+        },
+        {
+          "name": "license_plate_number",
+          "type": "SemanticText",
+          "source_path": "$.ArrayOfExportCar.ExportCar[*].RegNo",
+          "description": "This car's registration number."
+        },
+        {
+          "name": "vin",
+          "type": "String",
+          "source_path": "$.ArrayOfExportCar.ExportCar[*].BodyNo",
+          "description": "VIN number of this car."
+        },
+        {
+          "name": "name",
+          "type": "SemanticText",
+          "source_path": "$.ArrayOfExportCar.ExportCar[*].DisplayName",
+          "description": "Car name, make and model, for example: VOLVO  S80 (2.4), HONDA CIVIC X FC (1.5)."
+        },
+        {
+          "name": "year",
+          "type": "Number",
+          "source_path": "$.ArrayOfExportCar.ExportCar[*].Year",
+          "description": "Year of car production."
+        }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "type": "OWNS",
+      "from": "Client",
+      "to": "Car"
+    }
+  ]
+}

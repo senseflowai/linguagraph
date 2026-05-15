@@ -1,13 +1,14 @@
 //! Clap-based CLI. Subcommands map 1:1 to pipeline stages so users can stop
 //! at any layer for inspection.
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::ast::Literal;
 use crate::config::{self, Config};
 use crate::core::Pipeline;
-use crate::db::{introspect, GraphClient, MemgraphClient};
+use crate::db::{introspect, GraphClient, MemgraphClient, QueryResult, Value};
 use crate::dsl;
 use crate::embeddings::{self, SharedEmbedder};
 use crate::error::Result;
@@ -16,11 +17,11 @@ use crate::graph::{
     DEFAULT_GRAPH_SPECIFICATION_CACHE_PATH,
 };
 use crate::mapper::{self, Mapping};
-use crate::metadata::{FileMetadataStore, MetadataStore};
 use crate::prompt::{self, GraphSchema, PromptOptions};
 use crate::promptgen::knowledge::{EntityTypeSpec, KnowledgeExtractOptions, RelationTypeSpec};
 use crate::types::{self, SharedRegistry};
 use clap::{Parser, Subcommand, ValueEnum};
+use tabled::{builder::Builder, settings::Style};
 use tokio::fs;
 
 /// Output format for the `schema` subcommand.
@@ -301,19 +302,20 @@ async fn cmd_dsl(path: PathBuf) -> Result<()> {
 async fn cmd_cypher(config_path: &std::path::Path, path: PathBuf) -> Result<()> {
     let cfg = load_config_or_default(config_path).await;
     let (registry, embedder) = build_registry(&cfg)?;
-    // Load the metadata snapshot so a DSL filter like
+    // Load the graph specification snapshot so a DSL filter like
     // `{"field": "c.name", "op": "search", ...}` resolves to the
     // SemanticText handler automatically when the cached mapping
     // tagged `Company.name` as such — no `"type"` needed in the DSL.
-    let meta_store: Arc<dyn MetadataStore> =
-        Arc::new(FileMetadataStore::new(&cfg.metadata.cache_path));
+    let spec_storage: Arc<dyn GraphSpecificationStorage> = Arc::new(
+        FileGraphSpecificationStorage::new(&cfg.graph_specification.cache_path),
+    );
     let mut pipeline = Pipeline::new(Arc::new(crate::db::MockClient::new()), &cfg)
         .with_registry(registry)
-        .with_metadata_store(meta_store);
+        .with_graph_specification_storage(spec_storage);
     if let Some(e) = embedder {
         pipeline = pipeline.with_embedder(e);
     }
-    pipeline.load_metadata().await?;
+    pipeline.load_graph_specification().await?;
     let dsl_query = dsl::parse(&path).await?;
     let cypher = pipeline.compile(dsl_query)?;
     println!("-- Cypher --\n{}", cypher.text);
@@ -379,18 +381,19 @@ async fn cmd_run(config_path: &std::path::Path, path: PathBuf) -> Result<()> {
     let cfg = config::load(config_path).await?;
     let client = MemgraphClient::connect(&cfg.database).await?;
     let (registry, embedder) = build_registry(&cfg)?;
-    let meta_store: Arc<dyn MetadataStore> =
-        Arc::new(FileMetadataStore::new(&cfg.metadata.cache_path));
+    let spec_storage: Arc<dyn GraphSpecificationStorage> = Arc::new(
+        FileGraphSpecificationStorage::new(&cfg.graph_specification.cache_path),
+    );
     let mut pipeline = Pipeline::new(Arc::new(client), &cfg)
         .with_registry(registry)
-        .with_metadata_store(meta_store);
+        .with_graph_specification_storage(spec_storage);
     if let Some(e) = embedder {
         pipeline = pipeline.with_embedder(e);
     }
-    pipeline.load_metadata().await?;
+    pipeline.load_graph_specification().await?;
     let dsl_query = dsl::parse(&path).await?;
     let result = pipeline.run(dsl_query).await?;
-    println!("{}", serde_json::to_string_pretty(&result)?);
+    print_query_result_table(&result);
     Ok(())
 }
 
@@ -398,21 +401,85 @@ async fn cmd_traversal(config_path: &std::path::Path, path: PathBuf) -> Result<(
     let cfg = config::load(config_path).await?;
     let client = MemgraphClient::connect(&cfg.database).await?;
     let (registry, embedder) = build_registry(&cfg)?;
-    let meta_store: Arc<dyn MetadataStore> =
-        Arc::new(FileMetadataStore::new(&cfg.metadata.cache_path));
+    let spec_storage: Arc<dyn GraphSpecificationStorage> = Arc::new(
+        FileGraphSpecificationStorage::new(&cfg.graph_specification.cache_path),
+    );
     let mut pipeline = Pipeline::new(Arc::new(client), &cfg)
         .with_registry(registry)
-        .with_metadata_store(meta_store);
+        .with_graph_specification_storage(spec_storage);
     if let Some(e) = embedder {
         pipeline = pipeline.with_embedder(e);
     }
-    pipeline.load_metadata().await?;
+    pipeline.load_graph_specification().await?;
 
     let raw = fs::read_to_string(&path).await?;
     let traversal: dsl::TraversalQuery = serde_json::from_str(&raw)?;
     let result = pipeline.run_traversal(traversal).await?;
-    println!("{}", serde_json::to_string_pretty(&result)?);
+    print_query_result_table(&result);
     Ok(())
+}
+
+fn print_query_result_table(result: &QueryResult) {
+    println!("{}", query_result_table(result));
+}
+
+fn query_result_table(result: &QueryResult) -> String {
+    let columns = query_result_columns(result);
+    if columns.is_empty() {
+        return "(no rows)".into();
+    }
+
+    let mut builder = Builder::default();
+    builder.push_record(columns.iter().map(String::as_str));
+    for row in &result.rows {
+        builder.push_record(
+            columns
+                .iter()
+                .map(|column| row.fields.get(column).map(value_cell).unwrap_or_default()),
+        );
+    }
+
+    let mut out = builder.build().with(Style::ascii()).to_string();
+    out.push_str(&format!("{} row(s)", result.rows.len()));
+    out
+}
+
+fn query_result_columns(result: &QueryResult) -> Vec<String> {
+    if !result.columns.is_empty() {
+        return result
+            .columns
+            .iter()
+            .filter(|column| !is_hidden_result_column(column))
+            .cloned()
+            .collect();
+    }
+
+    let mut columns = BTreeSet::new();
+    for row in &result.rows {
+        columns.extend(
+            row.fields
+                .keys()
+                .filter(|column| !is_hidden_result_column(column))
+                .cloned(),
+        );
+    }
+    columns.into_iter().collect()
+}
+
+fn is_hidden_result_column(column: &str) -> bool {
+    matches!(column, "score" | "sources")
+}
+
+fn value_cell(value: &Value) -> String {
+    let raw = match value {
+        Value::Null => String::new(),
+        Value::Bool(v) => v.to_string(),
+        Value::Int(v) => v.to_string(),
+        Value::Float(v) => v.to_string(),
+        Value::String(v) => v.clone(),
+        Value::Json(v) => serde_json::to_string(v).unwrap_or_else(|_| v.to_string()),
+    };
+    raw.replace('\n', "\\n").replace('\r', "\\r")
 }
 
 async fn cmd_prompt(
@@ -551,10 +618,8 @@ async fn cmd_ingest_json(
     spec_storage.save(&specification).await?;
 
     let client = MemgraphClient::connect(&cfg.database).await?;
-    let store: Arc<dyn MetadataStore> = Arc::new(FileMetadataStore::new(&cfg.metadata.cache_path));
     let mut pipeline = Pipeline::new(Arc::new(client), &cfg)
         .with_ingest_batch_size(batch_size)
-        .with_metadata_store(store)
         .with_registry(registry);
     if let Some(e) = embedder {
         pipeline = pipeline.with_embedder(e);
@@ -576,10 +641,8 @@ async fn cmd_ingest_graph(
     let (registry, embedder) = build_registry(&cfg)?;
 
     let client = MemgraphClient::connect(&cfg.database).await?;
-    let store: Arc<dyn MetadataStore> = Arc::new(FileMetadataStore::new(&cfg.metadata.cache_path));
     let mut pipeline = Pipeline::new(Arc::new(client), &cfg)
         .with_ingest_batch_size(batch_size)
-        .with_metadata_store(store)
         .with_registry(registry);
     if let Some(e) = embedder {
         pipeline = pipeline.with_embedder(e);
@@ -680,9 +743,87 @@ async fn load_config_or_default(path: &std::path::Path) -> Config {
             },
             llm: Default::default(),
             query: Default::default(),
-            metadata: Default::default(),
             graph_specification: Default::default(),
             types: Default::default(),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn query_result_table_uses_result_columns_order() {
+        let result = QueryResult {
+            columns: vec!["name".into(), "score".into(), "sources".into()],
+            rows: vec![row([
+                ("score", Value::Float(0.75)),
+                ("name", Value::String("Alice".into())),
+                ("sources", Value::Json(serde_json::json!([{"id": "s1"}]))),
+            ])],
+        };
+
+        let table = query_result_table(&result);
+
+        assert!(table.contains("| name  |"));
+        assert!(table.contains("| Alice |"));
+        assert!(!table.contains("score"));
+        assert!(!table.contains("sources"));
+        assert!(table.ends_with("1 row(s)"));
+    }
+
+    #[test]
+    fn query_result_table_falls_back_to_sorted_row_fields() {
+        let result = QueryResult {
+            columns: vec![],
+            rows: vec![row([
+                ("b", Value::Int(2)),
+                ("a", Value::String("one".into())),
+                ("score", Value::Float(0.75)),
+                ("sources", Value::Json(serde_json::json!([{"id": "s1"}]))),
+            ])],
+        };
+
+        let table = query_result_table(&result);
+
+        assert!(table.contains("| a   | b |"));
+        assert!(table.contains("| one | 2 |"));
+        assert!(!table.contains("score"));
+        assert!(!table.contains("sources"));
+    }
+
+    #[test]
+    fn query_result_table_compacts_json_and_newlines() {
+        let result = QueryResult {
+            columns: vec!["chunk_text".into(), "entities".into()],
+            rows: vec![row([
+                ("chunk_text", Value::String("first\nsecond".into())),
+                (
+                    "entities",
+                    Value::Json(serde_json::json!([{"id":"e1","name":"Alice"}])),
+                ),
+            ])],
+        };
+
+        let table = query_result_table(&result);
+
+        assert!(table.contains("first\\nsecond"));
+        assert!(table.contains(r#"[{"id":"e1","name":"Alice"}]"#));
+    }
+
+    #[test]
+    fn query_result_table_handles_empty_result() {
+        assert_eq!(query_result_table(&QueryResult::empty()), "(no rows)");
+    }
+
+    fn row(fields: impl IntoIterator<Item = (&'static str, Value)>) -> crate::db::Row {
+        crate::db::Row {
+            fields: fields
+                .into_iter()
+                .map(|(key, value)| (key.to_string(), value))
+                .collect::<BTreeMap<_, _>>(),
+        }
     }
 }

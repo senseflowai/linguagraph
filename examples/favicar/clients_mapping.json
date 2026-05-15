@@ -1,0 +1,54 @@
+{
+  "entities": [
+    {
+      "type": "Client",
+      "source_path": "$.ArrayOfExportClient.ExportClient[*]",
+      "primary_key": "$.ArrayOfExportClient.ExportClient[*].Id",
+      "description": "Service Center Customer.",
+      "properties": [
+        {
+          "name": "id",
+          "type": "Text",
+          "source_path": "$.ArrayOfExportClient.ExportClient[*].Id"
+        },
+        {
+          "name": "type",
+          "type": "Text",
+          "source_path": "$.ArrayOfExportClient.ExportClient[*].ClientTypeCode",
+          "description": "The client type can only be \"Individual\" or \"Organization\"."
+        },
+        {
+          "name": "full_name",
+          "type": "SemanticText",
+          "source_path": "$.ArrayOfExportClient.ExportClient[*].DisplayName",
+          "description": "The customer's full name."
+        },
+        {
+          "name": "address",
+          "type": "SemanticText",
+          "source_path": "$.ArrayOfExportClient.ExportClient[*].StreetAddress",
+          "description": "The customer's residential address."
+        },
+        {
+          "name": "phone",
+          "type": "Text",
+          "source_path": "$.ArrayOfExportClient.ExportClient[*].Contacts.ClientContact.Phone",
+          "description": "The customer's phone number in international format."
+        },
+        {
+          "name": "created_at",
+          "type": "DateTime",
+          "source_path": "$.ArrayOfExportClient.ExportClient[*].Created",
+          "description": "Date created."
+        },
+        {
+          "name": "updated_at",
+          "type": "DateTime",
+          "source_path": "$.ArrayOfExportClient.ExportClient[*].Modified",
+          "description": "Date of the most recent updates to customer data."
+        }
+      ]
+    }
+  ],
+  "relationships": []
+}

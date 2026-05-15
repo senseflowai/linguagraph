@@ -1,39 +1,52 @@
 {
-  "action": "find",
+  "action": "aggregate",
   "start": {
-    "label": "LegalAct",
-    "alias": "act"
+    "label": "WorkItem",
+    "alias": "w"
   },
   "traversals": [
     {
-      "from": "act",
+      "from": "w",
       "edge": {
-        "label": "HAS_CHUNK",
-        "alias": "hc",
-        "direction": "out"
+        "label": "INCLUDES_WORK",
+        "alias": "iw",
+        "direction": "in"
       },
       "target": {
-        "label": "Chunk",
-        "alias": "chunk"
+        "label": "ServiceVisit",
+        "alias": "sv"
+      }
+    },
+    {
+      "from": "sv",
+      "edge": {
+        "label": "FOR_CAR",
+        "alias": "fc",
+        "direction": "in"
+      },
+      "target": {
+        "label": "Car",
+        "alias": "c"
       }
     }
   ],
   "filters": [
     {
-      "field": "act.name",
-      "op": "eq",
-      "value": "Конституция Республики Казахстан"
+      "field": "c.name",
+      "op": "contains",
+      "value": "BMW 3"
     },
     {
-      "field": "hc.text",
+      "field": "w.Name",
       "op": "contains",
-      "value": "Статья 1"
+      "value": "замена масла"
     }
   ],
   "return": [
     {
-      "field": "hc.text",
-      "alias": "article_text"
+      "aggregate": "avg",
+      "field": "w.cost",
+      "alias": "avg_cost"
     }
   ],
   "limit": 1

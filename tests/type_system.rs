@@ -17,20 +17,18 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use serde_json::json;
-
 use linguagraph::ast::query::Literal;
 use linguagraph::config::{
-    Config, DatabaseConfig, GraphSpecificationConfig, LlmConfig, MetadataConfig, QueryConfig,
-    TypeConfig,
+    Config, DatabaseConfig, GraphSpecificationConfig, LlmConfig, QueryConfig, TypeConfig,
 };
 use linguagraph::core::Pipeline;
 use linguagraph::db::MockClient;
 use linguagraph::dsl;
 use linguagraph::embeddings::{MockEmbedder, SharedEmbedder};
-use linguagraph::graph::{GraphBuilder, PropertyType as GraphPropertyType};
-use linguagraph::mapper::Mapping;
-use linguagraph::metadata::{collect_from_mapping, PropertyMetadata};
+use linguagraph::graph::{
+    FileGraphSpecificationStorage, GraphBuilder, GraphSpecification, GraphSpecificationStorage,
+    PropertyType as GraphPropertyType,
+};
 use linguagraph::types::{
     handlers::{self, SemanticTextConfig, SemanticTextHandler},
     RegistryBuilder, SharedRegistry, TypeId, TypeRegistry,
@@ -64,7 +62,6 @@ fn cfg_with_semantic_text() -> Config {
         },
         llm: LlmConfig::default(),
         query: QueryConfig::default(),
-        metadata: MetadataConfig::default(),
         graph_specification: GraphSpecificationConfig::default(),
         types,
     }
@@ -528,54 +525,51 @@ fn plain_filters_remain_untyped_and_compile_without_registry() {
     assert!(!cypher.text.contains("qlink"));
 }
 
-// ─── Auto-resolution from PropertyMetadata ──────────────────────────────
+// ─── Auto-resolution from GraphSpecification ────────────────────────────
 //
-// When the DSL omits `"type"` but the property metadata declares one,
-// the lowering step should pick up the type from the metadata snapshot
+// When the DSL omits `"type"` but the graph specification declares one,
+// the lowering step should pick up the type from the specification snapshot
 // and route the filter through the matching handler.
 
-fn semantic_mapping() -> Mapping {
-    serde_json::from_value(json!({
-        "entities": [{
-            "type": "Company",
-            "source_path": "$.companies[*]",
-            "primary_key": "$.companies[*].id",
-            "properties": [
-                {"name": "id",   "source_path": "$.companies[*].id"},
-                {
-                    "name": "name",
-                    "source_path": "$.companies[*].name",
-                    "type": "SemanticText",
-                    "description": "the company name"
-                },
-                {"name": "industry", "source_path": "$.companies[*].industry"}
-            ]
-        }]
-    }))
-    .unwrap()
+fn semantic_specification() -> GraphSpecification {
+    GraphSpecification::new()
+        .with_entity("Company", "")
+        .with_property("Company", "id", GraphPropertyType::String, "")
+        .with_property(
+            "Company",
+            "name",
+            GraphPropertyType::Text,
+            "the company name",
+        )
+        .with_property("Company", "industry", GraphPropertyType::String, "")
 }
 
 #[test]
-fn metadata_round_trips_field_types() {
-    let mapping = semantic_mapping();
-    let meta = collect_from_mapping(&mapping);
-    assert_eq!(meta.get_type("Company.name"), Some("SemanticText"));
-    assert_eq!(meta.get("Company.name"), Some("the company name"));
-    assert_eq!(meta.get_type("Company.industry"), None);
+fn graph_specification_round_trips_field_types() {
+    let spec = semantic_specification();
+    assert_eq!(spec.get_type("Company", "name"), Some("SemanticText"));
+    assert_eq!(spec.get_query_type("Company", "name"), Some("SemanticText"));
+    assert_eq!(
+        spec.get_property("Company", "name")
+            .map(|p| p.description.as_str()),
+        Some("the company name")
+    );
+    assert_eq!(spec.get_type("Company", "industry"), Some("Text"));
+    assert_eq!(spec.get_query_type("Company", "industry"), Some("Text"));
 }
 
 #[test]
-fn untyped_dsl_filter_auto_resolves_to_semantic_text_via_metadata() {
+fn untyped_dsl_filter_auto_resolves_to_semantic_text_via_graph_specification() {
     let cfg = cfg_with_semantic_text();
     let (registry, embedder) = registry_and_embedder();
-    let meta = Arc::new(collect_from_mapping(&semantic_mapping()));
+    let specification = Arc::new(semantic_specification());
     let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg)
         .with_registry(registry)
         .with_embedder(embedder)
-        .with_metadata(meta);
+        .with_graph_specification(specification);
 
     // Notice the DSL has NO `"type"` field — the handler is selected
-    // from PropertyMetadata.
+    // from GraphSpecification.
     let dsl_query = dsl::parse_str(
         r#"{
             "action": "find",
@@ -596,21 +590,18 @@ fn untyped_dsl_filter_auto_resolves_to_semantic_text_via_metadata() {
 }
 
 #[test]
-fn explicit_dsl_type_overrides_metadata() {
+fn explicit_dsl_type_overrides_graph_specification() {
     // The mapping doesn't tag `c.industry` with any type, but the DSL
-    // does — explicit always wins over the inferred metadata value.
+    // does — explicit always wins over the inferred specification value.
     // Conversely, when an explicit type *is* set we must not silently
-    // fall back to the metadata's type for the same field.
+    // fall back to the specification's type for the same field.
     let cfg = cfg_with_semantic_text();
     let (registry, embedder) = registry_and_embedder();
-    let mut meta = collect_from_mapping(&semantic_mapping());
-    // Pretend metadata thought industry was Keyword (a non-registered
-    // type) — DSL explicit `SemanticText` should win.
-    meta.insert_type("Company.industry", "Keyword");
+    let specification = semantic_specification();
     let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg)
         .with_registry(registry)
         .with_embedder(embedder)
-        .with_metadata(Arc::new(meta));
+        .with_graph_specification(Arc::new(specification));
 
     let dsl_query = dsl::parse_str(
         r#"{
@@ -638,16 +629,14 @@ fn explicit_dsl_type_overrides_metadata() {
 }
 
 #[test]
-fn untyped_field_without_metadata_stays_plain() {
+fn untyped_field_without_graph_specification_stays_plain() {
     let cfg = cfg_with_semantic_text();
     let (registry, embedder) = registry_and_embedder();
-    let meta = Arc::new(collect_from_mapping(&semantic_mapping()));
     let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg)
         .with_registry(registry)
-        .with_embedder(embedder)
-        .with_metadata(meta);
+        .with_embedder(embedder);
 
-    // industry has no type tag in the mapping — should compile as a
+    // Without a loaded graph specification, industry should compile as a
     // plain WHERE clause, never touch qlink.
     let dsl_query = dsl::parse_str(
         r#"{
@@ -666,19 +655,53 @@ fn untyped_field_without_metadata_stays_plain() {
 }
 
 #[test]
-fn metadata_lookup_keys_off_label_not_alias() {
+fn string_property_from_graph_specification_auto_resolves_to_text_handler() {
+    let cfg = cfg_with_semantic_text();
+    let (registry, embedder) = registry_and_embedder();
+    let specification = Arc::new(semantic_specification());
+    let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg)
+        .with_registry(registry)
+        .with_embedder(embedder)
+        .with_graph_specification(specification);
+
+    let dsl_query = dsl::parse_str(
+        r#"{
+            "action": "find",
+            "start": { "label": "Company", "alias": "c" },
+            "filters": [
+                { "field": "c.industry", "op": "eq", "value": " Fin-Tech " }
+            ],
+            "return": [{ "field": "c.name" }]
+        }"#,
+    )
+    .unwrap();
+    let cypher = pipeline.compile(dsl_query).unwrap();
+    assert!(cypher.text.contains("WHERE c.industry = $p0"));
+    assert_eq!(
+        cypher.params.get("p0"),
+        Some(&Literal::String("fintech".into()))
+    );
+    assert!(!cypher.text.contains("qlink"));
+}
+
+#[test]
+fn graph_specification_lookup_keys_off_label_not_alias() {
     // Same property name on different labels must resolve independently.
     // Here `c` is bound to `Company` and `p` to `Person`. Only
     // `Company.name` is SemanticText.
     let cfg = cfg_with_semantic_text();
     let (registry, embedder) = registry_and_embedder();
-    let mut meta = PropertyMetadata::new();
-    meta.insert_type("Company.name", "SemanticText");
+    let specification = GraphSpecification::new().with_property(
+        "Company",
+        "name",
+        GraphPropertyType::Text,
+        "the company name",
+    );
     // Person.name is left plain.
     let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg)
         .with_registry(registry)
         .with_embedder(embedder)
-        .with_metadata(Arc::new(meta));
+        .with_graph_specification(Arc::new(specification));
 
     // Filter on Company.name -> auto SemanticText.
     let q = dsl::parse_str(
@@ -718,18 +741,25 @@ fn metadata_lookup_keys_off_label_not_alias() {
 }
 
 #[tokio::test]
-async fn loaded_metadata_auto_resolves_semantic_text_filters() {
+async fn loaded_graph_specification_auto_resolves_semantic_text_filters() {
     let cfg = cfg_with_semantic_text();
     let (registry, embedder) = registry_and_embedder();
-    let mut meta = PropertyMetadata::new();
-    meta.insert_type("Company.name", "SemanticText");
+    let path =
+        std::env::temp_dir().join(format!("linguagraph-spec-test-{}.json", std::process::id()));
+    let storage = FileGraphSpecificationStorage::new(&path);
+    storage.save(&semantic_specification()).await.unwrap();
+    let storage: Arc<dyn GraphSpecificationStorage> = Arc::new(storage);
     let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg)
         .with_registry(registry)
         .with_embedder(embedder)
-        .with_metadata(Arc::new(meta));
+        .with_graph_specification_storage(storage);
+    pipeline.load_graph_specification().await.unwrap();
 
-    let meta = pipeline.metadata().expect("snapshot loaded");
-    assert_eq!(meta.get_type("Company.name"), Some("SemanticText"));
+    let specification = pipeline.graph_specification().expect("snapshot loaded");
+    assert_eq!(
+        specification.get_type("Company", "name"),
+        Some("SemanticText")
+    );
 
     let q = dsl::parse_str(
         r#"{
@@ -747,6 +777,7 @@ async fn loaded_metadata_auto_resolves_semantic_text_filters() {
         .unwrap()
         .text
         .contains("libqlink.search"));
+    let _ = std::fs::remove_file(path);
 }
 
 #[test]

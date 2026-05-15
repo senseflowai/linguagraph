@@ -20,14 +20,16 @@
 
 pub mod core;
 pub mod semantic_text;
+pub mod text;
 
 pub use core::{
-    boolean_handler, date_handler, number_handler, text_handler, timestamp_handler, BooleanParser,
-    DateParser, NumberParser, ScalarParser, ScalarTypeHandler, TextParser, TimestampParser,
+    boolean_handler, date_handler, number_handler, timestamp_handler, BooleanParser, DateParser,
+    NumberParser, ScalarParser, ScalarTypeHandler, TextParser, TimestampParser,
 };
 pub use semantic_text::{
     build_embed_insert_batch, SemanticTextConfig, SemanticTextHandler, SideEffectEmitError,
 };
+pub use text::{text_handler, TextHandler};
 
 use std::sync::Arc;
 

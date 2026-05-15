@@ -32,7 +32,6 @@ pub mod error;
 pub mod graph;
 pub mod ingest;
 pub mod mapper;
-pub mod metadata;
 pub mod prompt;
 pub mod promptgen;
 pub mod resolve;

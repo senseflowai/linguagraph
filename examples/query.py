@@ -2,13 +2,39 @@ import subprocess
 import json
 import sys
 import os
+import locale
 
-def main():
-    # 1. Получаем текстовый вопрос от пользователя
-    user_query = "Что написано в статье 1 конституции РК"
 
-    # 2. Генерируем промпт для OpenAI
-    # Используем команду linguagraph prompt для получения системного промпта
+def decode_stdin_line(raw_line):
+    encodings = [
+        sys.stdin.encoding,
+        locale.getpreferredencoding(False),
+        "utf-8",
+        "cp1251",
+    ]
+
+    for encoding in dict.fromkeys(filter(None, encodings)):
+        try:
+            return raw_line.decode(encoding)
+        except (LookupError, UnicodeDecodeError):
+            continue
+
+    return raw_line.decode("utf-8", errors="replace")
+
+
+def read_user_query(prompt):
+    if not hasattr(sys.stdin, "buffer"):
+        return input(prompt).strip()
+
+    print(prompt, end="", flush=True)
+    raw_line = sys.stdin.buffer.readline()
+    if raw_line == b"":
+        raise EOFError
+
+    return decode_stdin_line(raw_line).strip()
+
+
+def get_system_prompt():
     try:
         prompt_result = subprocess.run(
             ["./target/debug/linguagraph", "prompt"],
@@ -21,16 +47,17 @@ def main():
         print(f"Ошибка при получении промпта: {e.stderr}")
         sys.exit(1)
 
-    # 3. Формируем полный запрос для OpenAI API
+    return system_prompt
+
+
+def process_query(user_query, system_prompt):
+    # 1. Формируем полный запрос для OpenAI API
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_query}
     ]
 
-    print(system_prompt)
-    print(user_query)
-
-    # 4. Отправляем запрос в OpenAI API (используем curl как в примере)
+    # 2. Отправляем запрос в OpenAI API (используем curl как в примере)
     # ВАЖНО: Замените YOUR_API_KEY на ваш реальный API ключ OpenAI
     api_key = os.getenv("OPENAI_API_KEY", "YOUR_API_KEY")  # Или захардкодьте, но не рекомендуется
 
@@ -58,31 +85,32 @@ def main():
         sys.exit(1)
     except json.JSONDecodeError:
         print(f"Ошибка декодирования JSON от OpenAI: {response_result.stdout}")
-        sys.exit(1)
+        return
 
 
-    # 6. Извлекаем текст ответа из JSON
+    # 3. Извлекаем текст ответа из JSON
     try:
         assistant_message = response_data["choices"][0]["message"]["content"]
     except (KeyError, IndexError) as e:
         print(f"Ошибка при извлечении ответа из JSON: {e}")
         print(f"Полный ответ: {response_data}")
-        sys.exit(1)
+        return
 
-    # 7. Создаем JSON файл для linguagraph run
+    # 4. Создаем JSON файл для linguagraph run
     # Предположим, что linguagraph run ожидает JSON с полем "query" или подобным
     # Вам нужно будет адаптировать эту часть под формат, который ожидает linguagraph run
-    assistant_message.replace('```json', '').replace('```', '')
-    print(assistant_message)
-    linguagraph_input = json.loads(assistant_message)
+    assistant_message = assistant_message.replace('```json', '').replace('```', '').strip()
+    try:
+        linguagraph_input = json.loads(assistant_message)
+    except json.JSONDecodeError:
+        print(f"Ошибка декодирования JSON от ассистента: {assistant_message}")
+        return
 
     linguagraph_file = "linguagraph_input.json"
     with open(linguagraph_file, 'w', encoding='utf-8') as f:
         json.dump(linguagraph_input, f, ensure_ascii=False, indent=2)
 
-    print(f"Файл для linguagraph run создан: {linguagraph_file}")
-
-    # 8. Вызываем linguagraph run с созданным JSON файлом
+    # 5. Вызываем linguagraph run с созданным JSON файлом
     try:
         run_result = subprocess.run(
             ["./target/debug/linguagraph", "run", linguagraph_file],
@@ -90,14 +118,30 @@ def main():
             text=True,
             check=True
         )
-        print("\n--- Ответ от linguagraph run ---")
         print(run_result.stdout)
         if run_result.stderr:
             print("\n--- Ошибки/предупреждения ---")
             print(run_result.stderr)
     except subprocess.CalledProcessError as e:
         print(f"Ошибка при выполнении linguagraph run: {e.stderr}")
-        sys.exit(1)
+
+
+def main():
+    # Генерируем системный промпт один раз и переиспользуем для каждого запроса.
+    system_prompt = get_system_prompt()
+
+    print("Введите user_query. Ctrl-D или Ctrl-C для выхода.")
+    while True:
+        try:
+            user_query = read_user_query("> ")
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+
+        if not user_query:
+            continue
+
+        process_query(user_query, system_prompt)
 
 if __name__ == "__main__":
     main()

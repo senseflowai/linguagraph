@@ -62,7 +62,7 @@ pub const DEFAULT_SEARCH_THRESHOLD: f64 = 0.8;
 /// `libqlink.search_reranked`. Reranker scores are sigmoid-bounded
 /// to `[0, 1]`; values around 0.3 keep recall sane on out-of-the-
 /// box BGE rerankers.
-pub const DEFAULT_RERANKER_THRESHOLD: f64 = 0.3;
+pub const DEFAULT_RERANKER_THRESHOLD: f64 = 0.5;
 
 /// Configuration for [`SemanticTextHandler`].
 #[derive(Debug, Clone)]

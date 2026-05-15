@@ -11,7 +11,7 @@ use thiserror::Error;
 
 use crate::ast::query::*;
 use crate::dsl::schema as d;
-use crate::metadata::PropertyMetadata;
+use crate::graph::GraphSpecification;
 use crate::types::context::{LowerCtx, RawTypedFilter};
 use crate::types::{TypeError, TypeId, TypeRegistry, TypedOp};
 
@@ -53,14 +53,14 @@ pub enum AstError {
 /// `max_depth` is enforced here so the AST itself can advertise that any
 /// traversal it carries is within limits; downstream code never has to check.
 ///
-/// Backwards-compatible alias using an empty registry and no metadata.
+/// Backwards-compatible alias using an empty registry and no graph specification.
 /// Use this only when the DSL is known not to contain typed filters.
 pub fn lower(dsl: d::DslQuery, max_depth: u32) -> Result<ReadQuery, AstError> {
     lower_full(dsl, max_depth, &TypeRegistry::empty(), None)
 }
 
 /// Lower a DSL query, dispatching typed filters through `registry`.
-/// Equivalent to [`lower_full`] without a metadata snapshot.
+/// Equivalent to [`lower_full`] without a graph specification snapshot.
 pub fn lower_with_registry(
     dsl: d::DslQuery,
     max_depth: u32,
@@ -71,10 +71,10 @@ pub fn lower_with_registry(
 
 /// Lower a DSL query, dispatching typed filters through `registry`,
 /// and **auto-resolve** the type for filters that omit `"type"` by
-/// looking the field up in `metadata`.
+/// looking the field up in `graph_specification`.
 ///
 /// The lookup key is `<node-label>.<property>` — the same shape
-/// [`crate::metadata::collect_from_mapping`] writes. Aliases bound to a
+/// [`crate::graph::GraphSpecification`] writes. Aliases bound to a
 /// node take their label from the MATCH pattern; aliases bound to an
 /// edge use the edge label.
 ///
@@ -86,13 +86,13 @@ pub fn lower_full(
     dsl: d::DslQuery,
     max_depth: u32,
     registry: &TypeRegistry,
-    metadata: Option<&PropertyMetadata>,
+    graph_specification: Option<&GraphSpecification>,
 ) -> Result<ReadQuery, AstError> {
     let mut bound: HashMap<String, ()> = HashMap::new();
     bound.insert(dsl.start.alias.clone(), ());
 
     // Track which graph label each alias resolves to. Used to look up
-    // typed-property metadata as `<label>.<property>`.
+    // typed properties in GraphSpecification as `<label>.<property>`.
     let mut alias_labels: HashMap<String, String> = HashMap::new();
     alias_labels.insert(dsl.start.alias.clone(), dsl.start.label.clone());
 
@@ -142,7 +142,13 @@ pub fn lower_full(
         });
     }
 
-    let filter = lower_filters(&dsl.filters, &bound, &alias_labels, registry, metadata)?;
+    let filter = lower_filters(
+        &dsl.filters,
+        &bound,
+        &alias_labels,
+        registry,
+        graph_specification,
+    )?;
     let returns = lower_returns(&dsl.return_, &bound)?;
 
     let action = match dsl.action {
@@ -185,7 +191,7 @@ fn lower_filters(
     bound: &HashMap<String, ()>,
     alias_labels: &HashMap<String, String>,
     registry: &TypeRegistry,
-    metadata: Option<&PropertyMetadata>,
+    graph_specification: Option<&GraphSpecification>,
 ) -> Result<Option<FilterExpression>, AstError> {
     if filters.is_empty() {
         return Ok(None);
@@ -199,7 +205,7 @@ fn lower_filters(
         // Order of precedence:
         //   1. Explicit `"type"` in the DSL (always wins; lets the LLM
         //      override the mapping when it knows better).
-        //   2. The registered field-type from `PropertyMetadata`,
+        //   2. The registered field-type from `GraphSpecification`,
         //      keyed on `<alias-label>.<property>`.
         //   3. None — falls back to plain ops.
         //
@@ -211,7 +217,7 @@ fn lower_filters(
         let effective_type = f
             .field_type
             .clone()
-            .or_else(|| infer_type(&field, alias_labels, metadata));
+            .or_else(|| infer_type(&field, alias_labels, graph_specification));
 
         match effective_type {
             // Plain (untyped) predicate: parse the op and convert the
@@ -262,7 +268,7 @@ fn lower_filters(
     }))
 }
 
-/// Look up the registered type for `field` in `metadata`. Returns
+/// Look up the registered type for `field` in `graph_specification`. Returns
 /// `None` when:
 ///
 /// * the alias has no recorded label (shouldn't happen for valid
@@ -270,17 +276,16 @@ fn lower_filters(
 ///   run),
 /// * the field has no `.<property>` part (entity-level references
 ///   never carry a type), or
-/// * the metadata snapshot has no entry for the resolved key.
+/// * the graph specification snapshot has no entry for the resolved key.
 fn infer_type(
     field: &PropertyRef,
     alias_labels: &HashMap<String, String>,
-    metadata: Option<&PropertyMetadata>,
+    graph_specification: Option<&GraphSpecification>,
 ) -> Option<String> {
-    let meta = metadata?;
+    let spec = graph_specification?;
     let prop = field.property.as_deref()?;
     let label = alias_labels.get(field.alias.as_str())?;
-    meta.get_type(&format!("{label}.{prop}"))
-        .map(str::to_string)
+    spec.get_query_type(label, prop).map(str::to_string)
 }
 
 fn lower_op(op: d::FilterOp) -> ComparisonOp {

@@ -269,7 +269,9 @@ mod tests {
             params: params.clone(),
         };
         let resolved = ResolvedPredicate::from_legacy_typed(&p);
-        assert!(matches!(resolved.handler, HandlerRef::Typed { ref type_id } if type_id.as_str() == "SemanticText"));
+        assert!(
+            matches!(resolved.handler, HandlerRef::Typed { ref type_id } if type_id.as_str() == "SemanticText")
+        );
         assert_eq!(resolved.op, Op::Search);
         let back = resolved.to_legacy_typed().unwrap();
         assert_eq!(back.op, TypedOp::Search);

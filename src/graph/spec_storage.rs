@@ -30,6 +30,16 @@ pub trait GraphSpecificationStorage: Send + Sync + std::fmt::Debug {
         &self,
         specification: &GraphSpecification,
     ) -> Result<(), GraphSpecificationStorageError>;
+
+    async fn update(
+        &self,
+        incoming: &GraphSpecification,
+    ) -> Result<GraphSpecification, GraphSpecificationStorageError> {
+        let mut current = self.load().await?;
+        current.merge(incoming);
+        self.save(&current).await?;
+        Ok(current)
+    }
 }
 
 #[derive(Debug, Clone)]

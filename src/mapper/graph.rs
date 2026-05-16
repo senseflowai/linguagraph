@@ -43,7 +43,10 @@ pub fn to_graph(mapping: &Mapping, data: &Value) -> Result<MappedGraph, MapperEr
 }
 
 fn graph_from_extracted(mapping: &Mapping, extracted: &Extracted) -> Result<Graph, MapperError> {
-    let mut builder = GraphBuilder::new();
+    let mut builder = match mapping.source.as_deref() {
+        Some(source) if !source.trim().is_empty() => GraphBuilder::with_source(source),
+        _ => GraphBuilder::new(),
+    };
     let mut refs: HashMap<(String, Literal), EntityRef> = HashMap::new();
 
     for ent in &extracted.entities {
@@ -381,5 +384,45 @@ mod tests {
 
         assert_eq!(graph.entities().len(), 1);
         assert_eq!(graph.entities()[0].properties["name"].value, json!("New"));
+    }
+
+    #[test]
+    fn mapping_source_creates_source_node_and_mentions_entities() {
+        let mapping: Mapping = serde_json::from_value(json!({
+            "source": "companies.json",
+            "entities": [{
+                "type": "Company",
+                "source_path": "$.companies[*]",
+                "primary_key": "$.companies[*].id",
+                "properties": [
+                    {"name": "name", "source_path": "$.companies[*].name", "type": "String"}
+                ]
+            }]
+        }))
+        .unwrap();
+        mapping.validate().unwrap();
+        let data = json!({"companies": [{"id": "c1", "name": "Acme"}]});
+
+        let mapped = to_graph(&mapping, &data).unwrap();
+        let graph = mapped.graph;
+
+        assert_eq!(graph.entities().len(), 2);
+        let source_ref = graph
+            .entities()
+            .iter()
+            .position(|entity| entity.r#type == crate::graph::SOURCE_LABEL)
+            .unwrap();
+        let company_ref = graph
+            .entities()
+            .iter()
+            .position(|entity| entity.r#type == "Company")
+            .unwrap();
+        let source = &graph.entities()[source_ref];
+        assert_eq!(source.properties["name"].value, json!("companies.json"));
+        assert!(graph.relations().iter().any(|rel| {
+            rel.r#type == crate::graph::MENTION_REL
+                && rel.from.index() == company_ref
+                && rel.to.index() == source_ref
+        }));
     }
 }

@@ -714,8 +714,8 @@ mod tests {
         let mut q = SideEffectQueue::new();
         let key = Literal::String("c1".into());
         let raw = serde_json::json!("Hello world");
-        let mut ctx = IC::new("Company", "id", &key, "name", &raw, &mut q)
-            .with_prefix_index(Some("Tenant1"));
+        let mut ctx =
+            IC::new("Company", "id", &key, "name", &raw, &mut q).with_prefix_index(Some("Tenant1"));
         h.on_ingest(&mut ctx).unwrap();
         ctx.finish();
         match &q.into_vec()[0] {

@@ -32,19 +32,17 @@ use crate::graph::{
 /// Errors produced when assembling a [`DeletePlan`].
 #[derive(Debug, Error)]
 pub enum DeletePlanError {
-    #[error("source id is empty")]
-    EmptySourceId,
-    #[error(
-        "invalid Cypher identifier '{0}': prefix labels must match [A-Za-z_][A-Za-z0-9_]*"
-    )]
+    #[error("source name is empty")]
+    EmptySourceName,
+    #[error("invalid Cypher identifier '{0}': prefix labels must match [A-Za-z_][A-Za-z0-9_]*")]
     InvalidPrefixLabel(String),
 }
 
 /// Inputs needed to plan a source-scoped deletion.
 #[derive(Debug, Clone)]
 pub struct DeletePlan {
-    /// `id` property value of the `Source` node to remove.
-    pub source_id: String,
+    /// `name` property value of the `Source` node to remove.
+    pub source_name: String,
     /// Optional extra Cypher label scoping the source and its orphan
     /// candidates to a tenant / dataset partition. Mirrors the
     /// ingest-side `prefix_label`.
@@ -66,7 +64,7 @@ pub struct DeletePlan {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct DiscoveredNodes {
     /// Memgraph internal id of the `Source` node, if it was found.
-    /// `None` means the source id is unknown to the database — the
+    /// `None` means the source name is unknown to the database — the
     /// pipeline reports zero deletions and skips the rest of the phases.
     pub source_id: Option<i64>,
     /// Memgraph internal ids of user entities that were mentioned only
@@ -80,8 +78,7 @@ impl DiscoveredNodes {
     /// Flattened id list (source + chunks + orphans) used by both the
     /// qlink-cleanup calls and the final `DETACH DELETE`.
     pub fn all_ids(&self) -> Vec<i64> {
-        let mut ids =
-            Vec::with_capacity(self.orphan_ids.len() + self.chunk_ids.len() + 1);
+        let mut ids = Vec::with_capacity(self.orphan_ids.len() + self.chunk_ids.len() + 1);
         ids.extend_from_slice(&self.orphan_ids);
         ids.extend_from_slice(&self.chunk_ids);
         if let Some(src) = self.source_id {
@@ -104,15 +101,15 @@ impl DiscoveredNodes {
 impl DeletePlan {
     /// Construct a new plan, validating the prefix label up front.
     pub fn new(
-        source_id: impl Into<String>,
+        source_name: impl Into<String>,
         semantic_collection: impl Into<String>,
     ) -> Result<Self, DeletePlanError> {
-        let source_id = source_id.into();
-        if source_id.is_empty() {
-            return Err(DeletePlanError::EmptySourceId);
+        let source_name = source_name.into();
+        if source_name.is_empty() {
+            return Err(DeletePlanError::EmptySourceName);
         }
         Ok(Self {
-            source_id,
+            source_name,
             prefix_label: None,
             prefix_index: None,
             semantic_collection: semantic_collection.into(),
@@ -149,11 +146,11 @@ impl DeletePlan {
     pub fn discover_query(&self) -> CypherQuery {
         let prefix_suffix = self.prefix_suffix();
         let text = format!(
-            "MATCH (s:{src}{prefix} {{id: $source_id}})\n\
+            "MATCH (s:{src}{prefix} {{name: $source_name}})\n\
              OPTIONAL MATCH (s)<-[:{mention}]-(e)\n\
              WHERE e IS NOT NULL AND NOT EXISTS {{\n\
              \x20\x20MATCH (e)-[:{mention}]->(other:{src}{prefix})\n\
-             \x20\x20WHERE other.id <> $source_id\n\
+             \x20\x20WHERE id(other) <> id(s)\n\
              }}\n\
              WITH s, collect(DISTINCT id(e)) AS orphan_ids\n\
              OPTIONAL MATCH (s)<-[:{part_of}]-(c:{chunk}{prefix})\n\
@@ -166,7 +163,10 @@ impl DeletePlan {
             prefix = prefix_suffix,
         );
         let mut params = BTreeMap::new();
-        params.insert("source_id".into(), Literal::String(self.source_id.clone()));
+        params.insert(
+            "source_name".into(),
+            Literal::String(self.source_name.clone()),
+        );
         CypherQuery::new(text, params)
     }
 
@@ -272,15 +272,16 @@ mod tests {
     #[test]
     fn discover_query_renders_with_no_prefix() {
         let q = plan("src-1").discover_query();
-        assert!(q.text.contains("MATCH (s:Source {id: $source_id})"));
+        assert!(q.text.contains("MATCH (s:Source {name: $source_name})"));
         assert!(q.text.contains("OPTIONAL MATCH (s)<-[:mention]-(e)"));
         assert!(q.text.contains("MATCH (e)-[:mention]->(other:Source)"));
+        assert!(q.text.contains("WHERE id(other) <> id(s)"));
         assert!(q.text.contains("OPTIONAL MATCH (s)<-[:part_of]-(c:Chunk)"));
         assert!(q
             .text
             .contains("RETURN id(s) AS source_id, orphan_ids, chunk_ids"));
         assert_eq!(
-            q.params.get("source_id"),
+            q.params.get("source_name"),
             Some(&Literal::String("src-1".into()))
         );
     }
@@ -291,7 +292,7 @@ mod tests {
             .with_prefix_label(Some("Tenant1".into()))
             .unwrap()
             .discover_query();
-        assert!(q.text.contains("(s:Source:Tenant1 {id: $source_id})"));
+        assert!(q.text.contains("(s:Source:Tenant1 {name: $source_name})"));
         assert!(q.text.contains("(other:Source:Tenant1)"));
         assert!(q.text.contains("(c:Chunk:Tenant1)"));
     }
@@ -305,10 +306,10 @@ mod tests {
     }
 
     #[test]
-    fn empty_source_id_rejected() {
+    fn empty_source_name_rejected() {
         assert!(matches!(
             DeletePlan::new("", "semantic_text"),
-            Err(DeletePlanError::EmptySourceId)
+            Err(DeletePlanError::EmptySourceName)
         ));
     }
 

@@ -15,6 +15,8 @@ use super::MapperError;
 /// Top-level mapping document.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Mapping {
+    #[serde(default)]
+    pub source: Option<String>,
     pub entities: Vec<EntityMapping>,
     #[serde(default)]
     pub relationships: Vec<RelationshipMapping>,

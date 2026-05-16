@@ -1,4 +1,5 @@
 {
+  "source": "service_visits",
   "entities": [
     {
       "type": "Client",
@@ -22,12 +23,6 @@
           "name": "id",
           "type": "String",
           "source_path": "$[*].id"
-        },
-        {
-          "name": "status",
-          "type": "String",
-          "source_path": "$[*].status",
-          "description": "Visit status: Open|InProgress|Completed|Paid|Cancelled."
         },
         {
           "name": "work_start",
@@ -89,8 +84,8 @@
     },
     {
       "type": "INCLUDES_WORK",
-      "from": "WorkItem",
-      "to": "ServiceVisit"
+      "from": "ServiceVisit",
+      "to": "WorkItem"
     }
   ]
 }

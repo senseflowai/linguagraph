@@ -89,12 +89,12 @@ pub struct IngestSummary {
 
 /// Summary returned by [`Pipeline::delete_by_source`].
 ///
-/// `source_found = false` means the source id was unknown to the
+/// `source_found = false` means the source name was unknown to the
 /// database and the call was a no-op — every other counter will be
 /// zero in that case.
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct DeleteBySourceSummary {
-    /// Whether the `Source {id: $source_id}` node existed at all.
+    /// Whether the `Source {name: $source_name}` node existed at all.
     pub source_found: bool,
     /// Number of orphan user entities removed (entities mentioned only
     /// by the source being deleted).
@@ -446,7 +446,7 @@ impl Pipeline {
 
     // ── Delete path ─────────────────────────────────────────────────────────
 
-    /// Delete a source-rooted subgraph: the `Source {id: $source_id}`
+    /// Delete a source-rooted subgraph: the `Source {name: $source_name}`
     /// node, every `Chunk` attached to it via `:part_of`, and every
     /// user entity whose only `:mention` link was to that source.
     ///
@@ -469,9 +469,9 @@ impl Pipeline {
     /// every relevant Qdrant point has been removed.
     pub async fn delete_by_source(
         &self,
-        source_id: impl Into<String>,
+        source_name: impl Into<String>,
     ) -> Result<DeleteBySourceSummary> {
-        let plan = DeletePlan::new(source_id, self.semantic_collection_base())
+        let plan = DeletePlan::new(source_name, self.semantic_collection_base())
             .map_err(|e| IngestError::Type(e.to_string()))?
             .with_prefix_label(self.prefix_label.clone())
             .map_err(|e| IngestError::Type(e.to_string()))?
@@ -498,7 +498,10 @@ impl Pipeline {
         }
 
         // ── DETACH DELETE everything. ────────────────────────────────
-        let _ = self.client.execute(&plan.detach_delete_query(&all_ids)).await?;
+        let _ = self
+            .client
+            .execute(&plan.detach_delete_query(&all_ids))
+            .await?;
 
         Ok(DeleteBySourceSummary {
             source_found: true,
@@ -717,7 +720,9 @@ impl TraversalMerge {
 /// a typed [`DiscoveredNodes`]. The query always returns one row with
 /// three columns; an empty result (or a null `source_id`) means the
 /// source did not exist.
-fn parse_discovered_nodes(result: &QueryResult) -> std::result::Result<DiscoveredNodes, IngestError> {
+fn parse_discovered_nodes(
+    result: &QueryResult,
+) -> std::result::Result<DiscoveredNodes, IngestError> {
     let Some(row) = result.rows.first() else {
         return Ok(DiscoveredNodes::default());
     };
@@ -1008,7 +1013,7 @@ mod tests {
             start: Node {
                 label: "T".into(),
                 alias: Alias::new("p"),
-                    prefix_label: None,
+                prefix_label: None,
             },
             traversals: vec![],
             filter: Some(FilterExpression::And(vec![mk_pred("p"), mk_pred("p")])),
@@ -1355,9 +1360,9 @@ mod tests {
         let mock = Arc::new(MockClient::new());
         // qlink + detach calls return empty results — fine.
         mock.enqueue(QueryResult::empty()); // detach delete
-        // qlink deletes — we don't know how many collections, just
-        // enqueue enough empty results. With no spec set there are 2
-        // collections (name, text).
+                                            // qlink deletes — we don't know how many collections, just
+                                            // enqueue enough empty results. With no spec set there are 2
+                                            // collections (name, text).
         mock.enqueue(QueryResult::empty());
         mock.enqueue(QueryResult::empty());
         // discover query — returns one row with the source's id and
@@ -1374,11 +1379,7 @@ mod tests {
             DbValue::Json(serde_json::json!([10, 11])),
         );
         mock.enqueue(QueryResult {
-            columns: vec![
-                "source_id".into(),
-                "orphan_ids".into(),
-                "chunk_ids".into(),
-            ],
+            columns: vec!["source_id".into(), "orphan_ids".into(), "chunk_ids".into()],
             rows: vec![Row { fields }],
         });
 
@@ -1399,6 +1400,7 @@ mod tests {
         // 1 discover + 2 qlink + 1 detach.
         assert_eq!(captured.len(), 4);
         assert!(captured[0].text.contains("MATCH (s:Source"));
+        assert!(captured[0].text.contains("{name: $source_name}"));
         assert!(captured[1].text.contains("libqlink.delete_batch"));
         assert!(captured[3].text.contains("DETACH DELETE"));
         // The detach call must receive every doomed id: 3 orphans + 2 chunks + 1 source = 6.
@@ -1414,14 +1416,8 @@ mod tests {
         // Discover returns a row with null source_id — source not found.
         let mut fields = BTreeMap::new();
         fields.insert("source_id".into(), DbValue::Null);
-        fields.insert(
-            "orphan_ids".into(),
-            DbValue::Json(serde_json::json!([])),
-        );
-        fields.insert(
-            "chunk_ids".into(),
-            DbValue::Json(serde_json::json!([])),
-        );
+        fields.insert("orphan_ids".into(), DbValue::Json(serde_json::json!([])));
+        fields.insert("chunk_ids".into(), DbValue::Json(serde_json::json!([])));
         mock.enqueue(QueryResult {
             columns: vec![],
             rows: vec![Row { fields }],
@@ -1450,14 +1446,8 @@ mod tests {
         mock.enqueue(QueryResult::empty());
         let mut fields = BTreeMap::new();
         fields.insert("source_id".into(), DbValue::Json(serde_json::json!(1)));
-        fields.insert(
-            "orphan_ids".into(),
-            DbValue::Json(serde_json::json!([])),
-        );
-        fields.insert(
-            "chunk_ids".into(),
-            DbValue::Json(serde_json::json!([])),
-        );
+        fields.insert("orphan_ids".into(), DbValue::Json(serde_json::json!([])));
+        fields.insert("chunk_ids".into(), DbValue::Json(serde_json::json!([])));
         mock.enqueue(QueryResult {
             columns: vec![],
             rows: vec![Row { fields }],

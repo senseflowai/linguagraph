@@ -212,10 +212,9 @@ async fn prefix_index_scopes_embedding_collections() {
         Some(linguagraph::ast::query::Literal::String(s)) => Some(s.clone()),
         _ => None,
     };
-    let has_prefixed_coll = last
-        .params
-        .values()
-        .any(|v| matches!(v, linguagraph::ast::query::Literal::String(s) if s.starts_with("Tenant1__")));
+    let has_prefixed_coll = last.params.values().any(
+        |v| matches!(v, linguagraph::ast::query::Literal::String(s) if s.starts_with("Tenant1__")),
+    );
     assert!(
         has_prefixed_coll,
         "query collection param missing prefix; params={:?}; cypher={}",
@@ -246,7 +245,9 @@ async fn dsl_prefix_label_overrides_pipeline_default() {
     let _ = pipeline.run(dsl).await.unwrap();
     let captured = mock.captured.lock().unwrap();
     assert!(
-        captured[0].text.starts_with("MATCH (p:Person:OverrideTenant)"),
+        captured[0]
+            .text
+            .starts_with("MATCH (p:Person:OverrideTenant)"),
         "DSL prefix_label should override pipeline default; got: {}",
         captured[0].text
     );

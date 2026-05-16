@@ -264,7 +264,7 @@ mod tests {
             start: Node {
                 label: "Person".into(),
                 alias: alias("p"),
-                    prefix_label: None,
+                prefix_label: None,
             },
             traversals: vec![],
             filter: Some(FilterExpression::Predicate(Predicate {
@@ -295,7 +295,7 @@ mod tests {
             start: Node {
                 label: "Person".into(),
                 alias: alias("p"),
-                    prefix_label: None,
+                prefix_label: None,
             },
             traversals: vec![EdgeTraversal {
                 from_alias: alias("p"),
@@ -333,7 +333,7 @@ mod tests {
             start: Node {
                 label: "Person".into(),
                 alias: alias("p"),
-                    prefix_label: None,
+                prefix_label: None,
             },
             traversals: vec![EdgeTraversal {
                 from_alias: alias("p"),
@@ -378,7 +378,7 @@ mod tests {
             start: Node {
                 label: "Customer".into(),
                 alias: alias("c"),
-                    prefix_label: None,
+                prefix_label: None,
             },
             traversals: vec![EdgeTraversal {
                 from_alias: alias("c"),
@@ -424,7 +424,7 @@ mod tests {
             start: Node {
                 label: "Person".into(),
                 alias: alias("p"),
-                    prefix_label: None,
+                prefix_label: None,
             },
             traversals: vec![],
             filter: None,
@@ -463,7 +463,7 @@ mod tests {
             start: Node {
                 label: "Order".into(),
                 alias: alias("o"),
-                    prefix_label: None,
+                prefix_label: None,
             },
             traversals: vec![],
             filter: None,
@@ -493,7 +493,7 @@ mod tests {
             start: Node {
                 label: "Person".into(),
                 alias: alias("p"),
-                    prefix_label: None,
+                prefix_label: None,
             },
             traversals: vec![],
             filter: Some(FilterExpression::And(vec![

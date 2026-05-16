@@ -181,7 +181,7 @@ mod tests {
             start: Node {
                 label: "Person".into(),
                 alias: alias("p"),
-                    prefix_label: None,
+                prefix_label: None,
             },
             traversals: vec![],
             filter: None,
@@ -201,7 +201,7 @@ mod tests {
             start: Node {
                 label: "Order".into(),
                 alias: alias("o"),
-                    prefix_label: None,
+                prefix_label: None,
             },
             traversals: vec![],
             filter: None,

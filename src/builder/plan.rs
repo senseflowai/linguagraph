@@ -314,7 +314,7 @@ mod tests {
             start: Node {
                 label: "Person".into(),
                 alias: alias("p"),
-                    prefix_label: None,
+                prefix_label: None,
             },
             traversals: vec![
                 EdgeTraversal {
@@ -325,7 +325,7 @@ mod tests {
                     target: Node {
                         label: "Person".into(),
                         alias: alias("p2"),
-                    prefix_label: None,
+                        prefix_label: None,
                     },
                     depth: Some(Depth { min: 1, max: 1 }),
                     optional: false,
@@ -338,7 +338,7 @@ mod tests {
                     target: Node {
                         label: "Company".into(),
                         alias: alias("c"),
-                    prefix_label: None,
+                        prefix_label: None,
                     },
                     depth: None,
                     optional: true,

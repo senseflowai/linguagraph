@@ -1,0 +1,39 @@
+{
+  "action": "find",
+  "start": {
+    "label": "Client",
+    "alias": "c"
+  },
+  "traversals": [
+    {
+      "from": "c",
+      "edge": {
+        "label": "VISITED",
+        "alias": "v",
+        "direction": "out"
+      },
+      "target": {
+        "label": "ServiceVisit",
+        "alias": "sv"
+      }
+    }
+  ],
+  "filters": [
+    {
+      "field": "sv.work_start",
+      "op": "eq",
+      "value": "2026-05-13T00:00:00Z"
+    }
+  ],
+  "return": [
+    {
+      "field": "c.full_name",
+      "alias": "client_name"
+    },
+    {
+      "field": "c.phone",
+      "alias": "phone"
+    }
+  ],
+  "limit": 100
+}

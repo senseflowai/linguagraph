@@ -239,8 +239,8 @@ pub enum Command {
     /// in Qdrant are cleaned up via `libqlink.delete_batch` across
     /// every collection inferred from the cached graph specification.
     DeleteBySource {
-        /// `id` property of the `Source` node to delete.
-        #[arg(long = "source", alias = "source-id")]
+        /// `name` property of the `Source` node to delete.
+        #[arg(long = "source", alias = "source-name")]
         source: String,
         /// Optional Cypher prefix label, must match the one used at
         /// ingest time. Scopes the deletion to that tenant / dataset.

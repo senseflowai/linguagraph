@@ -241,6 +241,15 @@ impl Pipeline {
             .clone()
     }
 
+    /// Fetch the live graph schema from the underlying client.
+    ///
+    /// Convenience pass-through to [`GraphClient::schema`] so callers
+    /// can drive [`crate::prompt::generate_system_prompt`] without
+    /// having to keep their own handle on the client.
+    pub async fn live_schema(&self) -> Result<crate::prompt::GraphSchema> {
+        Ok(self.client.schema().await?)
+    }
+
     // ── Read path ───────────────────────────────────────────────────────────
 
     /// Lower a DSL document to the typed AST. Pure; no I/O.

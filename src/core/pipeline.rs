@@ -420,6 +420,28 @@ impl Pipeline {
         Ok((insert, effects))
     }
 
+    /// Ingest a JSON document through a mapping.
+    ///
+    /// Convenience wrapper around [`crate::mapper::to_graph`] followed by
+    /// [`Self::ingest`]. The mapping describes how to lift raw JSON rows
+    /// into typed graph entities and relations; the resulting
+    /// [`Graph`] is then ingested via the standard path so all the same
+    /// type handlers, side effects, and prefix scoping apply.
+    ///
+    /// `GraphSpecification` derived from the mapping is *not* persisted
+    /// here — that lives in the optional `graph_specification_storage`
+    /// path and is the caller's responsibility (see
+    /// `cli::cmd_ingest_json` for the full file-backed variant).
+    pub async fn ingest_json(
+        &self,
+        mapping: &crate::mapper::Mapping,
+        value: &serde_json::Value,
+    ) -> Result<IngestSummary> {
+        let mapped = crate::mapper::to_graph(mapping, value)
+            .map_err(|e| IngestError::Type(format!("mapper::to_graph: {e}")))?;
+        self.ingest(&mapped.graph).await
+    }
+
     /// Compile and execute the full graph ingestion pipeline.
     ///
     /// Each batch is executed sequentially so a partial failure leaves the

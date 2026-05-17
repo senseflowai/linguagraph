@@ -37,12 +37,19 @@ llama-cpp-2 = { git = "https://github.com/senseflowai/llama-cpp-rs", branch = "m
 encoding_rs = "0.8.35"
 uuid = { version = "1", features = ["v4", "v5"] }
 
+# Postgres-backed `GraphSpecificationStorage`. Optional so the default
+# build stays free of the `sqlx` dep tree; senseflowai and any other
+# embedder of linguagraph that wants per-workspace persistence enables
+# the `postgres` feature.
+sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio", "json", "chrono"], optional = true }
+
 [dev-dependencies]
 pretty_assertions = "1.4"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
 
 [features]
 llama = ["dep:llama-cpp-2"]
+postgres = ["dep:sqlx"]
 default = ["llama"]
 
 [profile.release]

@@ -245,9 +245,18 @@ impl Pipeline {
     ///
     /// Convenience pass-through to [`GraphClient::schema`] so callers
     /// can drive [`crate::prompt::generate_system_prompt`] without
-    /// having to keep their own handle on the client.
-    pub async fn live_schema(&self) -> Result<crate::prompt::GraphSchema> {
-        Ok(self.client.schema().await?)
+    /// having to keep their own handle on the client. `filter` contains
+    /// node-label fragments to omit; each fragment is matched like Cypher
+    /// `CONTAINS`, and relationships touching those labels are omitted too.
+    pub async fn live_schema<S: AsRef<str>>(
+        &self,
+        filter: &[S],
+    ) -> Result<crate::prompt::GraphSchema> {
+        Ok(self
+            .client
+            .schema()
+            .await?
+            .filter_node_labels_containing(filter))
     }
 
     // ── Read path ───────────────────────────────────────────────────────────

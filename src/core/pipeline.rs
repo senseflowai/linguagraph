@@ -7,7 +7,7 @@ use crate::ast::{from_dsl, query::InsertQuery, query::ReadQuery};
 use crate::builder::{self, CypherQuery};
 use crate::config::Config;
 use crate::db::{GraphClient, QueryResult, Row, Value as DbValue};
-use crate::dsl::{DslQuery, TraversalQuery};
+use crate::dsl::{Direction as DslDirection, DslQuery, TraversalQuery};
 use crate::embeddings::SharedEmbedder;
 use crate::error::Result;
 use crate::graph::{Graph, GraphSpecification, GraphSpecificationStorage};
@@ -341,8 +341,72 @@ impl Pipeline {
 
     /// Compile and execute against the configured graph client.
     pub async fn run(&self, dsl: DslQuery) -> Result<QueryResult> {
+        let mut dsl = dsl;
+        self.validate_dsl_relationship_directions(&mut dsl).await?;
         let cypher = self.compile(dsl)?;
         Ok(self.client.execute(&cypher).await?)
+    }
+
+    /// Correct LLM-emitted relationship directions against the live schema.
+    ///
+    /// The DSL describes direction relative to the traversal's `from` alias:
+    /// `out` means `(from)-[edge]->(target)`, `in` means
+    /// `(from)<-[edge]-(target)`. When the live schema only contains the
+    /// opposite endpoint order for the same relationship label, flip the DSL
+    /// direction before compilation.
+    async fn validate_dsl_relationship_directions(&self, dsl: &mut DslQuery) -> Result<()> {
+        let schema = self.live_schema::<&str>(&[]).await?;
+        if schema.relationships.is_empty() || dsl.traversals.is_empty() {
+            return Ok(());
+        }
+
+        let mut alias_labels = BTreeMap::new();
+        alias_labels.insert(dsl.start.alias.clone(), dsl.start.label.clone());
+
+        for traversal in &mut dsl.traversals {
+            let from_alias = traversal.from.as_deref().unwrap_or(&dsl.start.alias);
+            let Some(from_label) = alias_labels.get(from_alias) else {
+                alias_labels.insert(
+                    traversal.target.alias.clone(),
+                    traversal.target.label.clone(),
+                );
+                continue;
+            };
+            let target_label = traversal.target.label.as_str();
+            if from_label.is_empty() || target_label.is_empty() {
+                alias_labels.insert(
+                    traversal.target.alias.clone(),
+                    traversal.target.label.clone(),
+                );
+                continue;
+            }
+
+            let out_exists = schema.relationships.iter().any(|rel| {
+                rel.label == traversal.edge.label
+                    && rel.from.as_deref() == Some(from_label.as_str())
+                    && rel.to.as_deref() == Some(target_label)
+            });
+            let in_exists = schema.relationships.iter().any(|rel| {
+                rel.label == traversal.edge.label
+                    && rel.from.as_deref() == Some(target_label)
+                    && rel.to.as_deref() == Some(from_label.as_str())
+            });
+
+            traversal.edge.direction = match traversal.edge.direction {
+                DslDirection::Out if !out_exists && in_exists => DslDirection::In,
+                DslDirection::In if !in_exists && out_exists => DslDirection::Out,
+                DslDirection::Both if !out_exists && in_exists => DslDirection::In,
+                DslDirection::Both if out_exists && !in_exists => DslDirection::Out,
+                direction => direction,
+            };
+
+            alias_labels.insert(
+                traversal.target.alias.clone(),
+                traversal.target.label.clone(),
+            );
+        }
+
+        Ok(())
     }
 
     // ── Traversal path ──────────────────────────────────────────────────────

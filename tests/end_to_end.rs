@@ -10,6 +10,7 @@ use linguagraph::core::Pipeline;
 use linguagraph::db::{MockClient, QueryResult, Row, Value};
 use linguagraph::dsl;
 use linguagraph::graph::{GraphBuilder, PropertyType};
+use linguagraph::prompt::{GraphSchema, RelKind};
 
 fn test_config() -> Config {
     Config {
@@ -54,6 +55,50 @@ async fn pipeline_compiles_and_dispatches_to_client() {
     assert!(captured[0].text.contains("MATCH (p:Person)"));
     assert!(captured[0].params.len() > 0);
     let _ = BTreeMap::<String, Value>::new(); // touch import
+}
+
+#[tokio::test]
+async fn run_corrects_relationship_direction_from_live_schema() {
+    let mock = Arc::new(MockClient::new());
+    mock.set_schema(GraphSchema {
+        nodes: Vec::new(),
+        relationships: vec![RelKind {
+            label: "WORKS_AT".into(),
+            from: Some("Company".into()),
+            to: Some("Person".into()),
+            properties: Vec::new(),
+        }],
+    });
+    mock.enqueue(QueryResult::default());
+
+    let cfg = test_config();
+    let pipeline = Pipeline::new(mock.clone(), &cfg);
+    let dsl = dsl::parse_str(
+        r#"{
+            "action": "find",
+            "start": { "label": "Person", "alias": "p" },
+            "traversals": [
+                {
+                    "edge": { "label": "WORKS_AT", "alias": "w", "direction": "out" },
+                    "target": { "label": "Company", "alias": "c" }
+                }
+            ],
+            "return": [{ "field": "c.name" }]
+        }"#,
+    )
+    .unwrap();
+
+    let _ = pipeline.run(dsl).await.unwrap();
+
+    let captured = mock.captured.lock().unwrap();
+    assert_eq!(captured.len(), 1);
+    assert!(
+        captured[0]
+            .text
+            .contains("MATCH (p:Person)<-[w:WORKS_AT]-(c:Company)"),
+        "relationship direction should be corrected from live schema; got: {}",
+        captured[0].text
+    );
 }
 
 #[tokio::test]

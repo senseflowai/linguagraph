@@ -20,6 +20,9 @@ pub enum GraphSpecificationStorageError {
 
     #[error("invalid graph specification cache contents: {0}")]
     Decode(#[from] serde_json::Error),
+
+    #[error("graph specification storage backend error: {0}")]
+    Backend(String),
 }
 
 #[async_trait]

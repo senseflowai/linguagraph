@@ -1304,7 +1304,11 @@ mod tests {
             .expect("traversal runs");
 
         assert_eq!(
-            result.columns,
+            result
+                .columns
+                .iter()
+                .map(|c| c.name.as_str())
+                .collect::<Vec<_>>(),
             vec![
                 "chunk_id",
                 "chunk_text",

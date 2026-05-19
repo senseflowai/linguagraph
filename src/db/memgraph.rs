@@ -18,7 +18,7 @@ use crate::builder::CypherQuery;
 use crate::config::DatabaseConfig;
 use crate::prompt::GraphSchema;
 
-use super::result::{QueryResult, Row, Value};
+use super::result::{Column, QueryResult, Row, Value};
 use super::{DbError, GraphClient};
 
 pub struct MemgraphClient {
@@ -69,7 +69,7 @@ impl GraphClient for MemgraphClient {
             .map_err(|e| DbError::Query(e.to_string()))?;
 
         let mut rows: Vec<Row> = Vec::new();
-        let mut columns: Vec<String> = Vec::new();
+        let mut column_names: Vec<String> = Vec::new();
         loop {
             let next = tokio::time::timeout(self.timeout, stream.next())
                 .await
@@ -92,8 +92,8 @@ impl GraphClient for MemgraphClient {
                 ));
             };
 
-            if columns.is_empty() {
-                columns = map.keys().cloned().collect();
+            if column_names.is_empty() {
+                column_names = map.keys().cloned().collect();
             }
             let mut row = Row::default();
             for (k, v) in map {
@@ -102,6 +102,7 @@ impl GraphClient for MemgraphClient {
             rows.push(row);
         }
 
+        let columns = merge_columns(&column_names, &q.columns);
         Ok(QueryResult { columns, rows })
     }
 
@@ -113,6 +114,29 @@ impl GraphClient for MemgraphClient {
         super::introspect::introspect_schema(self, super::introspect::IntrospectOptions::default())
             .await
     }
+}
+
+/// Merge the column ordering observed on the wire with the typed
+/// [`Column`] list the builder computed from the AST. The wire order
+/// wins so the driver's actual response stays authoritative; types are
+/// looked up by name. Columns that appear in the response but not in
+/// the builder's list (raw Cypher, schema introspection, etc.) keep
+/// the default `node_type: None`.
+fn merge_columns(observed: &[String], typed: &[Column]) -> Vec<Column> {
+    if typed.is_empty() {
+        return observed.iter().map(|name| Column::new(name.clone())).collect();
+    }
+    let type_map: std::collections::BTreeMap<&str, Option<super::result::NodeType>> = typed
+        .iter()
+        .map(|c| (c.name.as_str(), c.node_type))
+        .collect();
+    observed
+        .iter()
+        .map(|name| Column {
+            name: name.clone(),
+            node_type: type_map.get(name.as_str()).copied().flatten(),
+        })
+        .collect()
 }
 
 /// Recursively translate a [`Literal`] into a [`BoltType`]. The mapping

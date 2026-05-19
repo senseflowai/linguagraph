@@ -15,7 +15,7 @@ use thiserror::Error;
 pub use introspect::{introspect_schema, IntrospectOptions};
 pub use memgraph::MemgraphClient;
 pub use mock::MockClient;
-pub use result::{QueryResult, Row, Value};
+pub use result::{Column, NodeType, QueryResult, Row, Value};
 
 use crate::builder::CypherQuery;
 

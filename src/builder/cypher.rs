@@ -1,8 +1,11 @@
 //! Public entrypoint for the Cypher builder.
 
+use std::collections::BTreeMap;
+
 use thiserror::Error;
 
 use crate::ast::query::*;
+use crate::db::result::{Column, NodeType};
 use crate::graph::{MENTION_REL, PART_OF_REL, SOURCE_LABEL};
 use crate::types::{TypeError, TypeRegistry};
 
@@ -120,7 +123,78 @@ pub fn build_read_with(
         cur.buf = format!("{pre}{}", cur.buf);
     }
 
-    Ok(cur.finish())
+    let columns = projected_columns(query, inject_sources, has_score_projection(&cur));
+    Ok(cur.finish().with_columns(columns))
+}
+
+/// True when the post-match handler chain emitted a sort key that
+/// [`build_read_with`] would surface as an aggregated `score` column.
+/// Mirrors the condition that drives the `__score__ AS score`
+/// projection above so the column metadata stays in sync.
+fn has_score_projection(cur: &Cursor) -> bool {
+    score_projection_expr(cur).is_some()
+}
+
+/// Compute the typed [`Column`] list for a [`ReadQuery`]'s projection,
+/// matching the order in which the builder emits the RETURN list. Each
+/// `ReturnClause::Field` column is tagged with the [`NodeType`] of the
+/// underlying alias when that alias is bound by the MATCH (so `c.id`
+/// where `c` is `:Chunk` yields a column named `id` of type Chunk).
+/// Aggregates and the synthesised `score` / `sources` columns are left
+/// untyped.
+fn projected_columns(query: &ReadQuery, inject_sources: bool, inject_score: bool) -> Vec<Column> {
+    let mut alias_to_label: BTreeMap<&str, &str> = BTreeMap::new();
+    alias_to_label.insert(query.start.alias.as_str(), query.start.label.as_str());
+    for t in &query.traversals {
+        alias_to_label.insert(t.target.alias.as_str(), t.target.label.as_str());
+    }
+
+    let mut cols = Vec::with_capacity(query.returns.len() + 2);
+    for clause in &query.returns {
+        match clause {
+            ReturnClause::Field { field, alias } => {
+                let name = alias.clone().unwrap_or_else(|| render_field_name(field));
+                let node_type = alias_to_label
+                    .get(field.alias.as_str())
+                    .map(|label| NodeType::from_label(label));
+                cols.push(Column { name, node_type });
+            }
+            ReturnClause::Aggregate { func, field, alias } => {
+                let name = alias.clone().unwrap_or_else(|| render_aggregate_name(func, field));
+                cols.push(Column::new(name));
+            }
+        }
+    }
+    if matches!(query.action, Action::Find) {
+        if inject_score && !is_score_aliased_already(query) {
+            cols.push(Column::new(SCORE_COLUMN));
+        }
+        if inject_sources {
+            cols.push(Column::new(SOURCES_COLUMN));
+        }
+    }
+    cols
+}
+
+fn render_field_name(p: &PropertyRef) -> String {
+    match &p.property {
+        Some(prop) => format!("{}.{}", p.alias, prop),
+        None => p.alias.to_string(),
+    }
+}
+
+fn render_aggregate_name(func: &AggregateFn, field: &PropertyRef) -> String {
+    let inner = render_field_name(field);
+    match func {
+        AggregateFn::Count => {
+            let v = inner.split('.').next().unwrap_or(&inner);
+            format!("count({v})")
+        }
+        AggregateFn::Sum => format!("sum({inner})"),
+        AggregateFn::Avg => format!("avg({inner})"),
+        AggregateFn::Min => format!("min({inner})"),
+        AggregateFn::Max => format!("max({inner})"),
+    }
 }
 
 /// Backwards-compatible alias for [`build_read`].
@@ -484,6 +558,93 @@ mod tests {
              well-defined aggregation); got:\n{}",
             q.text
         );
+    }
+
+    #[test]
+    fn columns_carry_node_type_from_binding_alias() {
+        let q = ReadQuery {
+            action: Action::Find,
+            start: Node {
+                label: "Chunk".into(),
+                alias: alias("c"),
+                prefix_label: None,
+            },
+            traversals: vec![EdgeTraversal {
+                from_alias: alias("c"),
+                edge_label: "mention".into(),
+                edge_alias: alias("m"),
+                direction: Direction::Out,
+                target: Node {
+                    label: "Person".into(),
+                    alias: alias("p"),
+                    prefix_label: None,
+                },
+                depth: None,
+                optional: false,
+            }],
+            filter: None,
+            returns: vec![
+                ReturnClause::Field {
+                    field: pref("c", Some("id")),
+                    alias: Some("id".into()),
+                },
+                ReturnClause::Field {
+                    field: pref("p", Some("name")),
+                    alias: None,
+                },
+                ReturnClause::Aggregate {
+                    func: AggregateFn::Count,
+                    field: pref("p", None),
+                    alias: Some("n".into()),
+                },
+            ],
+            group_by: vec![],
+            sort: vec![],
+            limit: None,
+        };
+        let q = build_read(&q).unwrap();
+
+        // `c.id` projects from a :Chunk binding → Chunk
+        // `p.name` projects from a :Person binding → Entity (default)
+        // count(p) is an aggregate → no node type
+        // synthetic `sources` column auto-projected for Find queries → no type
+        let found: std::collections::BTreeMap<_, _> = q
+            .columns
+            .iter()
+            .map(|c| (c.name.clone(), c.node_type))
+            .collect();
+        assert_eq!(found.get("id"), Some(&Some(NodeType::Chunk)));
+        assert_eq!(found.get("p.name"), Some(&Some(NodeType::Entity)));
+        assert_eq!(found.get("n"), Some(&None));
+        assert_eq!(found.get("sources"), Some(&None));
+    }
+
+    #[test]
+    fn source_label_maps_to_source_node_type() {
+        let q = ReadQuery {
+            action: Action::Find,
+            start: Node {
+                label: "Source".into(),
+                alias: alias("s"),
+                prefix_label: None,
+            },
+            traversals: vec![],
+            filter: None,
+            returns: vec![ReturnClause::Field {
+                field: pref("s", Some("name")),
+                alias: Some("source_name".into()),
+            }],
+            group_by: vec![],
+            sort: vec![],
+            limit: None,
+        };
+        let q = build_read(&q).unwrap();
+        let col = q
+            .columns
+            .iter()
+            .find(|c| c.name == "source_name")
+            .expect("source_name column exists");
+        assert_eq!(col.node_type, Some(NodeType::Source));
     }
 
     #[test]

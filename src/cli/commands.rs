@@ -8,7 +8,7 @@ use std::sync::Arc;
 use crate::ast::Literal;
 use crate::config::{self, Config};
 use crate::core::Pipeline;
-use crate::db::{introspect, GraphClient, MemgraphClient, QueryResult, Value};
+use crate::db::{introspect, Column, GraphClient, MemgraphClient, QueryResult, Value};
 use crate::dsl;
 use crate::embeddings::{self, SharedEmbedder};
 use crate::error::Result;
@@ -594,13 +594,14 @@ fn query_result_table(result: &QueryResult) -> String {
     }
 
     let mut builder = Builder::default();
-    builder.push_record(columns.iter().map(String::as_str));
+    builder.push_record(columns.iter().map(column_header));
     for row in &result.rows {
-        builder.push_record(
-            columns
-                .iter()
-                .map(|column| row.fields.get(column).map(value_cell).unwrap_or_default()),
-        );
+        builder.push_record(columns.iter().map(|column| {
+            row.fields
+                .get(&column.name)
+                .map(value_cell)
+                .unwrap_or_default()
+        }));
     }
 
     let mut out = builder.build().with(Style::ascii()).to_string();
@@ -608,26 +609,33 @@ fn query_result_table(result: &QueryResult) -> String {
     out
 }
 
-fn query_result_columns(result: &QueryResult) -> Vec<String> {
+fn column_header(column: &Column) -> String {
+    match column.node_type {
+        Some(t) => format!("{} ({:?})", column.name, t),
+        None => column.name.clone(),
+    }
+}
+
+fn query_result_columns(result: &QueryResult) -> Vec<Column> {
     if !result.columns.is_empty() {
         return result
             .columns
             .iter()
-            .filter(|column| !is_hidden_result_column(column))
+            .filter(|column| !is_hidden_result_column(&column.name))
             .cloned()
             .collect();
     }
 
-    let mut columns = BTreeSet::new();
+    let mut names = BTreeSet::new();
     for row in &result.rows {
-        columns.extend(
+        names.extend(
             row.fields
                 .keys()
-                .filter(|column| !is_hidden_result_column(column))
+                .filter(|name| !is_hidden_result_column(name))
                 .cloned(),
         );
     }
-    columns.into_iter().collect()
+    names.into_iter().map(Column::new).collect()
 }
 
 fn is_hidden_result_column(column: &str) -> bool {

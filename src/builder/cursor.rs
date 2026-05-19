@@ -3,21 +3,37 @@
 use std::collections::BTreeMap;
 
 use crate::ast::query::Literal;
+use crate::db::result::Column;
 use crate::types::context::ParamBinder;
 
 /// A finished Cypher query with its bound parameters.
 ///
 /// `BTreeMap` is used so the textual representation is deterministic, which
 /// makes snapshot tests stable.
+///
+/// `columns` carries the projection metadata the read-query builder
+/// computed from the AST: column name and (when the projection
+/// references a bound node) the [`crate::db::NodeType`] of that node.
+/// Insert queries leave this empty.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CypherQuery {
     pub text: String,
     pub params: BTreeMap<String, Literal>,
+    pub columns: Vec<Column>,
 }
 
 impl CypherQuery {
     pub fn new(text: String, params: BTreeMap<String, Literal>) -> Self {
-        Self { text, params }
+        Self {
+            text,
+            params,
+            columns: Vec::new(),
+        }
+    }
+
+    pub fn with_columns(mut self, columns: Vec<Column>) -> Self {
+        self.columns = columns;
+        self
     }
 }
 

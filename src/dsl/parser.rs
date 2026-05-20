@@ -4,6 +4,11 @@
 //! aliases, sane depth ranges. Anything that needs to know about the wider
 //! query (alias resolution, group_by/aggregate consistency) is the job of
 //! the lowering step in [`crate::ast::from_dsl`].
+//!
+//! Before validation runs, [`dedupe_edge_aliases`] repairs the one
+//! duplicate-alias pattern that is mechanical to recover from: an edge
+//! alias colliding with a node alias. See that function for why the edge
+//! is the safe side to rewrite.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -51,9 +56,56 @@ pub async fn parse(path: &Path) -> Result<DslQuery, DslError> {
 
 /// Parse and validate a DSL document from an in-memory string.
 pub fn parse_str(raw: &str) -> Result<DslQuery, DslError> {
-    let query: DslQuery = serde_json::from_str(raw)?;
+    let mut query: DslQuery = serde_json::from_str(raw)?;
+    dedupe_edge_aliases(&mut query);
     validate(&query)?;
     Ok(query)
+}
+
+/// Rewrite traversal edge aliases that collide with another alias.
+///
+/// A model emitting the DSL routinely reuses a node's abbreviation for
+/// the edge that reaches it — e.g. both the `VISITED` edge and the
+/// `ServiceVisit` node end up aliased `sv`. Cypher keeps nodes and
+/// relationships in a single variable namespace, so `(c)-[sv:VISITED]->(sv:ServiceVisit)`
+/// is illegal and [`validate`] would reject it as a duplicate alias.
+///
+/// The node is the binding the author meant to keep: filters, returns,
+/// `group_by`, `sort` and later traversals' `from` all reference node
+/// aliases, while edge variables are rarely referenced at all. An edge
+/// alias that collides with a node was therefore never a distinct,
+/// referenced binding — rewriting it to a fresh name is lossless. After
+/// the rewrite a `<alias>.<prop>` reference to the shared name resolves
+/// unambiguously to the node, which is exactly what the lowering step
+/// already assumed.
+///
+/// Node-vs-node collisions (start vs target, or two targets) are left
+/// untouched: those are genuinely ambiguous and [`validate`] still
+/// rejects them.
+fn dedupe_edge_aliases(q: &mut DslQuery) {
+    let mut taken: HashSet<String> = HashSet::new();
+    taken.insert(q.start.alias.clone());
+    for t in &q.traversals {
+        taken.insert(t.target.alias.clone());
+    }
+    for t in &mut q.traversals {
+        if !taken.insert(t.edge.alias.clone()) {
+            t.edge.alias = fresh_alias(&t.edge.alias, &mut taken);
+        }
+    }
+}
+
+/// Derive a unique alias by appending a numeric suffix to `base`, and
+/// record the result in `taken`.
+fn fresh_alias(base: &str, taken: &mut HashSet<String>) -> String {
+    let mut n = 2u32;
+    loop {
+        let candidate = format!("{base}_{n}");
+        if taken.insert(candidate.clone()) {
+            return candidate;
+        }
+        n += 1;
+    }
 }
 
 fn validate(q: &DslQuery) -> Result<(), DslError> {
@@ -215,6 +267,8 @@ mod tests {
 
     #[test]
     fn rejects_duplicate_alias() {
+        // Node-vs-node collision (start `p` reused as the target): this is
+        // genuinely ambiguous, so it stays a hard error.
         let json = r#"{
             "action": "find",
             "start": { "label": "Person", "alias": "p" },
@@ -226,6 +280,53 @@ mod tests {
         }"#;
         let err = parse_str(json).unwrap_err();
         assert!(matches!(err, DslError::DuplicateAlias(_)));
+    }
+
+    #[test]
+    fn repairs_edge_alias_colliding_with_node() {
+        // The model aliased both the `VISITED` edge and the `ServiceVisit`
+        // node `sv`. The edge is rewritten so the query parses; the node
+        // keeps `sv`, so `sv.work_start` still resolves to it.
+        let json = r#"{
+            "action": "aggregate",
+            "start": { "label": "Client", "alias": "c" },
+            "traversals": [{
+                "from": "c",
+                "edge": { "label": "VISITED", "alias": "sv", "direction": "out" },
+                "target": { "label": "ServiceVisit", "alias": "sv" }
+            }],
+            "filters": [
+                { "field": "sv.work_start", "op": "eq", "value": "2026-05-15T00:00:00" }
+            ],
+            "return": [{ "aggregate": "count", "field": "c.id", "alias": "client_count" }],
+            "group_by": []
+        }"#;
+        let q = parse_str(json).expect("edge/node alias collision must be repaired");
+        let edge_alias = &q.traversals[0].edge.alias;
+        assert_ne!(edge_alias, "sv", "edge alias must be rewritten");
+        assert_eq!(q.traversals[0].target.alias, "sv", "node keeps the alias");
+    }
+
+    #[test]
+    fn repairs_two_edges_sharing_an_alias() {
+        let json = r#"{
+            "action": "find",
+            "start": { "label": "Client", "alias": "c" },
+            "traversals": [
+                { "from": "c",
+                  "edge": { "label": "VISITED", "alias": "e", "direction": "out" },
+                  "target": { "label": "ServiceVisit", "alias": "sv" } },
+                { "from": "sv",
+                  "edge": { "label": "INCLUDES_WORK", "alias": "e", "direction": "out" },
+                  "target": { "label": "WorkItem", "alias": "wi" } }
+            ],
+            "return": [{ "field": "wi.name" }]
+        }"#;
+        let q = parse_str(json).expect("edge/edge alias collision must be repaired");
+        assert_ne!(
+            q.traversals[0].edge.alias, q.traversals[1].edge.alias,
+            "the two edge aliases must end up distinct"
+        );
     }
 
     #[test]

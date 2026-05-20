@@ -1,9 +1,20 @@
 # linguagraph
 
-Translate natural-language graph questions into safe, parameterized Cypher and
-run them against [Memgraph](https://memgraph.com/). The crate is structured so
-an LLM emits a small JSON DSL, the DSL is validated, lowered to a typed AST,
-compiled to Cypher with bound parameters, and executed by an `async` driver.
+`linguagraph` turns natural-language questions about a graph into safe,
+parameterized [Cypher](https://opencypher.org/) and runs them against
+[Memgraph](https://memgraph.com/). Instead of asking a language model to write
+Cypher directly — which invites string-interpolation bugs and injection — the
+crate constrains the model to a small, strongly-shaped JSON DSL. That DSL is the
+only thing the model produces; everything downstream is deterministic Rust:
+structural validation, lowering to a typed AST, compilation to Cypher with bound
+parameters, and execution through an `async` Bolt driver.
+
+The crate is equal parts query compiler and graph toolkit. Alongside the read
+path it ships data ingestion (mapping-driven and graph-JSON), live schema
+introspection, schema-aware prompt generation, a pluggable field-type system
+with built-in semantic and hybrid vector search, and a traversal retrieval
+pipeline for RAG-style chunk lookups. The same layered design runs through all
+of it: every stage has its own types, its own error type, and its own tests.
 
 ```
 natural language ──▶ LLM ──▶ JSON DSL ──▶ AST ──▶ Cypher (+ params) ──▶ Memgraph
@@ -11,12 +22,78 @@ natural language ──▶ LLM ──▶ JSON DSL ──▶ AST ──▶ Cypher
                   prompt::generate_system_prompt                  db::GraphClient
 ```
 
-## Why
+## Philosophy
 
-Letting a model emit Cypher directly is unsafe (string interpolation, SQL-style
-injection) and hard to test. `linguagraph` constrains the model to a tiny JSON
-shape that we can validate in microseconds, then takes responsibility for
-producing correct, parameterized Cypher ourselves.
+Letting a model emit Cypher directly is unsafe and hard to test. Free-form
+Cypher means filter values are interpolated into the query string, which opens
+the door to injection and makes the output impossible to validate without
+effectively parsing Cypher yourself. A model that emits a whole query language
+can also fail in unbounded ways.
+
+`linguagraph` takes the opposite stance: **the model's job is to fill in a small
+JSON shape; the crate's job is to produce correct Cypher.** The DSL is
+deliberately tiny — a handful of actions, traversals, filters and projections —
+so it can be validated in microseconds and every field reference checked before
+a query is ever built. Once the DSL is valid, query construction is pure,
+deterministic Rust that the project owns and tests.
+
+Two principles fall out of that:
+
+- **Safety by construction.** Filter values are never concatenated into Cypher.
+  They are bound as Bolt parameters (`$p0`, `$p1`, …), so a malicious or
+  malformed value can change *data*, never query *structure*.
+- **Typed, layered boundaries.** DSL, AST and Cypher are distinct
+  representations with distinct error types. A bug is contained to the layer
+  that produced it, and each layer is testable in isolation — no database
+  required.
+
+## Project Overview
+
+`linguagraph` is a Rust library (the `linguagraph` crate) and a command-line
+tool (the `linguagraph` binary) built around one core pipeline plus the
+supporting machinery a graph-backed LLM application needs.
+
+The **query path** is the heart of the project. A JSON DSL document describes a
+graph question — a start node, optional traversals, filters, projections,
+grouping, sorting and a limit. `linguagraph` validates it structurally, lowers
+it to a typed AST, compiles that AST to a parameterized Cypher query, and
+executes it against Memgraph over Bolt. The CLI exposes each stage as its own
+subcommand (`dsl`, `cypher`, `run`), so you can stop and inspect any
+intermediate representation.
+
+Around that core it can also:
+
+- **Generate prompts.** From a graph schema it renders a portable,
+  provider-agnostic system prompt — schema description, DSL rules and worked
+  examples — that teaches any LLM to emit valid DSL. It can also tailor the
+  prompt to a specific natural-language query.
+- **Introspect a live graph.** The `schema` command samples a running Memgraph
+  instance and reports node labels, relationship types and inferred property
+  types as JSON or as a ready-to-use prompt.
+- **Ingest data.** Two ingestion paths write into the graph: a *mapping-driven*
+  path that lifts arbitrary structured JSON into typed entities and relations
+  via a declarative JSONPath mapping, and a *graph-JSON* path that ingests a
+  compact `{entities, relations}` document directly. Both run through the same
+  planner, which emits deterministic, idempotent `MERGE` batches.
+- **Search semantically.** The pluggable type system ships a `SemanticText`
+  type that integrates with [qlink](https://github.com/senseflowai/qlink) for
+  vector and hybrid (vector + exact) search. Text properties are embedded on
+  ingestion and become searchable through two extra DSL operators, `search` and
+  `hybrid_search`.
+- **Retrieve for RAG.** A traversal retrieval pipeline searches text chunks by
+  goal and by mentioned entities, then merges and ranks unique chunks — the
+  building block for retrieval-augmented generation over a graph.
+- **Stay multi-tenant.** Optional `prefix_label` / `prefix_index` scoping stamps
+  every ingested node and every query so independent tenants or datasets can
+  share one database and one vector store without colliding.
+- **Clean up.** `delete-by-source` removes a source-rooted subgraph — its
+  chunks, its orphaned entities and the matching vectors — in well-defined
+  phases.
+
+Everything runs without a live database where it can: the read and ingest paths
+are exercised end-to-end in tests through an in-memory `MockClient`, and the
+default build uses a deterministic mock embedder so nothing depends on native
+model code.
 
 ## Features
 
@@ -25,20 +102,19 @@ producing correct, parameterized Cypher ourselves.
 - **Parameterized output.** Filter values never enter the query string. They
   are bound as `$p0`, `$p1`, … and shipped to the driver as Bolt parameters.
 - **Driver-agnostic.** The pipeline depends on a `GraphClient` trait. Production
-  uses `neo4rs`; tests use an in-memory `MockClient`. Future drivers (a vector
-  store, a different Cypher backend) plug in the same way.
+  uses a `neo4rs`-backed `MemgraphClient`; tests use an in-memory `MockClient`.
+  New backends plug in the same way.
 - **Schema-aware prompting.** A `GraphSchema` description renders into a
   provider-agnostic system prompt with rules and worked examples.
 - **Pluggable type system.** Field types own their own ingestion / lowering /
   Cypher emission. Bundled `SemanticText` integrates with
   [qlink](https://github.com/senseflowai/qlink) for vector + hybrid search;
   add your own (`GeoLocation`, `Keyword`, `ImageEmbedding`) without touching
-  the core. See [`docs/type-system.md`](#pluggable-type-system).
-- **Document ingestion.** Lift LLM-extracted `{document, chunks, entities,
-  relations}` JSON straight into a graph of `Document → Chunk → Entity`
-  nodes, with chunk text embedded for semantic retrieval. Ships with a
-  knowledge-extraction prompt generator so the LLM emits the exact shape
-  the ingester expects. See [Document ingestion](#document-ingestion).
+  the core. See [Pluggable type system](#pluggable-type-system).
+- **Two ingestion paths.** Mapping-driven (`ingest-json`) lifts structured JSON
+  into the graph through a declarative mapping; graph-JSON (`ingest-graph`)
+  ingests a compact `{entities, relations}` document directly. Both emit
+  deterministic, idempotent `MERGE` batches.
 - **TOML config + env overrides.** `LINGUAGRAPH__DATABASE__URI=...` overrides
   the file without templating.
 
@@ -47,22 +123,27 @@ producing correct, parameterized Cypher ourselves.
 ```
 src/
 ├── dsl/        JSON DSL types + structural parser/validator
-├── ast/        typed query model + DSL → AST lowering
+├── ast/        typed query model
+├── resolve/    DSL → AST resolution (the only stringly-typed → typed boundary)
 ├── builder/    AST → Cypher (split into match/where/return parts)
-├── db/         GraphClient trait, neo4rs impl, mock impl
+├── db/         GraphClient trait, Memgraph (neo4rs) impl, mock impl
 ├── config/     TOML loader with env overrides
 ├── prompt/     schema-aware system-prompt generator
-├── promptgen/  JSON → mapping-authoring prompt; chunk → knowledge-extract prompt
+├── promptgen/  JSON → mapping-authoring prompt; fragment → knowledge-extract prompt
 ├── types/      pluggable field-type system (registry, handlers)
-├── embeddings/ Embedder trait + Mock + llama-cpp-2 backend
-├── ingest/     mapping/document → InsertQuery planner with side-effect queue
+├── embeddings/ Embedder trait + mock + llama-cpp-2 backend
+├── graph/      owned graph model, GraphBuilder, graph specification
 ├── mapper/     declarative JSON → entity-row extraction
-├── core/       Pipeline orchestration (wires layers together)
+├── ingest/     graph → InsertQuery planner with side-effect queue
+├── core/       Pipeline orchestration (wires the layers together)
 ├── cli/        clap-based CLI
 └── error.rs    crate-wide Error / Result
 tests/          integration tests (no live DB required)
-examples/       sample DSL JSON, usage notes
+examples/       sample DSL JSON, mappings, usage notes
 ```
+
+Anything user-facing — the CLI, the integration tests — goes through
+`core::Pipeline`; the layers below it are reusable on their own.
 
 ## Pluggable type system
 
@@ -149,176 +230,6 @@ let pipeline = Pipeline::new(client, &cfg).with_registry(Arc::new(registry));
 
 No changes to the DSL parser, AST, or Cypher builder are required.
 
-## Document ingestion
-
-For RAG-style workloads — where a document is split into chunks and an LLM
-extracts entities/relations from each chunk — there's a second ingest path
-that bypasses the mapping layer. Input JSON shape:
-
-```json
-{
-  "document": {
-    "name": "Article 5 of the Civil Code",
-    "path": "/docs/civil_code/article_5.txt",
-    "chunks": [
-      {
-        "id": "c1",
-        "text": "The court grants the citizen the right to appeal.",
-        "entities": [
-          {"id": "e1", "type": "StateBody",  "name": "court"},
-          {"id": "e2", "type": "Person",     "name": "citizen"},
-          {"id": "e3", "type": "LegalRight", "name": "right to appeal"}
-        ],
-        "relations": [
-          {"from": "e1", "to": "e3", "type": "GRANTS"},
-          {"from": "e3", "to": "e2", "type": "APPLIES_TO"}
-        ]
-      }
-    ]
-  }
-}
-```
-
-Pass it to `ingest-document` and you get the graph:
-
-```
-(:Document {path, name})
-  -[:HAS_CHUNK]->
-    (:Chunk {id, text, index, document_path})  // chunk text is embedded into Qdrant
-      -[:MENTIONS]->
-        (:StateBody | :Person | :LegalRight {id, name, type})
-          -[:GRANTS | :APPLIES_TO | ...]->
-            (other entity)
-```
-
-- `Document` and `Chunk` are reserved built-in labels; `HAS_CHUNK` and
-  `MENTIONS` are reserved built-in relation types.
-- Entity types and relation types are LLM-emitted strings; they are
-  auto-sanitized to satisfy the Cypher identifier grammar (`Music Group`
-  → `Music_Group`, `member-of` → `MEMBER_OF`).
-- Entity nodes are merged on a deterministic UUID v5 keyed off
-  `(document.path, chunk.id, local_id)` — re-ingest is idempotent. The
-  local `e1`/`e2` ids only wire relations within their own chunk and are
-  not stored as node keys.
-- Chunk text is always embedded via the existing `SemanticText`
-  side-effect machinery so chunks become queryable through the standard
-  DSL:
-
-  ```json
-  {
-    "action": "find",
-    "start": {"label": "Chunk", "alias": "c"},
-    "filters": [
-      {"field": "c.text", "type": "SemanticText", "op": "search",
-       "value": "right to appeal"}
-    ],
-    "return": [{"field": "c.id"}, {"field": "c.text"}],
-    "limit": 5
-  }
-  ```
-
-### Library
-
-```rust
-use linguagraph::{core::Pipeline, ingest::DocumentInput};
-
-let doc: DocumentInput = serde_json::from_str(&raw_json)?;
-let summary = pipeline.ingest_document(doc).await?;
-println!("{}", serde_json::to_string_pretty(&summary)?);
-```
-
-### CLI
-
-```bash
-# Execute against the configured database.
-linguagraph ingest-document path/to/doc.json
-
-# Dry-run: print the rendered Cypher batches without connecting.
-linguagraph ingest-document-cypher path/to/doc.json
-```
-
-### Knowledge-extraction prompt
-
-`knowledge-prompt` emits a deterministic LLM prompt whose output JSON
-plugs straight into `ingest-document`. Defaults are tuned for the legal
-domain — pass `--entity-type` / `--relation-type` (repeatable) to
-constrain the LLM to a custom ontology.
-
-```bash
-# Use the bundled legal-domain defaults (LegalNorm, StateBody, Person, ...;
-# GRANTS, REGULATES, APPLIES_TO, ...).
-linguagraph knowledge-prompt fragment.txt
-
-# Constrain the LLM to a custom vocabulary.
-linguagraph knowledge-prompt fragment.txt \
-    --entity-type Article \
-    --entity-type Citation \
-    --entity-type Court \
-    --relation-type CITES \
-    --relation-type ISSUED_BY \
-    --relation-type CONTAINS \
-    -o extract_prompt.md
-
-# Pipe a fragment in.
-cat fragment.txt | linguagraph knowledge-prompt -
-```
-
-Example custom-types invocation and the JSON the LLM is told to emit:
-
-```bash
-linguagraph knowledge-prompt article5.txt \
-    --entity-type LegalNorm \
-    --entity-type StateBody \
-    --entity-type LegalRight \
-    --relation-type GRANTS \
-    --relation-type APPLIES_TO
-```
-
-```json
-{
-  "entities": [
-    {"id": "e1", "type": "StateBody",  "name": "court"},
-    {"id": "e2", "type": "LegalRight", "name": "right to appeal"}
-  ],
-  "relations": [
-    {"from": "e1", "to": "e2", "type": "GRANTS"}
-  ]
-}
-```
-
-Drop the LLM's `entities`/`relations` arrays straight into a chunk and feed
-the document to `ingest-document`.
-
-The default vocabularies bundled with `knowledge-prompt`:
-
-| Default entity types | Default relation types |
-|---|---|
-| `LegalNorm`, `LegalAct`, `StateBody`, `Person`, `Organization`, `LegalRight`, `LegalObligation`, `Sanction`, `LegalProcedure`, `LegalConcept`, `Date`, `Location`, `MonetaryAmount` | `GRANTS`, `REQUIRES`, `PROHIBITS`, `REGULATES`, `ESTABLISHES`, `ENFORCES`, `REFERENCES`, `AMENDS`, `REPEALS`, `APPLIES_TO`, `PART_OF`, `HAS_SANCTION`, `ISSUED_BY`, `DEFINED_AS` |
-
-For programmatic use the same lists are available as
-`promptgen::knowledge::default_entity_types()` /
-`default_relation_types()`, and you can extend them rather than replace:
-
-```rust
-use linguagraph::promptgen::knowledge::{
-    default_entity_types, default_relation_types,
-    generate_knowledge_extract_prompt,
-    EntityTypeSpec, KnowledgeExtractOptions, RelationTypeSpec,
-};
-
-let mut ents = default_entity_types();
-ents.push(EntityTypeSpec::with_description(
-    "Citation", "Reference to another legal act or article.",
-));
-let mut rels = default_relation_types();
-rels.push(RelationTypeSpec::new("CITES"));
-
-let prompt = generate_knowledge_extract_prompt(
-    fragment,
-    &KnowledgeExtractOptions { entity_types: ents, relation_types: rels },
-);
-```
-
 ## Getting started
 
 ### 1. Install Rust
@@ -333,10 +244,11 @@ docker run -p 7687:7687 memgraph/memgraph-platform
 
 ### 3. Configure
 
-```bash
-cp config.example.toml config.toml
-# edit config.toml or override with LINGUAGRAPH__DATABASE__URI=...
-```
+Create a `config.toml` in the working directory (see
+[Configuration](#configuration) for every field) or override individual values
+with `LINGUAGRAPH__SECTION__FIELD=...` environment variables. Commands that
+don't touch the database — `dsl`, `cypher`, `generate-prompt`,
+`knowledge-prompt` — fall back to safe defaults when no config file is present.
 
 ### 4. Build
 
@@ -435,6 +347,107 @@ LIMIT 25
 
 with `$p0 = 30`, `$p1 = "Berlin"`.
 
+## Ingesting data
+
+`linguagraph` writes into the graph through two front-ends that share one
+planner. The planner emits deterministic, idempotent `MERGE` batches: every
+node `MERGE` runs before any relationship `MERGE`, so endpoints always exist
+when a relation lands, and re-ingesting the same input is a no-op.
+
+### Mapping-driven ingest
+
+The `ingest-json` command takes a raw data file and a *mapping* file. The
+mapping is a declarative document — JSONPath expressions plus type tags — that
+describes how to lift rows out of arbitrary JSON into typed graph entities and
+relations. See `examples/companies_data.json` + `examples/companies_mapping.json`
+for a worked pair.
+
+```bash
+linguagraph ingest-json examples/companies_data.json examples/companies_mapping.json
+```
+
+`generate-prompt` analyses an arbitrary JSON document and emits a prompt that
+asks an LLM to author the mapping for it, so you don't have to write the
+mapping by hand.
+
+### Graph-JSON ingest
+
+When you already have a graph in hand, `ingest-graph` ingests a compact
+document directly — no mapping required:
+
+```json
+{
+  "entities": [
+    { "id": "alice", "type": "Person", "primary_key": "id", "name": "Alice" },
+    { "id": "acme",  "type": "Company", "primary_key": "name", "name": "Acme" }
+  ],
+  "relations": [
+    { "from": "alice", "to": "acme", "type": "WORKS_AT", "since": 2024 }
+  ]
+}
+```
+
+Entity `id` values are local handles used only to wire relations. A property
+value may be typed (`{"type": "Text", "value": "..."}`) or raw, in which case a
+graph property type is inferred from the JSON value. `relationships` is accepted
+as an alias for `relations`. This is the shape produced by
+`GraphBuilder::from_json` in the library.
+
+### Knowledge-extraction prompt
+
+`knowledge-prompt` emits a deterministic LLM prompt whose output is a
+`{entities, relations}` document — exactly the graph-JSON shape `ingest-graph`
+consumes. Defaults are tuned for the legal domain; pass `--entity-type` /
+`--relation-type` (repeatable) to constrain the LLM to a custom ontology.
+
+```bash
+# Use the bundled legal-domain defaults.
+linguagraph knowledge-prompt fragment.txt
+
+# Constrain the LLM to a custom vocabulary.
+linguagraph knowledge-prompt fragment.txt \
+    --entity-type Article \
+    --entity-type Citation \
+    --entity-type Court \
+    --relation-type CITES \
+    --relation-type ISSUED_BY \
+    --relation-type CONTAINS \
+    -o extract_prompt.md
+
+# Pipe a fragment in from stdin.
+cat fragment.txt | linguagraph knowledge-prompt -
+```
+
+The default vocabularies bundled with `knowledge-prompt`:
+
+| Default entity types | Default relation types |
+|---|---|
+| `LegalNorm`, `LegalAct`, `StateBody`, `Person`, `Organization`, `LegalRight`, `LegalObligation`, `Sanction`, `LegalProcedure`, `LegalConcept`, `Date`, `Location`, `MonetaryAmount` | `GRANTS`, `REQUIRES`, `PROHIBITS`, `REGULATES`, `ESTABLISHES`, `ENFORCES`, `REFERENCES`, `AMENDS`, `REPEALS`, `APPLIES_TO`, `PART_OF`, `HAS_SANCTION`, `ISSUED_BY`, `DEFINED_AS` |
+
+For programmatic use the same lists are available as
+`promptgen::knowledge::default_entity_types()` /
+`default_relation_types()`, and you can extend them rather than replace:
+
+```rust
+use linguagraph::promptgen::knowledge::{
+    default_entity_types, default_relation_types,
+    generate_knowledge_extract_prompt,
+    EntityTypeSpec, KnowledgeExtractOptions, RelationTypeSpec,
+};
+
+let mut ents = default_entity_types();
+ents.push(EntityTypeSpec::with_description(
+    "Citation", "Reference to another legal act or article.",
+));
+let mut rels = default_relation_types();
+rels.push(RelationTypeSpec::new("CITES"));
+
+let prompt = generate_knowledge_extract_prompt(
+    fragment,
+    &KnowledgeExtractOptions { entity_types: ents, relation_types: rels },
+);
+```
+
 ## Configuration
 
 ```toml
@@ -442,6 +455,7 @@ with `$p0 = 30`, `$p1 = "Berlin"`.
 uri = "bolt://localhost:7687"
 user = "memgraph"
 password = "memgraph"
+database = "memgraph"
 max_connections = 16
 query_timeout_secs = 30
 
@@ -454,9 +468,24 @@ max_tokens = 2048
 [query]
 max_traversal_depth = 6
 default_limit = 100
+
+[graph_specification]
+cache_path = ".linguagraph/graph_specification.json"
+embedding_model = "models/bge-small.gguf"
+reranking_model = "models/bge-reranker.gguf"
+embedding_dim = 384
+reranking_threshold = 0.3
+
+# One block per registered field type; the SemanticText handler reads this one.
+[types.SemanticText]
+embedding_model = "models/bge-small.gguf"
+collection = "companies"
+top_k = 20
 ```
 
-Any field can be overridden via `LINGUAGRAPH__SECTION__FIELD`, e.g.:
+`[llm]`, `[query]`, `[graph_specification]` and `[types.*]` are all optional and
+fall back to the defaults shown above. Any field can be overridden via
+`LINGUAGRAPH__SECTION__FIELD`, e.g.:
 
 ```bash
 LINGUAGRAPH__DATABASE__URI=bolt://memgraph:7687 cargo run -- run query.json
@@ -490,8 +519,19 @@ async fn main() -> anyhow::Result<()> {
 You can also stop at any intermediate stage:
 
 ```rust
-let cypher = pipeline.compile(query)?;     // CypherQuery { text, params }
-let ast    = pipeline.lower(query.clone())?; // typed AST for inspection
+let cypher = pipeline.compile(query.clone())?; // CypherQuery { text, params }
+let ast    = pipeline.lower(query)?;           // typed AST for inspection
+```
+
+Ingestion goes through the same `Pipeline`. Build a graph and call `ingest`, or
+hand a mapping + JSON value to `ingest_json`:
+
+```rust
+use linguagraph::graph::GraphBuilder;
+
+let graph = GraphBuilder::from_json(raw_json)?;
+let summary = pipeline.ingest(&graph).await?;
+println!("{} node rows, {} relation rows", summary.node_rows, summary.relation_rows);
 ```
 
 ## Prompt generation
@@ -506,25 +546,29 @@ let prompt = generate_system_prompt(&schema, &PromptOptions::default());
 
 The generator emits a portable string: schema → DSL rules → worked examples.
 It never embeds provider-specific markers; plug it into Anthropic, OpenAI, a
-local model, anything.
+local model, anything. `generate_query_prompt` produces the same prompt narrowed
+to the entity types relevant to a specific natural-language query.
 
 ## CLI reference
 
 | Command | Purpose |
 |---|---|
-| `linguagraph dsl <file.json>` | Parse and print the typed AST. |
-| `linguagraph cypher <file.json>` | Compile to Cypher; print query + parameters. |
-| `linguagraph run <file.json>` | Compile and execute against Memgraph. |
-| `linguagraph prompt [--schema <file>] [--no-examples]` | Print a system prompt. |
-| `linguagraph schema` | Fetch the live graph schema as JSON. |
-| `linguagraph ingest <data.json> <mapping.json>` | Mapping-driven ingest; execute against the configured DB. |
-| `linguagraph ingest-cypher <data.json> <mapping.json>` | Mapping-driven ingest; print Cypher only. |
-| `linguagraph ingest-document <doc.json>` | Document/chunk/entity ingest; execute against the configured DB. |
-| `linguagraph ingest-document-cypher <doc.json>` | Document/chunk/entity ingest; print Cypher only. |
+| `linguagraph dsl <file.json>` | Validate a DSL file and print the lowered AST. |
+| `linguagraph cypher <file.json>` | Compile to Cypher; print query + parameters (no DB). |
+| `linguagraph query <file.json>` | Alias of `cypher`; reserved for future natural-language front-ends. |
+| `linguagraph run <file.json>` | Compile and execute a DSL query against Memgraph. |
+| `linguagraph traversal <file.json>` | Run the traversal retrieval pipeline (entity + goal chunk search). |
+| `linguagraph prompt [query] [--schema <file>] [--no-examples]` | Print a schema-aware system prompt for an LLM. |
+| `linguagraph schema [--format json\|prompt]` | Introspect the live graph schema. |
+| `linguagraph ingest-json <data.json> <mapper.json>` | Mapping-driven ingest; execute against the configured DB. |
+| `linguagraph ingest-graph <graph.json>` | Ingest a compact `{entities, relations}` graph JSON. |
 | `linguagraph generate-prompt <data.json>` | Generate a mapping-authoring prompt for an LLM. |
 | `linguagraph knowledge-prompt <fragment.txt> [--entity-type X] [--relation-type Y]` | Generate a knowledge-extraction prompt; defaults to a legal vocabulary. |
+| `linguagraph delete-by-source --source <name>` | Delete a source-rooted subgraph and its vectors. |
 
-Global flag: `--config <path>` (default `config.toml`).
+Global flag: `--config <path>` (default `config.toml`). The ingest, `run`,
+`cypher`, `traversal` and `query` commands also accept `--prefix-label` /
+`--prefix-index` to scope reads and writes to a tenant or dataset.
 
 ## Testing
 
@@ -532,7 +576,7 @@ Global flag: `--config <path>` (default `config.toml`).
 cargo test
 ```
 
-The suite has unit tests next to each module plus three integration suites in
+The suite has unit tests next to each module plus integration suites in
 `tests/` that exercise the public API end-to-end via `MockClient` — no live
 Memgraph required:
 
@@ -541,28 +585,36 @@ Memgraph required:
   attempt that confirms values never leak into the query string
 - `tests/end_to_end.rs` — `Pipeline` dispatches to a `GraphClient` and applies
   default limits
+- `tests/type_system.rs` / `tests/property_types.rs` — the pluggable type
+  registry and per-type ingestion / lowering / emission
+- `tests/promptgen.rs` / `tests/knowledge_prompt.rs` — prompt generators
 
-## Extensibility
+## Extending linguagraph
 
-The trait boundary at `db::GraphClient` is deliberate. Future work:
+The crate is built to be extended at its trait boundaries:
 
-- **Embeddings & vector search.** Add a `VectorStore` trait alongside
-  `GraphClient`; introduce a `semantic` action in the DSL that the AST lowers
-  into a `MATCH … WHERE … CALL vector.search(...)` plan.
-- **Hybrid queries.** Extend `FilterExpression` with a `Semantic { field,
-  query }` predicate that the builder compiles to a Memgraph MAGE call.
-- **Pluggable LLM providers.** The prompt module is provider-agnostic by design;
-  callers own the HTTP plumbing. A `PromptOptions::preamble` hook is already
-  there to inject provider-specific framing.
-- **Alternate Cypher backends.** `MemgraphClient` is one implementation of
-  `GraphClient`. A `Neo4jClient` or `SqlxCypherClient` can replace it without
-  touching the rest of the codebase.
+- **Alternate graph backends.** Everything talks to the database through the
+  `db::GraphClient` trait. `MemgraphClient` (neo4rs) is one implementation;
+  a different Cypher backend can replace it without touching the rest of the
+  codebase, exactly as `MockClient` does for tests.
+- **New field types.** Implement `TypeHandler` and register it — see
+  [Adding a new type](#adding-a-new-type). The DSL parser, AST and Cypher
+  builder never branch on type names, so they need no changes.
+- **New embedding backends.** The `embeddings::Embedder` trait is a single
+  `embed_batch` call. The default build ships a deterministic mock; the
+  `llama` feature wires in a GGUF-backed embedder via `llama-cpp-2`.
+- **Pluggable LLM providers.** The prompt module is provider-agnostic by
+  design; callers own the HTTP plumbing.
 
 ## Tech stack
 
 `serde`, `serde_json`, `toml`, `thiserror`, `anyhow`, `async-trait`, `tokio`,
-`clap`, `tracing`, `neo4rs`, `pretty_assertions` (dev).
+`clap`, `tracing`, `tracing-subscriber`, `neo4rs`, `tabled`, `uuid`,
+`once_cell`, `encoding_rs`, `llama-cpp-2` (optional, `llama` feature),
+`pretty_assertions` (dev).
 
 ## License
 
 Dual-licensed under MIT or Apache-2.0.
+</content>
+</invoke>

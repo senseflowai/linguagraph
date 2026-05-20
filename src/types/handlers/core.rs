@@ -491,7 +491,7 @@ fn validate_date_components(date: &str) -> Result<(), TypeError> {
     Ok(())
 }
 
-fn days_in_month(year: u32, month: u32) -> u32 {
+pub(super) fn days_in_month(year: u32, month: u32) -> u32 {
     match month {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         4 | 6 | 9 | 11 => 30,
@@ -616,7 +616,7 @@ fn epoch_to_timestamp(secs: i64) -> String {
 /// correct across the full proleptic Gregorian range, and dependency-
 /// free. We need this here because we deliberately don't pull in
 /// `chrono` for what is otherwise a pure-data conversion.
-fn epoch_to_ymdhms(secs: i64) -> (i64, u32, u32, u32, u32, u32) {
+pub(super) fn epoch_to_ymdhms(secs: i64) -> (i64, u32, u32, u32, u32, u32) {
     // Seconds in a day.
     const SPD: i64 = 86_400;
     let days = secs.div_euclid(SPD);
@@ -660,16 +660,6 @@ pub fn number_handler() -> ScalarTypeHandler {
 /// Build a [`ScalarTypeHandler`] for the built-in `Boolean` type.
 pub fn boolean_handler() -> ScalarTypeHandler {
     ScalarTypeHandler::new("Boolean", Box::new(BooleanParser))
-}
-
-/// Build a [`ScalarTypeHandler`] for the built-in `Date` type.
-pub fn date_handler() -> ScalarTypeHandler {
-    ScalarTypeHandler::new("Date", Box::new(DateParser))
-}
-
-/// Build a [`ScalarTypeHandler`] for the built-in `Timestamp` type.
-pub fn timestamp_handler() -> ScalarTypeHandler {
-    ScalarTypeHandler::new("Timestamp", Box::new(TimestampParser))
 }
 
 #[cfg(test)]

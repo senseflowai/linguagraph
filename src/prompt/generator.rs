@@ -347,7 +347,9 @@ const DSL_RULES: &str = r#"Output a single JSON object with this shape:
 
 Constraints:
 - Use only labels and properties listed in the schema above.
-- Aliases must be unique across the whole query.
+- Every alias — the start node, each traversal edge, and each traversal target —
+  must be unique across the whole query. Nodes and edges share one namespace, so
+  an edge and the node it points at can never reuse the same alias.
 - "find" queries must NOT contain aggregations.
 - "aggregate" queries that mix aggregated and non-aggregated columns must list the
   non-aggregated columns in `group_by`.

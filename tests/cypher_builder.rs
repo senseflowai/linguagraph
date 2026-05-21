@@ -40,6 +40,57 @@ fn aggregate_example_round_trip() {
 }
 
 #[test]
+fn aggregate_projects_group_by_key_for_order_by() {
+    // The model grouped and sorted by `sv.work_start` but listed the
+    // field only in `group_by`/`sort`, not `return`. Cypher derives the
+    // grouping keys from the RETURN projection, so the key must be
+    // projected — otherwise `ORDER BY sv.work_start` references `sv`,
+    // which is out of scope after the aggregating RETURN ("Unbound
+    // variable: sv").
+    let cypher = compile(
+        r#"{
+            "action": "aggregate",
+            "start": { "label": "Client", "alias": "c" },
+            "traversals": [
+                { "from": "c",
+                  "edge": { "label": "VISITED", "alias": "sv_rel", "direction": "out" },
+                  "target": { "label": "ServiceVisit", "alias": "sv" } }
+            ],
+            "filters": [
+                { "field": "sv.work_start", "op": "gte", "value": "2026-05-10T00:00:00" },
+                { "field": "sv.work_start", "op": "lte", "value": "2026-05-15T23:59:59" }
+            ],
+            "return": [
+                { "aggregate": "count", "field": "c.id", "alias": "client_count" }
+            ],
+            "group_by": ["sv.work_start"],
+            "sort": [{ "field": "sv.work_start", "order": "asc" }]
+        }"#,
+    );
+
+    let return_line = cypher
+        .text
+        .lines()
+        .find(|l| l.starts_with("RETURN "))
+        .expect("query has a RETURN clause");
+    // The aggregate is still projected ...
+    assert!(
+        return_line.contains("count(c) AS client_count"),
+        "got: {return_line}"
+    );
+    // ... and so is the grouping key, so it stays in scope for ORDER BY.
+    assert!(
+        return_line.contains("sv.work_start"),
+        "RETURN must project the group_by key: {return_line}"
+    );
+    assert!(
+        cypher.text.contains("ORDER BY sv.work_start ASC"),
+        "got: {}",
+        cypher.text
+    );
+}
+
+#[test]
 fn rejects_aggregation_in_find() {
     let json = r#"{
         "action": "find",

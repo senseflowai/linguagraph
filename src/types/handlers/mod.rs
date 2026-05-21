@@ -19,13 +19,15 @@
 //! when their configuration block is present.
 
 pub mod core;
+pub mod datetime;
 pub mod semantic_text;
 pub mod text;
 
 pub use core::{
-    boolean_handler, date_handler, number_handler, timestamp_handler, BooleanParser, DateParser,
-    NumberParser, ScalarParser, ScalarTypeHandler, TextParser, TimestampParser,
+    boolean_handler, number_handler, BooleanParser, DateParser, NumberParser, ScalarParser,
+    ScalarTypeHandler, TextParser, TimestampParser,
 };
+pub use datetime::{date_handler, timestamp_handler, DateTimeHandler};
 pub use semantic_text::{
     build_embed_insert_batch, SemanticTextConfig, SemanticTextHandler, SideEffectEmitError,
 };

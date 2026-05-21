@@ -314,12 +314,11 @@ impl GraphSpecification {
     ) -> Option<&str> {
         let property = self.get_property(entity, property)?;
         match property.r#type {
-            PropertyType::String => Some(property.type_id()),
-            PropertyType::Text => Some(property.type_id()),
-            PropertyType::Number
-            | PropertyType::Boolean
+            PropertyType::String
+            | PropertyType::Text
             | PropertyType::DateTime
-            | PropertyType::Timestamp => None,
+            | PropertyType::Timestamp => Some(property.type_id()),
+            PropertyType::Number | PropertyType::Boolean => None,
         }
     }
 
@@ -451,6 +450,24 @@ mod tests {
 
         let property = spec.get_property("Person", "age").unwrap();
         assert_eq!(property.description, "Age in years.");
+    }
+
+    #[test]
+    fn datetime_properties_route_to_the_timestamp_query_handler() {
+        let spec = GraphSpecification::new()
+            .with_property("Visit", "started_at", PropertyType::Timestamp, "")
+            .with_property("Visit", "born_on", PropertyType::DateTime, "")
+            .with_property("Visit", "count", PropertyType::Number, "");
+
+        // Date/Timestamp fields now resolve to a query handler so untyped
+        // DSL filters are routed through the interval-aware lowering.
+        assert_eq!(
+            spec.get_query_type("Visit", "started_at"),
+            Some("Timestamp")
+        );
+        assert_eq!(spec.get_query_type("Visit", "born_on"), Some("Timestamp"));
+        // Number/Boolean still take the plain comparison path.
+        assert_eq!(spec.get_query_type("Visit", "count"), None);
     }
 
     #[test]

@@ -590,6 +590,54 @@ fn untyped_dsl_filter_auto_resolves_to_semantic_text_via_graph_specification() {
 }
 
 #[test]
+fn untyped_datetime_filter_auto_resolves_and_expands_eq_to_a_day_range() {
+    // An `eq` on a Timestamp field with a midnight value must NOT compile
+    // to a literal string equality — it expands to a half-open day range
+    // so rows recorded at any time on that day still match.
+    let cfg = cfg_with_semantic_text();
+    let (registry, embedder) = registry_and_embedder();
+    let specification = GraphSpecification::new()
+        .with_entity("ServiceVisit", "")
+        .with_property("ServiceVisit", "id", GraphPropertyType::String, "")
+        .with_property(
+            "ServiceVisit",
+            "work_start",
+            GraphPropertyType::Timestamp,
+            "when the visit started",
+        );
+    let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg)
+        .with_registry(registry)
+        .with_embedder(embedder)
+        .with_graph_specification(Arc::new(specification));
+
+    // No `"type"` field — the Timestamp handler is selected from the
+    // graph specification.
+    let dsl_query = dsl::parse_str(
+        r#"{
+            "action": "find",
+            "start": { "label": "ServiceVisit", "alias": "sv" },
+            "filters": [
+                { "field": "sv.work_start", "op": "eq",
+                  "value": "2026-05-15T00:00:00" }
+            ],
+            "return": [{ "field": "sv.id", "alias": "id" }]
+        }"#,
+    )
+    .unwrap();
+    let cypher = pipeline.compile(dsl_query).unwrap();
+    assert!(
+        cypher.text.contains("sv.work_start >=") && cypher.text.contains("sv.work_start <"),
+        "midnight `eq` on a Timestamp field should expand to a day range; got:\n{}",
+        cypher.text
+    );
+    assert!(
+        !cypher.text.contains("sv.work_start = "),
+        "should not compile to a literal equality; got:\n{}",
+        cypher.text
+    );
+}
+
+#[test]
 fn explicit_dsl_type_overrides_graph_specification() {
     // The mapping doesn't tag `c.industry` with any type, but the DSL
     // does — explicit always wins over the inferred specification value.

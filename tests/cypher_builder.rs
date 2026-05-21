@@ -44,9 +44,9 @@ fn aggregate_projects_group_by_key_for_order_by() {
     // The model grouped and sorted by `sv.work_start` but listed the
     // field only in `group_by`/`sort`, not `return`. Cypher derives the
     // grouping keys from the RETURN projection, so the key must be
-    // projected — otherwise `ORDER BY sv.work_start` references `sv`,
-    // which is out of scope after the aggregating RETURN ("Unbound
-    // variable: sv").
+    // projected with an alias — and `ORDER BY` must target that alias.
+    // A bare `ORDER BY sv.work_start` references `sv`, which is out of
+    // scope after the aggregating RETURN ("Unbound variable: sv").
     let cypher = compile(
         r#"{
             "action": "aggregate",
@@ -78,14 +78,69 @@ fn aggregate_projects_group_by_key_for_order_by() {
         return_line.contains("count(c) AS client_count"),
         "got: {return_line}"
     );
-    // ... and so is the grouping key, so it stays in scope for ORDER BY.
+    // ... and the grouping key is projected with an alias.
     assert!(
-        return_line.contains("sv.work_start"),
-        "RETURN must project the group_by key: {return_line}"
+        return_line.contains("sv.work_start AS sv_work_start"),
+        "RETURN must project the group_by key with an alias: {return_line}"
+    );
+    // ORDER BY targets the projected alias, never the raw property.
+    assert!(
+        cypher.text.contains("ORDER BY sv_work_start ASC"),
+        "got: {}",
+        cypher.text
+    );
+    let order_line = cypher
+        .text
+        .lines()
+        .find(|l| l.starts_with("ORDER BY "))
+        .expect("query has an ORDER BY clause");
+    assert!(
+        !order_line.contains('.'),
+        "ORDER BY must reference an alias, not a property expression: {order_line}"
+    );
+}
+
+#[test]
+fn aggregate_with_multiple_aggregates_sorts_by_group_key_alias() {
+    // Reported case: two aggregates, plus group_by/sort on a field that
+    // is not in `return`. The grouping key must be projected with an
+    // alias and the ORDER BY rewritten to that alias.
+    let cypher = compile(
+        r#"{
+            "action": "aggregate",
+            "start": { "label": "ServiceVisit", "alias": "sv" },
+            "traversals": [
+                { "from": "sv",
+                  "edge": { "label": "INCLUDES_WORK", "alias": "wi", "direction": "out" },
+                  "target": { "label": "WorkItem", "alias": "w" } }
+            ],
+            "filters": [
+                { "field": "sv.work_start", "op": "gte", "value": "2026-05-10T00:00:00" },
+                { "field": "sv.work_start", "op": "lte", "value": "2026-05-15T23:59:59" }
+            ],
+            "return": [
+                { "aggregate": "count", "field": "sv.id", "alias": "visits_count" },
+                { "aggregate": "sum", "field": "w.cost", "alias": "total_revenue" }
+            ],
+            "group_by": ["sv.work_start"],
+            "sort": [{ "field": "sv.work_start", "order": "asc" }]
+        }"#,
+    );
+
+    let return_line = cypher
+        .text
+        .lines()
+        .find(|l| l.starts_with("RETURN "))
+        .expect("query has a RETURN clause");
+    assert!(return_line.contains("count(sv) AS visits_count"), "got: {return_line}");
+    assert!(return_line.contains("sum(w.cost) AS total_revenue"), "got: {return_line}");
+    assert!(
+        return_line.contains("sv.work_start AS sv_work_start"),
+        "RETURN must project the group_by key with an alias: {return_line}"
     );
     assert!(
-        cypher.text.contains("ORDER BY sv.work_start ASC"),
-        "got: {}",
+        cypher.text.contains("ORDER BY sv_work_start ASC"),
+        "ORDER BY must target the projected alias: {}",
         cypher.text
     );
 }

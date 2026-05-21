@@ -5,7 +5,7 @@
 //! domain. Anything downstream may assume the AST is consistent: aliases
 //! resolve, aggregations are only present in `Aggregate` queries, and so on.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use thiserror::Error;
 
@@ -187,32 +187,24 @@ pub fn lower_full(
         .map(|s| resolve_property(s, &bound))
         .collect::<Result<Vec<_>, _>>()?;
 
-    // Cypher has no standalone GROUP BY: the grouping keys of an
-    // aggregating projection are exactly its non-aggregate columns. A
-    // `group_by` entry that never reaches the RETURN list therefore has
-    // no effect on the grouping at all — and worse, the common
-    // "group and sort by the same field" shape produces an ORDER BY
-    // that references an unbound variable, because after an aggregating
-    // RETURN only the projected columns remain in scope.
-    //
-    // Project every group_by key the RETURN list does not already
-    // carry as a plain field, so the grouping takes effect and the key
-    // stays in scope for ORDER BY.
-    if matches!(action, Action::Aggregate) {
-        for key in &group_by {
-            let already_projected = returns.iter().any(
-                |r| matches!(r, ReturnClause::Field { field, .. } if field == key),
-            );
-            if !already_projected {
-                returns.push(ReturnClause::Field {
-                    field: key.clone(),
-                    alias: None,
-                });
-            }
-        }
-    }
+    let mut sort = lower_sort(&dsl.sort, &returns, &bound)?;
 
-    let sort = lower_sort(&dsl.sort, &returns, &bound)?;
+    // Cypher has no standalone GROUP BY: the grouping keys of an
+    // aggregating projection are exactly its non-aggregate RETURN
+    // columns. For an `aggregate` query two things follow, and the
+    // engine rejects the query unless both hold:
+    //
+    //  * Every `group_by` key must be projected, otherwise it has no
+    //    effect on the grouping at all.
+    //  * After an aggregating RETURN only the projected *aliases* stay
+    //    in scope. A bare `ORDER BY sv.work_start` is parsed as a
+    //    property access on `sv`, which is already aggregated away —
+    //    Memgraph reports "Unbound variable: sv". So each projected key
+    //    needs an explicit alias, and a `sort` over that key must
+    //    target the alias rather than the property expression.
+    if matches!(action, Action::Aggregate) {
+        project_group_by_keys(&mut returns, &mut sort, &group_by, &bound);
+    }
 
     Ok(ReadQuery {
         action,
@@ -447,6 +439,78 @@ fn lower_sort(
             Ok(SortKey { key, order })
         })
         .collect()
+}
+
+/// Make an aggregate query's `group_by` keys safe for Cypher.
+///
+/// Each key is projected as a non-aggregate RETURN column carrying an
+/// explicit alias (reusing an existing projection of the same field
+/// when there is one), and any `sort` key that targets a group_by
+/// property is rewritten to reference that alias. See the call site for
+/// why this is required.
+fn project_group_by_keys(
+    returns: &mut Vec<ReturnClause>,
+    sort: &mut [SortKey],
+    group_by: &[PropertyRef],
+    bound: &HashMap<String, ()>,
+) {
+    // A generated alias must not collide with an existing projection
+    // alias or with a variable bound by the MATCH pattern.
+    let mut taken: HashSet<String> = bound.keys().cloned().collect();
+    for r in returns.iter() {
+        let (ReturnClause::Field { alias, .. } | ReturnClause::Aggregate { alias, .. }) = r;
+        if let Some(a) = alias {
+            taken.insert(a.clone());
+        }
+    }
+
+    let mut key_alias: Vec<(PropertyRef, String)> = Vec::with_capacity(group_by.len());
+    for key in group_by {
+        // Reuse the projection if the key is already returned as a
+        // plain field; give that projection an alias if it lacks one.
+        let existing = returns.iter_mut().find_map(|r| match r {
+            ReturnClause::Field { field, alias } if field == key => Some(alias),
+            _ => None,
+        });
+        let alias = match existing {
+            Some(slot) => slot
+                .get_or_insert_with(|| unique_alias(key, &mut taken))
+                .clone(),
+            None => {
+                let a = unique_alias(key, &mut taken);
+                returns.push(ReturnClause::Field {
+                    field: key.clone(),
+                    alias: Some(a.clone()),
+                });
+                a
+            }
+        };
+        key_alias.push((key.clone(), alias));
+    }
+
+    for s in sort.iter_mut() {
+        if let SortRef::Property(p) = &s.key {
+            if let Some((_, a)) = key_alias.iter().find(|(k, _)| k == p) {
+                s.key = SortRef::Projected(a.clone());
+            }
+        }
+    }
+}
+
+/// Derive an identifier-shaped alias for a group_by key that does not
+/// collide with anything in `taken` (which it also updates).
+fn unique_alias(key: &PropertyRef, taken: &mut HashSet<String>) -> String {
+    let base = match &key.property {
+        Some(prop) => format!("{}_{}", key.alias, prop),
+        None => key.alias.0.clone(),
+    };
+    let mut candidate = base.clone();
+    let mut n = 2u32;
+    while !taken.insert(candidate.clone()) {
+        candidate = format!("{base}_{n}");
+        n += 1;
+    }
+    candidate
 }
 
 fn resolve_property(s: &str, bound: &HashMap<String, ()>) -> Result<PropertyRef, AstError> {

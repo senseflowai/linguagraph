@@ -172,7 +172,7 @@ pub fn lower_full(
         graph_specification,
         query_prefix_index.as_deref(),
     )?;
-    let returns = lower_returns(&dsl.return_, &bound)?;
+    let mut returns = lower_returns(&dsl.return_, &bound)?;
 
     let action = match dsl.action {
         d::Action::Find => Action::Find,
@@ -186,6 +186,31 @@ pub fn lower_full(
         .iter()
         .map(|s| resolve_property(s, &bound))
         .collect::<Result<Vec<_>, _>>()?;
+
+    // Cypher has no standalone GROUP BY: the grouping keys of an
+    // aggregating projection are exactly its non-aggregate columns. A
+    // `group_by` entry that never reaches the RETURN list therefore has
+    // no effect on the grouping at all — and worse, the common
+    // "group and sort by the same field" shape produces an ORDER BY
+    // that references an unbound variable, because after an aggregating
+    // RETURN only the projected columns remain in scope.
+    //
+    // Project every group_by key the RETURN list does not already
+    // carry as a plain field, so the grouping takes effect and the key
+    // stays in scope for ORDER BY.
+    if matches!(action, Action::Aggregate) {
+        for key in &group_by {
+            let already_projected = returns.iter().any(
+                |r| matches!(r, ReturnClause::Field { field, .. } if field == key),
+            );
+            if !already_projected {
+                returns.push(ReturnClause::Field {
+                    field: key.clone(),
+                    alias: None,
+                });
+            }
+        }
+    }
 
     let sort = lower_sort(&dsl.sort, &returns, &bound)?;
 

@@ -8,14 +8,13 @@
 //! * `knowledge_extract_prompt` — domain-scoped knowledge extraction
 //!   prompt (delegates to [`super::knowledge::render_knowledge_extract_prompt`]).
 
-use std::path::Path;
-
 use crate::config::PromptConfig;
 
 use super::generator::{self, PromptOptions};
 use super::knowledge::render_knowledge_extract_prompt;
 use super::ontology::{DomainOntology, OntologyCatalog, OntologyError};
 use super::schema::GraphSchema;
+use super::storage::{JsonFileOntologyCatalogStorage, OntologyCatalogStorage};
 
 /// Unified entry point for prompt generation.
 #[derive(Debug, Clone, Default)]
@@ -44,12 +43,29 @@ impl PromptGenerator {
         self
     }
 
-    /// Build from a [`PromptConfig`]. When `ontologies_path` is set the
-    /// JSON file at that path is loaded; otherwise the built-in catalog
-    /// is used.
-    pub fn from_config(cfg: &PromptConfig) -> Result<Self, OntologyError> {
+    /// Load the catalog through a custom [`OntologyCatalogStorage`].
+    /// Use this to plug in a Postgres / HTTP / S3 backend.
+    pub async fn from_storage<S: OntologyCatalogStorage + ?Sized>(
+        storage: &S,
+    ) -> Result<Self, OntologyError> {
+        let catalog = storage.load().await?;
+        Ok(Self::new(catalog))
+    }
+
+    /// Build from a [`PromptConfig`].
+    ///
+    /// * When `ontologies_path` is set, the JSON file is loaded via the
+    ///   default [`JsonFileOntologyCatalogStorage`].
+    /// * Otherwise the built-in catalog is used.
+    ///
+    /// To inject a non-filesystem backend (Postgres, HTTP service)
+    /// build it directly and use [`Self::from_storage`].
+    pub async fn from_config(cfg: &PromptConfig) -> Result<Self, OntologyError> {
         let catalog = match &cfg.ontologies_path {
-            Some(path) => OntologyCatalog::load_from_path(Path::new(path))?,
+            Some(path) => {
+                let storage = JsonFileOntologyCatalogStorage::new(path);
+                storage.load().await?
+            }
             None => OntologyCatalog::builtin(),
         };
         let mut g = Self::new(catalog);
@@ -88,6 +104,8 @@ impl PromptGenerator {
     /// `domain` selects the ontology from the catalog. When `None`, the
     /// generator's [`default_domain`](Self::default_domain) is used; if
     /// neither is set the call fails with [`OntologyError::UnknownDomain`].
+    /// The domain name is also substituted into the prompt's framing
+    /// sections (role, input structure, rules).
     pub fn knowledge_extract_prompt(
         &self,
         fragment: &str,
@@ -101,17 +119,20 @@ impl PromptGenerator {
             .catalog
             .get(&name)
             .ok_or_else(|| OntologyError::UnknownDomain(name.clone()))?;
-        Ok(render_knowledge_extract_prompt(fragment, ontology))
+        Ok(render_knowledge_extract_prompt(fragment, &name, ontology))
     }
 
     /// Escape hatch: render with a caller-built ontology, bypassing
-    /// the catalog. Useful for CLI overrides.
+    /// the catalog. Useful for CLI overrides. `domain` is still used
+    /// for the prompt's framing — pass something descriptive
+    /// (e.g. `"custom"`, `"ad-hoc"`).
     pub fn knowledge_extract_prompt_with(
         &self,
         fragment: &str,
+        domain: &str,
         ontology: &DomainOntology,
     ) -> String {
-        render_knowledge_extract_prompt(fragment, ontology)
+        render_knowledge_extract_prompt(fragment, domain, ontology)
     }
 }
 
@@ -119,6 +140,7 @@ impl PromptGenerator {
 mod tests {
     use super::*;
     use crate::prompt::ontology::{EntityTypeSpec, RelationTypeSpec};
+    use crate::prompt::storage::InMemoryOntologyCatalogStorage;
 
     #[test]
     fn knowledge_extract_uses_explicit_domain() {
@@ -128,6 +150,8 @@ mod tests {
             .expect("legal domain present in builtin catalog");
         assert!(p.contains("* `LegalNorm`"));
         assert!(p.contains("* `GRANTS`"));
+        // Framing is substituted with the selected domain.
+        assert!(p.contains("**legal information extraction**"));
     }
 
     #[test]
@@ -151,14 +175,21 @@ mod tests {
         assert!(matches!(err, OntologyError::UnknownDomain(_)));
     }
 
-    #[test]
-    fn from_config_with_no_path_uses_builtin() {
+    #[tokio::test]
+    async fn from_config_with_no_path_uses_builtin() {
         let cfg = PromptConfig {
             ontologies_path: None,
             default_domain: Some("legal".into()),
         };
-        let g = PromptGenerator::from_config(&cfg).unwrap();
+        let g = PromptGenerator::from_config(&cfg).await.unwrap();
         assert_eq!(g.default_domain(), Some("legal"));
+        assert!(g.catalog().get("legal").is_some());
+    }
+
+    #[tokio::test]
+    async fn from_storage_loads_through_the_backend() {
+        let storage = InMemoryOntologyCatalogStorage::new(OntologyCatalog::builtin());
+        let g = PromptGenerator::from_storage(&storage).await.unwrap();
         assert!(g.catalog().get("legal").is_some());
     }
 
@@ -169,8 +200,9 @@ mod tests {
             entity_types: vec![EntityTypeSpec::new("X")],
             relation_types: vec![RelationTypeSpec::new("R")],
         };
-        let p = g.knowledge_extract_prompt_with("frag", &onto);
+        let p = g.knowledge_extract_prompt_with("frag", "custom", &onto);
         assert!(p.contains("* `X`"));
         assert!(p.contains("* `R`"));
+        assert!(p.contains("**custom information extraction**"));
     }
 }

@@ -921,7 +921,7 @@ async fn cmd_knowledge_prompt(
     };
 
     let cfg = load_config_or_default(config_path).await;
-    let generator = PromptGenerator::from_config(&cfg.prompt)?;
+    let generator = PromptGenerator::from_config(&cfg.prompt).await?;
 
     let prompt = if !entity_types.is_empty() || !relation_types.is_empty() {
         let ontology = DomainOntology {
@@ -931,7 +931,14 @@ async fn cmd_knowledge_prompt(
                 .map(RelationTypeSpec::new)
                 .collect(),
         };
-        generator.knowledge_extract_prompt_with(&fragment, &ontology)
+        // Use the explicit --domain when supplied so the prompt's
+        // framing matches; otherwise fall back to the config default
+        // or a neutral "custom" label.
+        let label = domain
+            .as_deref()
+            .or(cfg.prompt.default_domain.as_deref())
+            .unwrap_or("custom");
+        generator.knowledge_extract_prompt_with(&fragment, label, &ontology)
     } else {
         generator.knowledge_extract_prompt(&fragment, domain.as_deref())?
     };

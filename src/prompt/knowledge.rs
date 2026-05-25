@@ -14,8 +14,18 @@ use std::fmt::Write;
 
 use super::ontology::{DomainOntology, EntityTypeSpec, RelationTypeSpec};
 
+/// Placeholder substituted with the active domain name when the prompt
+/// is rendered. Present in the static section constants
+/// ([`ROLE_SECTION`], [`INPUT_STRUCTURE_SECTION`], … ) so callers that
+/// pull the sections directly can do the substitution themselves.
+pub const DOMAIN_PLACEHOLDER: &str = "{domain}";
+
 /// Render the knowledge-extraction prompt for `fragment` using the
 /// entity/relation vocabulary defined in `ontology`.
+///
+/// `domain` is the human label substituted into the prompt's framing
+/// (role, input structure, rules) — e.g. `"legal"`, `"medical"`. It is
+/// only a label; the actual vocabulary comes from `ontology`.
 ///
 /// The returned string is the *complete* prompt — system rules first,
 /// then the text fragment under a clearly-labelled section. The LLM is
@@ -28,7 +38,11 @@ use super::ontology::{DomainOntology, EntityTypeSpec, RelationTypeSpec};
 ///
 /// which parses directly as `(Vec<EntityInput>, Vec<RelationInput>)`
 /// for a [`crate::ingest::ChunkInput`].
-pub fn render_knowledge_extract_prompt(fragment: &str, ontology: &DomainOntology) -> String {
+pub fn render_knowledge_extract_prompt(
+    fragment: &str,
+    domain: &str,
+    ontology: &DomainOntology,
+) -> String {
     let mut out = String::with_capacity(4096);
 
     out.push_str(ROLE_SECTION);
@@ -67,6 +81,11 @@ pub fn render_knowledge_extract_prompt(fragment: &str, ontology: &DomainOntology
     out.push_str("\n\n");
     out.push_str(FINAL_CHECKLIST_SECTION);
     out.push_str("\n\n");
+
+    // Substitute the domain placeholder in the rules sections built so
+    // far. The fragment is appended afterward so its content is never
+    // touched by the substitution.
+    let mut out = out.replace(DOMAIN_PLACEHOLDER, domain);
 
     // Text fragment — last so it's the freshest context window slice.
     out.push_str("# 🔹 Text Fragment\n\n");
@@ -115,9 +134,9 @@ fn render_relation_list(out: &mut String, types: &[RelationTypeSpec]) {
 
 pub const ROLE_SECTION: &str = "## 🔹 Role
 
-You are an expert knowledge engineer specializing in **legal information extraction**, **ontology-driven semantic modeling**, and **embedding-optimized canonicalization**.
+You are an expert knowledge engineer specializing in **{domain} information extraction**, **ontology-driven semantic modeling**, and **embedding-optimized canonicalization**.
 
-Your task is to extract structured knowledge from a legal text fragment and produce a **semantically consistent, embedding-ready representation**.
+Your task is to extract structured knowledge from a {domain} text fragment and produce a **semantically consistent, embedding-ready representation**.
 
 You must strictly distinguish between:
 
@@ -128,13 +147,13 @@ pub const INPUT_STRUCTURE_SECTION: &str = "## 🔹 Input Structure
 
 The input contains:
 
-* **Text Fragment** — authoritative legal content";
+* **Text Fragment** — authoritative {domain} content";
 
 pub const CORE_PRINCIPLES_SECTION: &str = "## 🔹 Core Principles
 
 * Extract **only explicitly stated information**
 * Do **NOT infer**, interpret, or generalize
-* Do **NOT add legal reasoning or doctrine**
+* Do **NOT add {domain} reasoning or doctrine**
 * All outputs must be **deterministic and lexically consistent**
 * The result must be optimized for **semantic embeddings**";
 
@@ -159,18 +178,18 @@ Each entity MUST follow:
 
 ## Name Consistency
 
-* Each real-world/legal concept MUST appear **only once**
+* Each real-world/{domain} concept MUST appear **only once**
 * Use original language!
 * All references (including pronouns) MUST resolve to the same entity
 * Do NOT create synonyms or alternate phrasings
 
 ❗ Example (forbidden):
 
-* \"court\", \"the court\", \"judicial authority\" → MUST be ONE entity
+* multiple surface forms referring to the same entity → MUST be ONE entity
 
 ## Granularity Rule
 
-* Extract entities at the **smallest legally meaningful unit**
+* Extract entities at the **smallest {domain}-meaningful unit**
 * Do NOT split a concept unless explicitly separated in the text
 
 ## Deduplication Rule
@@ -179,12 +198,12 @@ Merge entities if:
 
 * same meaning
 * same referent
-* same legal role in context";
+* same role in context";
 
 pub const RELATION_RULES_SECTION: &str = "# 🔹 Relation Extraction Rules
 
 * Extract ONLY **explicitly stated relations**
-* Do NOT infer logical or legal implications
+* Do NOT infer logical or domain-specific implications
 * Each relation MUST connect two existing entities
 * Relations MUST be **directional and consistent**
 
@@ -199,7 +218,7 @@ SOURCE → TARGET
 Example:
 
 ```
-StateBody GRANTS LegalRight
+SubjectType RELATION_NAME ObjectType
 ```
 
 ## Forbidden
@@ -315,7 +334,7 @@ mod tests {
             entity_types: vec![EntityTypeSpec::new("Foo"), EntityTypeSpec::new("Bar")],
             relation_types: vec![RelationTypeSpec::new("KNOWS")],
         };
-        let p = render_knowledge_extract_prompt("hello", &onto);
+        let p = render_knowledge_extract_prompt("hello", "demo", &onto);
         assert!(p.contains("* `Foo`"));
         assert!(p.contains("* `Bar`"));
         assert!(p.contains("* `KNOWS`"));
@@ -330,14 +349,14 @@ mod tests {
             entity_types: vec![EntityTypeSpec::new("X")],
             relation_types: vec![RelationTypeSpec::new("works-at")],
         };
-        let p = render_knowledge_extract_prompt("t", &onto);
+        let p = render_knowledge_extract_prompt("t", "demo", &onto);
         assert!(p.contains("* `WORKS-AT`"));
     }
 
     #[test]
     fn fragment_appears_at_the_end() {
         let onto = DomainOntology::default();
-        let p = render_knowledge_extract_prompt("the court grants the right", &onto);
+        let p = render_knowledge_extract_prompt("the court grants the right", "legal", &onto);
         let idx_fragment = p.find("the court grants the right").unwrap();
         let idx_rules = p.find("# 🔹 Final Checklist").unwrap();
         assert!(idx_fragment > idx_rules);
@@ -352,17 +371,41 @@ mod tests {
             )],
             relation_types: vec![RelationTypeSpec::with_description("KNOWS", "Acquaintance.")],
         };
-        let p = render_knowledge_extract_prompt("x", &onto);
+        let p = render_knowledge_extract_prompt("x", "demo", &onto);
         assert!(p.contains("* `Person` — A natural person."));
         assert!(p.contains("* `KNOWS` — Acquaintance."));
     }
 
     #[test]
     fn output_section_specifies_exact_json_shape() {
-        let p = render_knowledge_extract_prompt("x", &DomainOntology::default());
+        let p = render_knowledge_extract_prompt("x", "demo", &DomainOntology::default());
         assert!(p.contains("\"entities\""));
         assert!(p.contains("\"relations\""));
         assert!(p.contains("\"id\": \"e1\""));
         assert!(p.contains("\"from\": \"e1\""));
+    }
+
+    #[test]
+    fn domain_placeholder_is_substituted_into_framing_sections() {
+        let p = render_knowledge_extract_prompt("x", "medical", &DomainOntology::default());
+        assert!(p.contains("**medical information extraction**"));
+        assert!(p.contains("from a medical text fragment"));
+        assert!(p.contains("authoritative medical content"));
+        assert!(p.contains("real-world/medical concept"));
+        assert!(p.contains("smallest medical-meaningful unit"));
+        // No leftover placeholders.
+        assert!(!p.contains(DOMAIN_PLACEHOLDER));
+        // No "legal" framing left over either.
+        assert!(!p.contains("legal information extraction"));
+        assert!(!p.contains("legal text fragment"));
+    }
+
+    #[test]
+    fn domain_substitution_does_not_touch_fragment() {
+        // The fragment text MUST NOT be mutated even if it happens to
+        // contain the placeholder token verbatim.
+        let frag = "raw text including {domain} literally";
+        let p = render_knowledge_extract_prompt(frag, "legal", &DomainOntology::default());
+        assert!(p.contains("raw text including {domain} literally"));
     }
 }

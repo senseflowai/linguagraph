@@ -462,14 +462,17 @@ default_domain  = "legal"
 #### Programmatic use
 
 `PromptGenerator` is the high-level facade — it owns the catalog and exposes
-both prompt flavours:
+both prompt flavours. The domain name supplied at render time is also
+substituted into the prompt's framing sections (role, input structure, rules),
+so the LLM sees `"medical information extraction"` rather than a hardcoded
+`"legal"` framing for non-legal domains.
 
 ```rust
 use linguagraph::prompt::{
     DomainOntology, EntityTypeSpec, OntologyCatalog, PromptGenerator, RelationTypeSpec,
 };
 
-// Built-in catalog, or load your own with OntologyCatalog::load_from_path(...).
+// Built-in catalog, or load your own via storage (see below).
 let generator = PromptGenerator::with_builtin_catalog()
     .with_default_domain("legal");
 
@@ -485,13 +488,60 @@ catalog.domains.get_mut("legal").unwrap()
     ));
 let generator = PromptGenerator::new(catalog);
 
-// Bypass the catalog with an ad-hoc ontology.
+// Bypass the catalog with an ad-hoc ontology. The second argument is
+// the framing label that gets substituted into the prompt sections.
 let ad_hoc = DomainOntology {
     entity_types: vec![EntityTypeSpec::new("Article")],
     relation_types: vec![RelationTypeSpec::new("CITES")],
 };
-let prompt = generator.knowledge_extract_prompt_with(fragment, &ad_hoc);
+let prompt = generator.knowledge_extract_prompt_with(fragment, "custom", &ad_hoc);
 ```
+
+#### Pluggable storage backend
+
+The catalog is loaded through the [`OntologyCatalogStorage`] trait, so
+real-world deployments can keep ontologies in Postgres, an internal
+HTTP service, S3, etc. instead of a checked-in JSON file. The crate
+ships two ready-to-use backends:
+
+* `JsonFileOntologyCatalogStorage` — default; reads and atomically
+  rewrites a single JSON file. Used by
+  `PromptGenerator::from_config` when `[prompt].ontologies_path` is set.
+* `InMemoryOntologyCatalogStorage` — read-only, useful for tests and
+  programmatically-built catalogs.
+
+```rust
+use async_trait::async_trait;
+use linguagraph::prompt::{
+    OntologyCatalog, OntologyCatalogStorage, OntologyError, PromptGenerator,
+};
+
+#[derive(Debug)]
+struct PostgresOntologyStorage { /* … pool, etc … */ }
+
+#[async_trait]
+impl OntologyCatalogStorage for PostgresOntologyStorage {
+    async fn load(&self) -> Result<OntologyCatalog, OntologyError> {
+        // SELECT domain, entity_types, relation_types FROM ontologies; …
+        # unimplemented!()
+    }
+
+    async fn save(&self, catalog: &OntologyCatalog) -> Result<(), OntologyError> {
+        // upsert into ontologies … 
+        # let _ = catalog;
+        # unimplemented!()
+    }
+}
+
+let storage = PostgresOntologyStorage { /* … */ };
+let generator = PromptGenerator::from_storage(&storage)
+    .await?
+    .with_default_domain("legal");
+```
+
+The trait's `save` method has a default that returns
+`OntologyError::Unsupported`, so read-only backends only need to
+implement `load`.
 
 ## Configuration
 

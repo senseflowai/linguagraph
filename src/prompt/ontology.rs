@@ -128,6 +128,13 @@ pub enum OntologyError {
     Io(#[from] std::io::Error),
     #[error("unknown domain: {0}")]
     UnknownDomain(String),
+    /// The backend does not support the requested operation
+    /// (e.g. a read-only storage backend cannot serve `save`).
+    #[error("unsupported storage operation: {0}")]
+    Unsupported(String),
+    /// Wraps an arbitrary backend-specific error (Postgres, HTTP, …).
+    #[error("ontology storage backend error: {0}")]
+    Backend(String),
 }
 
 #[cfg(test)]

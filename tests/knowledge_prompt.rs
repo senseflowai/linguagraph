@@ -7,8 +7,9 @@
 
 use linguagraph::ingest::{ChunkInput, EntityInput, RelationInput};
 use linguagraph::prompt::{
-    render_knowledge_extract_prompt, DomainOntology, EntityTypeSpec, OntologyCatalog,
-    PromptGenerator, RelationTypeSpec,
+    render_knowledge_extract_prompt, DomainOntology, EntityTypeSpec,
+    InMemoryOntologyCatalogStorage, OntologyCatalog, OntologyCatalogStorage, PromptGenerator,
+    RelationTypeSpec,
 };
 
 #[test]
@@ -38,7 +39,7 @@ fn custom_entity_and_relation_types_are_used() {
             RelationTypeSpec::with_description("CONTAINS", "Article contains a sub-article."),
         ],
     };
-    let p = render_knowledge_extract_prompt("Article 1 cites Article 2.", &ontology);
+    let p = render_knowledge_extract_prompt("Article 1 cites Article 2.", "custom", &ontology);
     assert!(p.contains("* `Article`"));
     assert!(p.contains("* `Citation` — Reference to another article."));
     assert!(p.contains("* `CITES`"));
@@ -92,6 +93,45 @@ fn fragment_is_embedded_in_a_code_block() {
         .unwrap();
     assert!(p.contains("# 🔹 Text Fragment"));
     assert!(p.contains("```\nThe court grants the right to appeal."));
+}
+
+#[tokio::test]
+async fn custom_storage_backend_drives_the_generator() {
+    // Demonstrates how a caller can plug in their own storage
+    // backend (e.g. Postgres). Here we use the in-memory one.
+    let mut catalog = OntologyCatalog::default();
+    catalog.insert(
+        "medical",
+        DomainOntology {
+            entity_types: vec![
+                EntityTypeSpec::with_description("Disease", "A pathological condition."),
+                EntityTypeSpec::new("Symptom"),
+            ],
+            relation_types: vec![
+                RelationTypeSpec::new("CAUSES"),
+                RelationTypeSpec::new("TREATS"),
+            ],
+        },
+    );
+    let storage: InMemoryOntologyCatalogStorage =
+        InMemoryOntologyCatalogStorage::new(catalog);
+    // Verify the trait-level API too.
+    let loaded = OntologyCatalogStorage::load(&storage).await.unwrap();
+    assert!(loaded.get("medical").is_some());
+
+    let generator = PromptGenerator::from_storage(&storage).await.unwrap();
+    let p = generator
+        .knowledge_extract_prompt("Patient presents with fever.", Some("medical"))
+        .unwrap();
+    assert!(p.contains("* `Disease` — A pathological condition."));
+    assert!(p.contains("* `Symptom`"));
+    assert!(p.contains("* `CAUSES`"));
+    // Framing is substituted with the active domain name.
+    assert!(p.contains("**medical information extraction**"));
+    assert!(p.contains("authoritative medical content"));
+    // No leftover placeholder or legacy `legal` framing.
+    assert!(!p.contains("{domain}"));
+    assert!(!p.contains("legal information extraction"));
 }
 
 #[test]

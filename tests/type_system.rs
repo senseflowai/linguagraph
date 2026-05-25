@@ -63,6 +63,7 @@ fn cfg_with_semantic_text() -> Config {
         llm: LlmConfig::default(),
         query: QueryConfig::default(),
         graph_specification: GraphSpecificationConfig::default(),
+        prompt: Default::default(),
         types,
     }
 }

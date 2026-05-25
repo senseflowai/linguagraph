@@ -1021,6 +1021,7 @@ mod tests {
             llm: LlmConfig::default(),
             query: QueryConfig::default(),
             graph_specification: GraphSpecificationConfig::default(),
+            prompt: Default::default(),
             types: Default::default(),
         }
     }

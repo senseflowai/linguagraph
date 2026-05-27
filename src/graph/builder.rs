@@ -408,7 +408,7 @@ fn infer_property_type(value: &Value) -> PropertyType {
     match value {
         Value::Bool(_) => PropertyType::Boolean,
         Value::Number(_) => PropertyType::Number,
-        Value::String(_) => PropertyType::String,
+        Value::String(_) => PropertyType::Text,
         Value::Null | Value::Array(_) | Value::Object(_) => PropertyType::Text,
     }
 }

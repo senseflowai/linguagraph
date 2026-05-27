@@ -55,7 +55,7 @@ pub fn new_v4_id() -> String {
 /// will embed it when one is registered.
 pub fn new_source(name: impl Into<String>) -> EntityGraph {
     EntityGraph::new(SOURCE_LABEL)
-        .strict_primary_key("id")
+        .strict_primary_key("name")
         .property("id", PropertyType::String, new_v4_id())
         .property("name", PropertyType::Text, name.into())
 }

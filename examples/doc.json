@@ -1,0 +1,101 @@
+{
+  "entities": [
+    {
+      "id": "e1",
+      "type": "LegalAct",
+      "name": "Основополагающими принципами деятельности Республики"
+    },
+    {
+      "id": "e2",
+      "type": "LegalConcept",
+      "name": "общественное согласие"
+    },
+    {
+      "id": "e3",
+      "type": "LegalConcept",
+      "name": "политическая стабильность"
+    },
+    {
+      "id": "e4",
+      "type": "LegalConcept",
+      "name": "экономическое развитие на благо всего народа"
+    },
+    {
+      "id": "e5",
+      "type": "LegalConcept",
+      "name": "казахстанский патриотизм"
+    },
+    {
+      "id": "e6",
+      "type": "LegalConcept",
+      "name": "решение наиболее важных вопросов государственной жизни демократическими методами"
+    },
+    {
+      "id": "e7",
+      "type": "LegalProcedure",
+      "name": "голосование на республиканском референдуме"
+    },
+    {
+      "id": "e8",
+      "type": "LegalProcedure",
+      "name": "голосование в Парламенте"
+    },
+    {
+      "id": "e9",
+      "type": "StateBody",
+      "name": "Республики"
+    },
+    {
+      "id": "e10",
+      "type": "StateBody",
+      "name": "Парламенте"
+    }
+  ],
+  "relations": [
+    {
+      "from": "e1",
+      "to": "e9",
+      "type": "REGULATES"
+    },
+    {
+      "from": "e1",
+      "to": "e2",
+      "type": "REGULATES"
+    },
+    {
+      "from": "e1",
+      "to": "e3",
+      "type": "REGULATES"
+    },
+    {
+      "from": "e1",
+      "to": "e4",
+      "type": "REGULATES"
+    },
+    {
+      "from": "e1",
+      "to": "e5",
+      "type": "REGULATES"
+    },
+    {
+      "from": "e1",
+      "to": "e6",
+      "type": "REGULATES"
+    },
+    {
+      "from": "e6",
+      "to": "e7",
+      "type": "PART_OF"
+    },
+    {
+      "from": "e6",
+      "to": "e8",
+      "type": "PART_OF"
+    },
+    {
+      "from": "e8",
+      "to": "e10",
+      "type": "PART_OF"
+    }
+  ]
+}

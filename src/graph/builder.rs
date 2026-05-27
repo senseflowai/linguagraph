@@ -19,6 +19,14 @@ impl Graph {
         &self.entities
     }
 
+    /// Mutable slice of the graph's entities. Used by the soft-merge
+    /// resolver to rewrite primary-key property values before
+    /// ingestion; ordinary callers should prefer rebuilding the graph
+    /// via [`GraphBuilder`].
+    pub fn entities_mut(&mut self) -> &mut [EntityGraph] {
+        &mut self.entities
+    }
+
     pub fn relations(&self) -> &[RelationGraph] {
         &self.relations
     }
@@ -257,6 +265,15 @@ impl GraphBuilder {
                     JsonPrimaryKey::Strict { strict } => entity.strict_primary_key(strict),
                     JsonPrimaryKey::Soft { soft } => entity.soft_primary_key(soft),
                 };
+            } else {
+                // Knowledge-extraction payloads come without a
+                // primary_key — the caller expects linguagraph to find
+                // semantically similar nodes of the same type and
+                // merge with them. Defaulting to Soft("name") tells
+                // the ingest path to run the embedding resolver
+                // against the `name` property; ingestion then errors
+                // out cleanly if `name` is missing.
+                entity = entity.soft_primary_key("name");
             }
 
             let mut properties = entity_input.properties;
@@ -391,7 +408,7 @@ fn infer_property_type(value: &Value) -> PropertyType {
     match value {
         Value::Bool(_) => PropertyType::Boolean,
         Value::Number(_) => PropertyType::Number,
-        Value::String(_) => PropertyType::String,
+        Value::String(_) => PropertyType::Text,
         Value::Null | Value::Array(_) | Value::Object(_) => PropertyType::Text,
     }
 }
@@ -743,7 +760,7 @@ mod tests {
 
         let acme = &graph.entities()[1];
         assert_eq!(acme.primary_key, Some(PrimaryKey::Strict("name".into())));
-        assert_eq!(acme.properties["name"].property_type, PropertyType::String);
+        assert_eq!(acme.properties["name"].property_type, PropertyType::Text);
         assert_eq!(acme.properties["name"].value, json!("Acme"));
 
         let relation = &graph.relations()[0];

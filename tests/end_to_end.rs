@@ -11,6 +11,8 @@ use linguagraph::db::{MockClient, QueryResult, Row, Value};
 use linguagraph::dsl;
 use linguagraph::graph::{GraphBuilder, PropertyType};
 use linguagraph::prompt::{GraphSchema, RelKind};
+use linguagraph::types::{handlers, RegistryBuilder, SharedRegistry};
+use linguagraph::types::handlers::{SemanticTextConfig, SemanticTextHandler};
 
 fn test_config() -> Config {
     Config {
@@ -29,6 +31,7 @@ fn test_config() -> Config {
         },
         graph_specification: GraphSpecificationConfig::default(),
         prompt: Default::default(),
+        ingest: Default::default(),
         types: Default::default(),
     }
 }
@@ -296,6 +299,134 @@ async fn dsl_prefix_label_overrides_pipeline_default() {
             .starts_with("MATCH (p:Person:OverrideTenant)"),
         "DSL prefix_label should override pipeline default; got: {}",
         captured[0].text
+    );
+}
+
+#[tokio::test]
+async fn soft_merge_rewrites_primary_key_to_existing_canonical() {
+    // Knowledge-extraction payloads omit `primary_key`; the JSON
+    // builder now defaults to `Soft("name")` and `Pipeline::ingest`
+    // must run the soft-merge resolver against the existing graph
+    // before issuing the MERGE. We seed the mock client with a
+    // canonical-row response that pretends Qdrant + Memgraph found
+    // a near-duplicate and assert the subsequent MERGE keys off the
+    // canonical name, not the incoming variant.
+    use linguagraph::embeddings::MockEmbedder;
+    use linguagraph::graph::GraphBuilder;
+
+    let registry: SharedRegistry = std::sync::Arc::new(
+        handlers::register_core(RegistryBuilder::new())
+            .register(SemanticTextHandler::new(
+                SemanticTextConfig {
+                    embedding_model: None,
+                    collection: "docs".into(),
+                    top_k: 10,
+                    search_threshold: 0.1,
+                    reranker_threshold: 0.2,
+                },
+                std::sync::Arc::new(MockEmbedder::new(8)),
+            ))
+            .build(),
+    );
+
+    let mock = Arc::new(MockClient::new());
+    let cfg = test_config();
+    let pipeline = Pipeline::new(mock.clone(), &cfg)
+        .with_embedder(std::sync::Arc::new(MockEmbedder::new(8)))
+        .with_registry(registry);
+
+    // MockClient pops responses LIFO. Queue the MERGE responses first
+    // (any empty result is fine for execution) and the resolver
+    // response *last* so it's popped first — when the resolver
+    // runs, it pulls a canonical-row table.
+    mock.enqueue(QueryResult::default()); // MERGE batch result
+    let mut canonical_row = Row::default();
+    canonical_row.fields.insert("idx".into(), Value::Int(0));
+    canonical_row.fields.insert(
+        "canonical".into(),
+        Value::String("общественное согласие".into()),
+    );
+    mock.enqueue(QueryResult {
+        columns: vec!["idx".into(), "canonical".into()],
+        rows: vec![canonical_row],
+    });
+
+    // Use a raw `name` string so type inference picks
+    // `PropertyType::String` and the test doesn't depend on a
+    // registered SemanticText handler. Soft-merge is orthogonal to
+    // SemanticText: the resolver embeds the property text itself
+    // and only consults Qdrant for the lookup; the on-node value
+    // can be a plain string.
+    let graph = GraphBuilder::from_json(
+        r#"{
+            "entities": [
+                {
+                    "id": "e1",
+                    "type": "LegalConcept",
+                    "name": "общественное соглас."
+                }
+            ],
+            "relations": []
+        }"#,
+    )
+    .unwrap();
+
+    pipeline.ingest(&graph).await.unwrap();
+
+    let captured = mock.captured.lock().unwrap();
+    // Resolver round-trip first, then the standard MERGE batch.
+    assert!(
+        captured[0].text.contains("libqlink.search_labeled"),
+        "first Cypher must be the soft-merge resolver search; got: {}",
+        captured[0].text
+    );
+    let merge = captured
+        .iter()
+        .find(|c| c.text.contains("MERGE (n:LegalConcept"))
+        .expect("expected a MERGE batch against LegalConcept");
+    // The MERGE rows must carry the canonical name as their id (the
+    // primary-key value the planner reads off of `name`), not the
+    // original variant.
+    let rows = merge
+        .params
+        .get("rows")
+        .expect("MERGE batch must bind a 'rows' param");
+    let serialised = format!("{rows:?}");
+    assert!(
+        serialised.contains("общественное согласие"),
+        "MERGE rows should reference the canonical name; got {serialised}"
+    );
+    assert!(
+        !serialised.contains("общественное соглас.\""),
+        "MERGE rows should no longer reference the incoming variant; got {serialised}"
+    );
+}
+
+#[tokio::test]
+async fn soft_merge_without_embedder_errors_loudly() {
+    // PrimaryKey::Soft without a configured embedder is treated as a
+    // misconfiguration — the resolver would silently regress to
+    // exact-string MERGE otherwise, which is exactly what soft-merge
+    // is supposed to avoid.
+    use linguagraph::graph::GraphBuilder;
+
+    let mock = Arc::new(MockClient::new());
+    let cfg = test_config();
+    let pipeline = Pipeline::new(mock.clone(), &cfg);
+
+    let graph = GraphBuilder::from_json(
+        r#"{
+            "entities": [{"id": "e1", "type": "LegalConcept", "name": "x"}],
+            "relations": []
+        }"#,
+    )
+    .unwrap();
+
+    let err = pipeline.ingest(&graph).await.expect_err("must error without embedder");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("soft-merge resolver requires an embedder"),
+        "expected SoftMergeBackendUnavailable, got: {msg}"
     );
 }
 

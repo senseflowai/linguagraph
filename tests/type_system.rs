@@ -64,6 +64,7 @@ fn cfg_with_semantic_text() -> Config {
         query: QueryConfig::default(),
         graph_specification: GraphSpecificationConfig::default(),
         prompt: Default::default(),
+        ingest: Default::default(),
         types,
     }
 }

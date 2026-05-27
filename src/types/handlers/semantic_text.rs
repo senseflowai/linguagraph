@@ -500,7 +500,7 @@ fn collection_for(
 /// Fold an optional prefix into a Qdrant collection name. Empty
 /// prefixes are normalised to "no prefix" so call sites don't need to
 /// distinguish `Some("")` from `None`.
-fn with_prefix_index(prefix_index: Option<&str>, base: &str) -> String {
+pub(crate) fn with_prefix_index(prefix_index: Option<&str>, base: &str) -> String {
     match prefix_index {
         Some(p) if !p.is_empty() => format!("{p}__{base}"),
         _ => base.to_string(),

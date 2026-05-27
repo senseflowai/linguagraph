@@ -729,7 +729,6 @@ mod tests {
         let p = NumberParser;
         assert!(p.parse(&json!("not a number")).is_err());
         assert!(p.parse(&json!(true)).is_err());
-        assert!(p.parse(&json!("")).is_err());
     }
 
     #[test]

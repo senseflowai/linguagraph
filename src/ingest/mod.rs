@@ -11,6 +11,7 @@ pub mod document;
 pub mod dsl;
 pub mod graph;
 pub mod planner;
+pub mod soft_merge;
 
 use thiserror::Error;
 
@@ -66,4 +67,13 @@ pub enum IngestError {
 
     #[error("relationship references unknown graph entity ref {0}")]
     UnknownGraphEntityRef(usize),
+
+    #[error(
+        "soft-merge resolver requires an embedder + GraphClient but the pipeline has none: \
+         entity '{0}' uses PrimaryKey::Soft"
+    )]
+    SoftMergeBackendUnavailable(String),
+
+    #[error("soft-merge resolver failed: {0}")]
+    SoftMerge(String),
 }

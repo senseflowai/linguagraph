@@ -5,13 +5,13 @@ use std::sync::Arc;
 
 use crate::ast::{from_dsl, query::InsertQuery, query::ReadQuery};
 use crate::builder::{self, CypherQuery};
-use crate::config::Config;
+use crate::config::{Config, SoftMergeConfig};
 use crate::db::{GraphClient, QueryResult, Row, Value as DbValue};
 use crate::dsl::{Direction as DslDirection, DslQuery, TraversalQuery};
 use crate::embeddings::SharedEmbedder;
 use crate::error::Result;
 use crate::graph::{Graph, GraphSpecification, GraphSpecificationStorage};
-use crate::ingest::{self, DeletePlan, DiscoveredNodes, IngestError, PlannerOptions};
+use crate::ingest::{self, soft_merge, DeletePlan, DiscoveredNodes, IngestError, PlannerOptions};
 use crate::types::{handlers, SharedRegistry, SideEffect, SideEffectQueue};
 
 use std::sync::RwLock;
@@ -57,6 +57,11 @@ pub struct Pipeline {
     /// so `delete_by_source` can enumerate collections without having
     /// to downcast handlers out of the registry.
     semantic_collection: String,
+    /// Soft-merge resolver configuration (similarity threshold, fan-out).
+    /// Captured at construction time from `[ingest.soft_merge]` so
+    /// `ingest()` can run the resolver without revisiting the full
+    /// `Config`.
+    soft_merge: SoftMergeConfig,
 }
 
 impl std::fmt::Debug for Pipeline {
@@ -133,6 +138,7 @@ impl Pipeline {
             prefix_label: None,
             prefix_index: None,
             semantic_collection,
+            soft_merge: config.ingest.soft_merge.clone(),
         }
     }
 
@@ -523,7 +529,38 @@ impl Pipeline {
     /// runs before any relationship MERGE, so the planner's ordering
     /// guarantees that when relations execute, both endpoints exist.
     pub async fn ingest(&self, graph: &Graph) -> Result<IngestSummary> {
-        let (insert, effects) = self.lower_insert_with_effects(graph)?;
+        // Soft-merge resolver: rewrite `PrimaryKey::Soft` properties
+        // in place before the planner generates its `MERGE` so the
+        // standard MERGE deduplicates against existing nodes by
+        // semantic similarity. Skipped when the graph has no soft
+        // candidates — the common case for graphs built from
+        // explicit schemas.
+        let owned;
+        let resolved_graph: &Graph = if soft_merge::has_soft_merge_candidates(graph) {
+            let embedder = self.embedder.as_deref().ok_or_else(|| {
+                IngestError::SoftMergeBackendUnavailable(
+                    "Pipeline has no embedder; call .with_embedder() before ingesting graphs \
+                     that contain PrimaryKey::Soft entities"
+                        .into(),
+                )
+            })?;
+            let mut cloned = graph.clone();
+            soft_merge::resolve_soft_keys(
+                &mut cloned,
+                embedder,
+                self.client.as_ref(),
+                &self.soft_merge,
+                &self.semantic_collection,
+                self.prefix_index.as_deref(),
+            )
+            .await?;
+            owned = cloned;
+            &owned
+        } else {
+            graph
+        };
+
+        let (insert, effects) = self.lower_insert_with_effects(resolved_graph)?;
         let node_rows: usize = insert.node_batches.iter().map(|b| b.rows.len()).sum();
         let relation_rows: usize = insert.relation_batches.iter().map(|b| b.rows.len()).sum();
 
@@ -1022,6 +1059,7 @@ mod tests {
             query: QueryConfig::default(),
             graph_specification: GraphSpecificationConfig::default(),
             prompt: Default::default(),
+            ingest: Default::default(),
             types: Default::default(),
         }
     }

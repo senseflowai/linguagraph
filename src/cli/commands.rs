@@ -971,6 +971,7 @@ async fn load_config_or_default(path: &std::path::Path) -> Config {
             query: Default::default(),
             graph_specification: Default::default(),
             prompt: Default::default(),
+            ingest: Default::default(),
             types: Default::default(),
         },
     }

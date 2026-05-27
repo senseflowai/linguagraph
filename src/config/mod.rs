@@ -20,12 +20,61 @@ pub struct Config {
     /// Prompt-generation settings (ontologies file, default domain).
     #[serde(default)]
     pub prompt: PromptConfig,
+    /// Ingestion-time knobs. Currently holds the soft-merge similarity
+    /// resolver configuration; future ingestion flags belong here too.
+    #[serde(default)]
+    pub ingest: IngestConfig,
     /// Per-type configuration. Each `[types.<TypeId>]` block becomes one
     /// entry in this map and is read by the corresponding handler at
     /// registry-build time. The map is open-ended on purpose —
     /// adding a new type does not require touching this struct.
     #[serde(default)]
     pub types: BTreeMap<String, TypeConfig>,
+}
+
+/// Ingestion-time configuration (`[ingest]` in TOML).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct IngestConfig {
+    /// Soft primary-key similarity-merge resolver settings.
+    #[serde(default)]
+    pub soft_merge: SoftMergeConfig,
+}
+
+/// Configuration for the soft-merge resolver that runs before every
+/// `Pipeline::ingest` and tries to dedupe `PrimaryKey::Soft` entities
+/// against an existing graph by vector similarity.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SoftMergeConfig {
+    /// Minimum cosine score for a Qdrant hit to be treated as a duplicate
+    /// of the incoming entity. A hit at or above this threshold causes
+    /// the incoming entity's primary-key property to be rewritten to the
+    /// canonical value of the existing node, so the downstream `MERGE`
+    /// folds them together.
+    #[serde(default = "default_soft_merge_similarity_threshold")]
+    pub similarity_threshold: f64,
+    /// How many candidate vectors to fetch per entity. Only the best hit
+    /// is ever used; the wider fan-out exists so Qdrant's pre-filter
+    /// doesn't accidentally hide the top candidate behind a slightly
+    /// noisier near-neighbor.
+    #[serde(default = "default_soft_merge_top_k")]
+    pub top_k: u32,
+}
+
+impl Default for SoftMergeConfig {
+    fn default() -> Self {
+        Self {
+            similarity_threshold: default_soft_merge_similarity_threshold(),
+            top_k: default_soft_merge_top_k(),
+        }
+    }
+}
+
+fn default_soft_merge_similarity_threshold() -> f64 {
+    0.85
+}
+
+fn default_soft_merge_top_k() -> u32 {
+    3
 }
 
 /// Prompt-generation configuration block (`[prompt]` in TOML).

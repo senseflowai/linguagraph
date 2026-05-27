@@ -192,7 +192,7 @@ fn node_shape(entity: &EntityGraph) -> Result<NodeShape, IngestError> {
     })
 }
 
-fn entity_id(entity: &EntityGraph, key_field: &str, index: usize) -> Result<Literal, IngestError> {
+fn entity_id(entity: &EntityGraph, key_field: &str, _index: usize) -> Result<Literal, IngestError> {
     match &entity.primary_key {
         Some(PrimaryKey::Strict(_)) => {
             let property = entity.properties.get(key_field).ok_or_else(|| {
@@ -207,14 +207,28 @@ fn entity_id(entity: &EntityGraph, key_field: &str, index: usize) -> Result<Lite
                 Some(property.property_type),
             )
         }
-        Some(PrimaryKey::Soft(_)) => match entity.properties.get(key_field) {
-            Some(property) => literal_from_json(
+        // Soft used to fall back to a synthetic "<Type>:<index>" id
+        // when the key field was missing. The soft-merge resolver
+        // (src/ingest/soft_merge.rs) now runs before this planner and
+        // either rewrites the property to a canonical value or leaves
+        // it untouched; either way the property must be present by
+        // the time we reach the planner. Treat a missing value the
+        // same way as Strict so callers get a clean, typed error
+        // instead of a silent placeholder id that would never merge
+        // with anything.
+        Some(PrimaryKey::Soft(_)) => {
+            let property = entity.properties.get(key_field).ok_or_else(|| {
+                IngestError::MissingGraphPrimaryKeyValue {
+                    label: entity.r#type.clone(),
+                    field: key_field.to_string(),
+                }
+            })?;
+            literal_from_json(
                 &property.value,
                 &property.name,
                 Some(property.property_type),
-            ),
-            None => Ok(Literal::String(format!("{}:{index}", entity.r#type))),
-        },
+            )
+        }
         None => Err(IngestError::MissingGraphPrimaryKey(entity.r#type.clone())),
     }
 }

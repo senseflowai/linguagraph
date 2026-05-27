@@ -90,6 +90,11 @@ pub struct IngestSummary {
     pub side_effect_batches: usize,
     /// Number of side-effect rows applied (vectors inserted).
     pub side_effect_rows: usize,
+    /// Wall-clock time the full `Pipeline::ingest` call took, in
+    /// milliseconds. Covers the soft-merge resolver, the MERGE batches,
+    /// and the embedding-upsert side effects — i.e. everything between
+    /// receiving the `Graph` and returning this summary.
+    pub elapsed_ms: u64,
 }
 
 /// Summary returned by [`Pipeline::delete_by_source`].
@@ -529,6 +534,7 @@ impl Pipeline {
     /// runs before any relationship MERGE, so the planner's ordering
     /// guarantees that when relations execute, both endpoints exist.
     pub async fn ingest(&self, graph: &Graph) -> Result<IngestSummary> {
+        let started = std::time::Instant::now();
         // Soft-merge resolver: rewrite `PrimaryKey::Soft` properties
         // in place before the planner generates its `MERGE` so the
         // standard MERGE deduplicates against existing nodes by
@@ -582,6 +588,7 @@ impl Pipeline {
             relation_rows,
             side_effect_batches: se_batches,
             side_effect_rows: se_rows,
+            elapsed_ms: started.elapsed().as_millis() as u64,
         })
     }
 

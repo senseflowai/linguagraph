@@ -760,7 +760,7 @@ mod tests {
 
         let acme = &graph.entities()[1];
         assert_eq!(acme.primary_key, Some(PrimaryKey::Strict("name".into())));
-        assert_eq!(acme.properties["name"].property_type, PropertyType::String);
+        assert_eq!(acme.properties["name"].property_type, PropertyType::Text);
         assert_eq!(acme.properties["name"].value, json!("Acme"));
 
         let relation = &graph.relations()[0];

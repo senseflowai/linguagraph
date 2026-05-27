@@ -11,6 +11,8 @@ use linguagraph::db::{MockClient, QueryResult, Row, Value};
 use linguagraph::dsl;
 use linguagraph::graph::{GraphBuilder, PropertyType};
 use linguagraph::prompt::{GraphSchema, RelKind};
+use linguagraph::types::{handlers, RegistryBuilder, SharedRegistry};
+use linguagraph::types::handlers::{SemanticTextConfig, SemanticTextHandler};
 
 fn test_config() -> Config {
     Config {
@@ -312,10 +314,26 @@ async fn soft_merge_rewrites_primary_key_to_existing_canonical() {
     use linguagraph::embeddings::MockEmbedder;
     use linguagraph::graph::GraphBuilder;
 
+    let registry: SharedRegistry = std::sync::Arc::new(
+        handlers::register_core(RegistryBuilder::new())
+            .register(SemanticTextHandler::new(
+                SemanticTextConfig {
+                    embedding_model: None,
+                    collection: "docs".into(),
+                    top_k: 10,
+                    search_threshold: 0.1,
+                    reranker_threshold: 0.2,
+                },
+                std::sync::Arc::new(MockEmbedder::new(8)),
+            ))
+            .build(),
+    );
+
     let mock = Arc::new(MockClient::new());
     let cfg = test_config();
     let pipeline = Pipeline::new(mock.clone(), &cfg)
-        .with_embedder(std::sync::Arc::new(MockEmbedder::new(8)));
+        .with_embedder(std::sync::Arc::new(MockEmbedder::new(8)))
+        .with_registry(registry);
 
     // MockClient pops responses LIFO. Queue the MERGE responses first
     // (any empty result is fine for execution) and the resolver

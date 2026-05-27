@@ -28,6 +28,7 @@ fn test_config() -> Config {
             default_limit: 50,
         },
         graph_specification: GraphSpecificationConfig::default(),
+        prompt: Default::default(),
         types: Default::default(),
     }
 }

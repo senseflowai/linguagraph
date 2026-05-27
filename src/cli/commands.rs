@@ -17,8 +17,10 @@ use crate::graph::{
     DEFAULT_GRAPH_SPECIFICATION_CACHE_PATH,
 };
 use crate::mapper::{self, Mapping};
-use crate::prompt::{self, GraphSchema, PromptOptions};
-use crate::promptgen::knowledge::{EntityTypeSpec, KnowledgeExtractOptions, RelationTypeSpec};
+use crate::prompt::{
+    self, DomainOntology, EntityTypeSpec, GraphSchema, PromptGenerator, PromptOptions,
+    RelationTypeSpec,
+};
 use crate::types::{self, SharedRegistry};
 use clap::{Parser, Subcommand, ValueEnum};
 use tabled::{builder::Builder, settings::Style};
@@ -264,12 +266,17 @@ pub enum Command {
         /// Path to a UTF-8 text file containing the fragment to
         /// analyse. Use `-` to read from stdin.
         path: PathBuf,
-        /// Allowed entity type (repeatable). Defaults to the bundled
-        /// legal-domain vocabulary when none are passed.
+        /// Domain whose ontology should be used (e.g. `legal`).
+        /// Falls back to `[prompt].default_domain` from config.
+        /// Ignored when `--entity-type`/`--relation-type` are passed.
+        #[arg(long)]
+        domain: Option<String>,
+        /// Allowed entity type (repeatable). When passed, fully
+        /// overrides the domain ontology for this run.
         #[arg(long = "entity-type")]
         entity_types: Vec<String>,
-        /// Allowed relation type (repeatable). Defaults to the
-        /// bundled legal-domain vocabulary when none are passed.
+        /// Allowed relation type (repeatable). When passed, fully
+        /// overrides the domain ontology for this run.
         #[arg(long = "relation-type")]
         relation_types: Vec<String>,
         /// Write the prompt to this path instead of stdout.
@@ -353,10 +360,11 @@ pub async fn run(cli: Cli) -> Result<()> {
         }
         Command::KnowledgePrompt {
             path,
+            domain,
             entity_types,
             relation_types,
             output,
-        } => cmd_knowledge_prompt(path, entity_types, relation_types, output).await,
+        } => cmd_knowledge_prompt(&cli.config, path, domain, entity_types, relation_types, output).await,
         Command::DeleteBySource {
             source,
             prefix_label,
@@ -892,14 +900,13 @@ async fn cmd_delete_by_source(
 }
 
 async fn cmd_knowledge_prompt(
+    config_path: &std::path::Path,
     path: PathBuf,
+    domain: Option<String>,
     entity_types: Vec<String>,
     relation_types: Vec<String>,
     output: Option<PathBuf>,
 ) -> Result<()> {
-    use crate::promptgen::knowledge::{
-        default_entity_types, default_relation_types, generate_knowledge_extract_prompt,
-    };
     use tokio::io::AsyncReadExt;
 
     // Read the fragment from a file or stdin. `-` means stdin so the
@@ -913,22 +920,29 @@ async fn cmd_knowledge_prompt(
         fs::read_to_string(&path).await?
     };
 
-    let opts = KnowledgeExtractOptions {
-        entity_types: if entity_types.is_empty() {
-            default_entity_types()
-        } else {
-            entity_types.into_iter().map(EntityTypeSpec::new).collect()
-        },
-        relation_types: if relation_types.is_empty() {
-            default_relation_types()
-        } else {
-            relation_types
+    let cfg = load_config_or_default(config_path).await;
+    let generator = PromptGenerator::from_config(&cfg.prompt).await?;
+
+    let prompt = if !entity_types.is_empty() || !relation_types.is_empty() {
+        let ontology = DomainOntology {
+            entity_types: entity_types.into_iter().map(EntityTypeSpec::new).collect(),
+            relation_types: relation_types
                 .into_iter()
                 .map(RelationTypeSpec::new)
-                .collect()
-        },
+                .collect(),
+        };
+        // Use the explicit --domain when supplied so the prompt's
+        // framing matches; otherwise fall back to the config default
+        // or a neutral "custom" label.
+        let label = domain
+            .as_deref()
+            .or(cfg.prompt.default_domain.as_deref())
+            .unwrap_or("custom");
+        generator.knowledge_extract_prompt_with(&fragment, label, &ontology)
+    } else {
+        generator.knowledge_extract_prompt(&fragment, domain.as_deref())?
     };
-    let prompt = generate_knowledge_extract_prompt(&fragment, &opts);
+
     match output {
         Some(p) => {
             fs::write(&p, &prompt).await?;
@@ -956,6 +970,7 @@ async fn load_config_or_default(path: &std::path::Path) -> Config {
             llm: Default::default(),
             query: Default::default(),
             graph_specification: Default::default(),
+            prompt: Default::default(),
             types: Default::default(),
         },
     }

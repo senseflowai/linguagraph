@@ -17,12 +17,28 @@ pub struct Config {
     pub query: QueryConfig,
     #[serde(default)]
     pub graph_specification: GraphSpecificationConfig,
+    /// Prompt-generation settings (ontologies file, default domain).
+    #[serde(default)]
+    pub prompt: PromptConfig,
     /// Per-type configuration. Each `[types.<TypeId>]` block becomes one
     /// entry in this map and is read by the corresponding handler at
     /// registry-build time. The map is open-ended on purpose —
     /// adding a new type does not require touching this struct.
     #[serde(default)]
     pub types: BTreeMap<String, TypeConfig>,
+}
+
+/// Prompt-generation configuration block (`[prompt]` in TOML).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PromptConfig {
+    /// Path to a JSON file with domain ontologies. When omitted, the
+    /// built-in catalog (bundled `legal` vocabulary) is used.
+    #[serde(default)]
+    pub ontologies_path: Option<String>,
+    /// Domain selected by knowledge-extract when the caller does not
+    /// pass one explicitly.
+    #[serde(default)]
+    pub default_domain: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

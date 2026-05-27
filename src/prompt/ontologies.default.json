@@ -1,0 +1,35 @@
+{
+  "legal": {
+    "entity_types": [
+      { "name": "LegalNorm", "description": "A rule, provision, article, or paragraph stated in the text." },
+      { "name": "LegalAct", "description": "A named statute, code, law, decree, or treaty." },
+      { "name": "StateBody", "description": "Any organ of public authority: court, ministry, agency, parliament." },
+      { "name": "Person", "description": "A natural person identified by role or name (judge, plaintiff, citizen)." },
+      { "name": "Organization", "description": "A legal entity, association, or corporation other than a state body." },
+      { "name": "LegalRight", "description": "An entitlement or freedom granted to a subject." },
+      { "name": "LegalObligation", "description": "A duty, requirement, or prohibition imposed on a subject." },
+      { "name": "Sanction", "description": "A penalty, fine, or other consequence for a violation." },
+      { "name": "LegalProcedure", "description": "A formally described process (filing, appeal, hearing, registration)." },
+      { "name": "LegalConcept", "description": "A defined legal term or category (property, citizenship, contract)." },
+      { "name": "Date", "description": "A specific date or time period explicitly mentioned." },
+      { "name": "Location", "description": "A jurisdiction, territory, or named place." },
+      { "name": "MonetaryAmount", "description": "A specific sum of money referenced in the text." }
+    ],
+    "relation_types": [
+      { "name": "GRANTS", "description": "Subject confers a right or power on another." },
+      { "name": "REQUIRES", "description": "Subject imposes a requirement on another." },
+      { "name": "PROHIBITS", "description": "Subject forbids the target action or state." },
+      { "name": "REGULATES", "description": "Subject sets rules over the target." },
+      { "name": "ESTABLISHES", "description": "Subject creates, founds, or institutes the target." },
+      { "name": "ENFORCES", "description": "Subject implements or compels compliance with the target." },
+      { "name": "REFERENCES", "description": "Subject cites or invokes the target." },
+      { "name": "AMENDS", "description": "Subject modifies the target legal act/norm." },
+      { "name": "REPEALS", "description": "Subject revokes the target legal act/norm." },
+      { "name": "APPLIES_TO", "description": "Subject's scope covers the target." },
+      { "name": "PART_OF", "description": "Subject is structurally contained in the target." },
+      { "name": "HAS_SANCTION", "description": "Subject (norm) attaches the target sanction." },
+      { "name": "ISSUED_BY", "description": "Subject (act/decision) was issued by the target body." },
+      { "name": "DEFINED_AS", "description": "Subject term is defined as the target concept." }
+    ]
+  }
+}

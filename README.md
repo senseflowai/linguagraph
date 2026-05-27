@@ -128,8 +128,9 @@ src/
 ├── builder/    AST → Cypher (split into match/where/return parts)
 ├── db/         GraphClient trait, Memgraph (neo4rs) impl, mock impl
 ├── config/     TOML loader with env overrides
-├── prompt/     schema-aware system-prompt generator
-├── promptgen/  JSON → mapping-authoring prompt; fragment → knowledge-extract prompt
+├── prompt/     LLM prompt generation (query prompts + knowledge-extract prompts,
+│               domain-scoped ontologies loaded from JSON)
+├── promptgen/  JSON → mapping-authoring prompt
 ├── types/      pluggable field-type system (registry, handlers)
 ├── embeddings/ Embedder trait + mock + llama-cpp-2 backend
 ├── graph/      owned graph model, GraphBuilder, graph specification
@@ -397,56 +398,150 @@ as an alias for `relations`. This is the shape produced by
 
 `knowledge-prompt` emits a deterministic LLM prompt whose output is a
 `{entities, relations}` document — exactly the graph-JSON shape `ingest-graph`
-consumes. Defaults are tuned for the legal domain; pass `--entity-type` /
-`--relation-type` (repeatable) to constrain the LLM to a custom ontology.
+consumes. The entity/relation vocabulary is supplied by a *domain ontology*
+loaded from a JSON catalog; the crate ships a built-in `legal` ontology and
+additional domains can be added by pointing `[prompt].ontologies_path` at a
+JSON file.
 
 ```bash
-# Use the bundled legal-domain defaults.
+# Use the built-in legal ontology.
+linguagraph knowledge-prompt fragment.txt --domain legal
+
+# When [prompt].default_domain is set in config, --domain is optional.
 linguagraph knowledge-prompt fragment.txt
 
-# Constrain the LLM to a custom vocabulary.
+# Ad-hoc override: ignore the catalog entirely for one run.
 linguagraph knowledge-prompt fragment.txt \
     --entity-type Article \
     --entity-type Citation \
-    --entity-type Court \
     --relation-type CITES \
-    --relation-type ISSUED_BY \
     --relation-type CONTAINS \
     -o extract_prompt.md
 
 # Pipe a fragment in from stdin.
-cat fragment.txt | linguagraph knowledge-prompt -
+cat fragment.txt | linguagraph knowledge-prompt - --domain legal
 ```
 
-The default vocabularies bundled with `knowledge-prompt`:
+The built-in `legal` domain:
 
-| Default entity types | Default relation types |
+| Entity types | Relation types |
 |---|---|
 | `LegalNorm`, `LegalAct`, `StateBody`, `Person`, `Organization`, `LegalRight`, `LegalObligation`, `Sanction`, `LegalProcedure`, `LegalConcept`, `Date`, `Location`, `MonetaryAmount` | `GRANTS`, `REQUIRES`, `PROHIBITS`, `REGULATES`, `ESTABLISHES`, `ENFORCES`, `REFERENCES`, `AMENDS`, `REPEALS`, `APPLIES_TO`, `PART_OF`, `HAS_SANCTION`, `ISSUED_BY`, `DEFINED_AS` |
 
-For programmatic use the same lists are available as
-`promptgen::knowledge::default_entity_types()` /
-`default_relation_types()`, and you can extend them rather than replace:
+#### Ontology catalog format
+
+An ontology catalog is a flat JSON object — keys are domain names, values
+are `{entity_types, relation_types}` lists:
+
+```json
+{
+  "legal": {
+    "entity_types": [
+      { "name": "LegalNorm", "description": "A rule, provision, article, or paragraph." },
+      { "name": "StateBody", "description": "Any organ of public authority." }
+    ],
+    "relation_types": [
+      { "name": "GRANTS", "description": "Subject confers a right or power on another." }
+    ]
+  },
+  "medical": {
+    "entity_types": [{ "name": "Disease" }, { "name": "Symptom" }],
+    "relation_types": [{ "name": "CAUSES" }, { "name": "TREATS" }]
+  }
+}
+```
+
+Wire it up via `config.toml`:
+
+```toml
+[prompt]
+ontologies_path = "config/ontologies.json"
+default_domain  = "legal"
+```
+
+#### Programmatic use
+
+`PromptGenerator` is the high-level facade — it owns the catalog and exposes
+both prompt flavours. The domain name supplied at render time is also
+substituted into the prompt's framing sections (role, input structure, rules),
+so the LLM sees `"medical information extraction"` rather than a hardcoded
+`"legal"` framing for non-legal domains.
 
 ```rust
-use linguagraph::promptgen::knowledge::{
-    default_entity_types, default_relation_types,
-    generate_knowledge_extract_prompt,
-    EntityTypeSpec, KnowledgeExtractOptions, RelationTypeSpec,
+use linguagraph::prompt::{
+    DomainOntology, EntityTypeSpec, OntologyCatalog, PromptGenerator, RelationTypeSpec,
 };
 
-let mut ents = default_entity_types();
-ents.push(EntityTypeSpec::with_description(
-    "Citation", "Reference to another legal act or article.",
-));
-let mut rels = default_relation_types();
-rels.push(RelationTypeSpec::new("CITES"));
+// Built-in catalog, or load your own via storage (see below).
+let generator = PromptGenerator::with_builtin_catalog()
+    .with_default_domain("legal");
 
-let prompt = generate_knowledge_extract_prompt(
-    fragment,
-    &KnowledgeExtractOptions { entity_types: ents, relation_types: rels },
-);
+let prompt = generator.knowledge_extract_prompt(fragment, Some("legal"))?;
+// or fall back to default_domain:
+let prompt = generator.knowledge_extract_prompt(fragment, None)?;
+
+// Extend a built-in domain at runtime.
+let mut catalog = OntologyCatalog::builtin();
+catalog.domains.get_mut("legal").unwrap()
+    .entity_types.push(EntityTypeSpec::with_description(
+        "Citation", "Reference to another legal act or article.",
+    ));
+let generator = PromptGenerator::new(catalog);
+
+// Bypass the catalog with an ad-hoc ontology. The second argument is
+// the framing label that gets substituted into the prompt sections.
+let ad_hoc = DomainOntology {
+    entity_types: vec![EntityTypeSpec::new("Article")],
+    relation_types: vec![RelationTypeSpec::new("CITES")],
+};
+let prompt = generator.knowledge_extract_prompt_with(fragment, "custom", &ad_hoc);
 ```
+
+#### Pluggable storage backend
+
+The catalog is loaded through the [`OntologyCatalogStorage`] trait, so
+real-world deployments can keep ontologies in Postgres, an internal
+HTTP service, S3, etc. instead of a checked-in JSON file. The crate
+ships two ready-to-use backends:
+
+* `JsonFileOntologyCatalogStorage` — default; reads and atomically
+  rewrites a single JSON file. Used by
+  `PromptGenerator::from_config` when `[prompt].ontologies_path` is set.
+* `InMemoryOntologyCatalogStorage` — read-only, useful for tests and
+  programmatically-built catalogs.
+
+```rust
+use async_trait::async_trait;
+use linguagraph::prompt::{
+    OntologyCatalog, OntologyCatalogStorage, OntologyError, PromptGenerator,
+};
+
+#[derive(Debug)]
+struct PostgresOntologyStorage { /* … pool, etc … */ }
+
+#[async_trait]
+impl OntologyCatalogStorage for PostgresOntologyStorage {
+    async fn load(&self) -> Result<OntologyCatalog, OntologyError> {
+        // SELECT domain, entity_types, relation_types FROM ontologies; …
+        # unimplemented!()
+    }
+
+    async fn save(&self, catalog: &OntologyCatalog) -> Result<(), OntologyError> {
+        // upsert into ontologies … 
+        # let _ = catalog;
+        # unimplemented!()
+    }
+}
+
+let storage = PostgresOntologyStorage { /* … */ };
+let generator = PromptGenerator::from_storage(&storage)
+    .await?
+    .with_default_domain("legal");
+```
+
+The trait's `save` method has a default that returns
+`OntologyError::Unsupported`, so read-only backends only need to
+implement `load`.
 
 ## Configuration
 
@@ -476,6 +571,13 @@ reranking_model = "models/bge-reranker.gguf"
 embedding_dim = 384
 reranking_threshold = 0.3
 
+[prompt]
+# Path to a domain-ontology JSON catalog (see "Ontology catalog format").
+# When omitted, the built-in catalog (currently the `legal` domain) is used.
+ontologies_path = "config/ontologies.json"
+# Domain selected by `knowledge-prompt` when --domain is omitted.
+default_domain  = "legal"
+
 # One block per registered field type; the SemanticText handler reads this one.
 [types.SemanticText]
 embedding_model = "models/bge-small.gguf"
@@ -483,8 +585,8 @@ collection = "companies"
 top_k = 20
 ```
 
-`[llm]`, `[query]`, `[graph_specification]` and `[types.*]` are all optional and
-fall back to the defaults shown above. Any field can be overridden via
+`[llm]`, `[query]`, `[graph_specification]`, `[prompt]` and `[types.*]` are all
+optional and fall back to the defaults shown above. Any field can be overridden via
 `LINGUAGRAPH__SECTION__FIELD`, e.g.:
 
 ```bash
@@ -563,7 +665,7 @@ to the entity types relevant to a specific natural-language query.
 | `linguagraph ingest-json <data.json> <mapper.json>` | Mapping-driven ingest; execute against the configured DB. |
 | `linguagraph ingest-graph <graph.json>` | Ingest a compact `{entities, relations}` graph JSON. |
 | `linguagraph generate-prompt <data.json>` | Generate a mapping-authoring prompt for an LLM. |
-| `linguagraph knowledge-prompt <fragment.txt> [--entity-type X] [--relation-type Y]` | Generate a knowledge-extraction prompt; defaults to a legal vocabulary. |
+| `linguagraph knowledge-prompt <fragment.txt> [--domain D] [--entity-type X] [--relation-type Y]` | Generate a knowledge-extraction prompt for a domain ontology. `--entity-type` / `--relation-type` override the catalog for one run. |
 | `linguagraph delete-by-source --source <name>` | Delete a source-rooted subgraph and its vectors. |
 
 Global flag: `--config <path>` (default `config.toml`). The ingest, `run`,

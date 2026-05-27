@@ -65,6 +65,12 @@ fn apply_env_overrides(cfg: &mut Config) {
             cfg.query.default_limit = n;
         }
     }
+    if let Ok(v) = std::env::var("LINGUAGRAPH__PROMPT__ONTOLOGIES_PATH") {
+        cfg.prompt.ontologies_path = Some(v);
+    }
+    if let Ok(v) = std::env::var("LINGUAGRAPH__PROMPT__DEFAULT_DOMAIN") {
+        cfg.prompt.default_domain = Some(v);
+    }
 }
 
 fn validate(cfg: &Config) -> Result<(), ConfigError> {

@@ -38,16 +38,11 @@
 pub mod analyzer;
 pub mod builder;
 pub mod inference;
-pub mod knowledge;
 pub mod template;
 
 pub use analyzer::{analyze, EntitySummary, FieldSummary, JsonSchemaSummary, RelationshipHint};
 pub use builder::{PromptBuilder, PromptGenOptions};
 pub use inference::InferredType;
-pub use knowledge::{
-    default_entity_types, default_relation_types, generate_knowledge_extract_prompt,
-    EntityTypeSpec, KnowledgeExtractOptions, RelationTypeSpec,
-};
 
 use serde_json::Value;
 

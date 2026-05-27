@@ -106,25 +106,28 @@ pub async fn resolve_soft_keys(
             .map_err(|e| IngestError::SoftMerge(format!("client.execute: {e}")))?;
 
         for row in result.rows {
-            let idx = match row.fields.get("idx") {
-                Some(DbValue::Int(i)) => *i as usize,
-                Some(other) => {
+            let Some(idx) = row.fields.get("idx").and_then(field_as_i64) else {
+                if let Some(other) = row.fields.get("idx") {
                     return Err(IngestError::SoftMerge(format!(
                         "soft-merge query returned non-integer idx: {other:?}"
                     )));
                 }
-                None => continue,
+                continue;
             };
-            let canonical = match row.fields.get("canonical") {
-                Some(DbValue::String(s)) => s.clone(),
-                Some(DbValue::Null) | None => continue,
-                Some(other) => {
-                    return Err(IngestError::SoftMerge(format!(
-                        "soft-merge query returned non-string canonical: {other:?}"
-                    )));
-                }
+            let canonical = match row.fields.get("canonical").and_then(field_as_string) {
+                Some(s) => s,
+                None => match row.fields.get("canonical") {
+                    None | Some(DbValue::Null) => continue,
+                    Some(DbValue::Json(serde_json::Value::Null)) => continue,
+                    Some(other) => {
+                        return Err(IngestError::SoftMerge(format!(
+                            "soft-merge query returned non-string canonical: {other:?}"
+                        )));
+                    }
+                },
             };
 
+            let idx = idx as usize;
             let entity = graph
                 .entities_mut()
                 .get_mut(idx)
@@ -191,6 +194,30 @@ fn collect_candidates(graph: &Graph) -> Result<Vec<Candidate>, IngestError> {
         });
     }
     Ok(out)
+}
+
+/// Read a result-row cell as an `i64`, tolerant of both the native
+/// `DbValue::Int` form (used by `MockClient` and tests) and the
+/// `DbValue::Json(Number(...))` form Memgraph's neo4rs driver
+/// produces for every scalar (see `src/db/memgraph.rs`). Returns
+/// `None` for nulls or any non-numeric shape — callers decide
+/// whether that's a soft skip or a hard error.
+fn field_as_i64(v: &DbValue) -> Option<i64> {
+    match v {
+        DbValue::Int(i) => Some(*i),
+        DbValue::Float(f) if f.fract() == 0.0 => Some(*f as i64),
+        DbValue::Json(serde_json::Value::Number(n)) => n.as_i64(),
+        _ => None,
+    }
+}
+
+/// Mirror of [`field_as_i64`] for string-valued cells.
+fn field_as_string(v: &DbValue) -> Option<String> {
+    match v {
+        DbValue::String(s) => Some(s.clone()),
+        DbValue::Json(serde_json::Value::String(s)) => Some(s.clone()),
+        _ => None,
+    }
 }
 
 fn json_to_text(value: &Value) -> String {
@@ -435,6 +462,53 @@ mod tests {
         assert!(
             client.captured.lock().unwrap().is_empty(),
             "no candidates → no DB round-trip"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolver_parses_memgraph_style_json_wrapped_cells() {
+        // The neo4rs-backed `MemgraphClient` wraps every scalar in
+        // `DbValue::Json(serde_json::Value)` rather than the native
+        // `DbValue::Int`/`DbValue::String` variants the `MockClient`
+        // uses. Regression test: the resolver must accept both
+        // shapes, otherwise production ingests fail with
+        // "soft-merge query returned non-integer idx: Json(Number(...))"
+        // even though the DB returned a perfectly valid row.
+        let client = Arc::new(MockClient::new());
+        let mut row = Row::default();
+        row.fields.insert(
+            "idx".into(),
+            DbValue::Json(serde_json::json!(0)),
+        );
+        row.fields.insert(
+            "canonical".into(),
+            DbValue::Json(serde_json::json!("общественное согласие")),
+        );
+        client.enqueue(QueryResult {
+            columns: vec!["idx".into(), "canonical".into()],
+            rows: vec![row],
+        });
+
+        let mut b = GraphBuilder::new();
+        b.add_entity(entity_named("общественное соглас."));
+        let mut graph = b.build();
+
+        let embedder = MockEmbedder::new(8);
+        let report = resolve_soft_keys(
+            &mut graph,
+            &embedder,
+            client.as_ref(),
+            &cfg(),
+            "semantic_text",
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(report.rewrites, 1);
+        assert_eq!(
+            graph.entities()[0].properties["name"].value,
+            json!("общественное согласие")
         );
     }
 

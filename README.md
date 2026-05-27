@@ -115,6 +115,13 @@ model code.
   into the graph through a declarative mapping; graph-JSON (`ingest-graph`)
   ingests a compact `{entities, relations}` document directly. Both emit
   deterministic, idempotent `MERGE` batches.
+- **Soft-merge by embedding similarity.** Knowledge-extraction payloads arrive
+  without a stable primary key — entities carry only a `type` and a free-text
+  `name`. `linguagraph` defaults such entities to `PrimaryKey::Soft("name")` and,
+  before MERGE, embeds the `name`, queries Qdrant for same-label neighbours, and
+  rewrites the property to the canonical value of any hit above the configured
+  similarity threshold. The standard MERGE then folds duplicates into existing
+  nodes. See [Soft-merge](#soft-merge-deduplicating-entities-by-similarity).
 - **TOML config + env overrides.** `LINGUAGRAPH__DATABASE__URI=...` overrides
   the file without templating.
 
@@ -394,6 +401,55 @@ graph property type is inferred from the JSON value. `relationships` is accepted
 as an alias for `relations`. This is the shape produced by
 `GraphBuilder::from_json` in the library.
 
+`primary_key` is the field MERGE keys off of. Three forms are accepted:
+
+- `"primary_key": "id"` — equivalent to `{"strict": "id"}`. The named property
+  is required; missing values are a hard ingest error.
+- `{"soft": "name"}` — soft merge against the existing graph by embedding
+  similarity (see below).
+- *omitted entirely* — defaults to `{"soft": "name"}`. This is the shape
+  emitted by `knowledge-prompt`, where the LLM doesn't know any stable
+  identifiers — only a `type` and a `name`.
+
+### Soft-merge: deduplicating entities by similarity
+
+When an entity uses `PrimaryKey::Soft(field)` — either explicitly or because
+the JSON omitted `primary_key` — `Pipeline::ingest` runs a resolver before the
+MERGE batches:
+
+1. The resolver gathers every soft entity and embeds its key property
+   (typically `name`) in one batch through the configured `Embedder`.
+2. For every `(label, field)` group it issues one Cypher round-trip that
+   calls `libqlink.search_labeled` against the same Qdrant collection the
+   `SemanticText` handler writes `name` into (`{collection}__{field}`,
+   optionally folded with the configured `prefix_index`).
+3. For each hit at or above `similarity_threshold`, the resolver reads the
+   matched node's canonical `name` and **rewrites the incoming property in
+   place**.
+4. The standard MERGE then keys off the canonical value, folding the
+   incoming entity into the existing node. The post-MERGE
+   `qlink.insert_labeled` side effect runs as usual, so the vector index
+   stays current.
+
+Configure via `[ingest.soft_merge]` (defaults shown):
+
+```toml
+[ingest.soft_merge]
+# Minimum cosine score for a Qdrant hit to be treated as a duplicate.
+similarity_threshold = 0.85
+# Candidate fan-out per entity. Only the top hit is ever used; the wider
+# fan-out exists so Qdrant's pre-filter doesn't hide it behind a slightly
+# noisier neighbour.
+top_k = 3
+```
+
+Soft-merge is **fail-loud**: a graph that contains soft entities but lacks a
+configured `Embedder` errors out with `SoftMergeBackendUnavailable` instead of
+silently regressing to exact-string MERGE. Soft entities without a value for
+the key field error with `MissingGraphPrimaryKeyValue`. Wire an embedder up via
+`Pipeline::with_embedder` (the CLI does this when `[types.SemanticText]`
+declares an `embedding_model`).
+
 ### Knowledge-extraction prompt
 
 `knowledge-prompt` emits a deterministic LLM prompt whose output is a
@@ -564,6 +620,10 @@ max_tokens = 2048
 max_traversal_depth = 6
 default_limit = 100
 
+[ingest.soft_merge]
+similarity_threshold = 0.85   # cosine cutoff for treating a hit as a duplicate
+top_k = 3                     # Qdrant fan-out per soft entity
+
 [graph_specification]
 cache_path = ".linguagraph/graph_specification.json"
 embedding_model = "models/bge-small.gguf"
@@ -585,8 +645,8 @@ collection = "companies"
 top_k = 20
 ```
 
-`[llm]`, `[query]`, `[graph_specification]`, `[prompt]` and `[types.*]` are all
-optional and fall back to the defaults shown above. Any field can be overridden via
+`[llm]`, `[query]`, `[graph_specification]`, `[prompt]`, `[ingest.soft_merge]`
+and `[types.*]` are all optional and fall back to the defaults shown above. Any field can be overridden via
 `LINGUAGRAPH__SECTION__FIELD`, e.g.:
 
 ```bash
@@ -633,7 +693,10 @@ use linguagraph::graph::GraphBuilder;
 
 let graph = GraphBuilder::from_json(raw_json)?;
 let summary = pipeline.ingest(&graph).await?;
-println!("{} node rows, {} relation rows", summary.node_rows, summary.relation_rows);
+println!(
+    "{} node rows, {} relation rows in {} ms",
+    summary.node_rows, summary.relation_rows, summary.elapsed_ms,
+);
 ```
 
 ## Prompt generation

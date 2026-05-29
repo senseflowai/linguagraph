@@ -267,6 +267,28 @@ impl GraphSpecification {
         self
     }
 
+    /// Insert an entity description only when the entity is absent or its
+    /// current description is empty. Existing embeddings are never touched,
+    /// so this is safe to call after `compute()`.
+    pub fn insert_entity_description(&mut self, name: &str, description: &str) {
+        match self.records.get_mut(name) {
+            Some(SpecRecord::Entity(e)) if e.description.is_empty() => {
+                e.description = description.to_string();
+            }
+            None => {
+                self.records.insert(
+                    name.to_string(),
+                    SpecRecord::Entity(EntitySpecRecord {
+                        name: name.to_string(),
+                        description: description.to_string(),
+                        embedding: None,
+                    }),
+                );
+            }
+            _ => {}
+        }
+    }
+
     pub fn add_entity(
         &mut self,
         name: impl Into<String>,
@@ -726,5 +748,46 @@ mod tests {
         let matches = spec.find("human", 0.0, &embedder, None, 0.0).unwrap();
 
         assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn insert_entity_description_adds_absent_entity() {
+        let mut spec = GraphSpecification::new();
+        spec.insert_entity_description("LegalNorm", "A rule or provision.");
+        let entity = spec.get_entity("LegalNorm").unwrap();
+        assert_eq!(entity.description, "A rule or provision.");
+        assert!(entity.embedding.is_none());
+    }
+
+    #[test]
+    fn insert_entity_description_fills_empty_description() {
+        let mut spec = GraphSpecification::new().with_entity("Contract", "");
+        spec.insert_entity_description("Contract", "An agreement between parties.");
+        assert_eq!(
+            spec.get_entity("Contract").unwrap().description,
+            "An agreement between parties."
+        );
+    }
+
+    #[test]
+    fn insert_entity_description_does_not_overwrite_existing_description() {
+        let mut spec = GraphSpecification::new().with_entity("Person", "Original description.");
+        spec.insert_entity_description("Person", "New description.");
+        assert_eq!(
+            spec.get_entity("Person").unwrap().description,
+            "Original description."
+        );
+    }
+
+    #[test]
+    fn insert_entity_description_does_not_clear_existing_embedding() {
+        let mut spec = GraphSpecification::new().with_entity("Person", "A human.");
+        let embedder = MockEmbedder::new(4);
+        spec.compute(&embedder).unwrap();
+        assert!(spec.get_entity("Person").unwrap().embedding.is_some());
+
+        spec.insert_entity_description("Person", "Attempted overwrite.");
+        // description unchanged → embedding preserved
+        assert!(spec.get_entity("Person").unwrap().embedding.is_some());
     }
 }

@@ -175,7 +175,7 @@ const KEYWORD_NAMES: &[&str] = &[
 ];
 
 /// Names that mark a primary-key candidate.
-const ID_NAMES: &[&str] = &["id", "_id", "uuid", "guid", "key", "pk"];
+const ID_NAMES: &[&str] = &["id", "_id", "uuid", "guid", "key", "pk", "primary_key"];
 
 /// Length above which a string is presumed to be prose.
 const SEMANTIC_TEXT_LEN_THRESHOLD: f64 = 30.0;
@@ -371,6 +371,8 @@ mod tests {
         assert!(is_id_field("uuid"));
         assert!(is_id_field("user_id"));
         assert!(is_id_field("userId"));
+        assert!(is_id_field("entity_id"), "ends with _id suffix");
+        assert!(is_id_field("primary_key"), "explicit entry in ID_NAMES");
         assert!(!is_id_field("identity"));
         assert!(!is_id_field("invalid"));
     }

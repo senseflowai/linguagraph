@@ -12,7 +12,7 @@
 
 use std::fmt::Write;
 
-use super::ontology::{DomainOntology, EntityTypeSpec, RelationTypeSpec};
+use super::ontology::{DomainOntology, EntityTypeSpec, OntologyPropertyType, RelationTypeSpec};
 
 /// Placeholder substituted with the active domain name when the prompt
 /// is rendered. Present in the static section constants
@@ -29,10 +29,11 @@ pub const DOMAIN_PLACEHOLDER: &str = "{domain}";
 ///
 /// The returned string is the *complete* prompt — system rules first,
 /// then the text fragment under a clearly-labelled section. The LLM is
-/// instructed to output **only** JSON of the shape:
+/// instructed to output **only** JSON. When entity types define `properties`,
+/// the shape includes an optional `properties` dict:
 ///
 /// ```json
-/// {"entities":[{"id":"e1","type":"...","name":"..."}],
+/// {"entities":[{"id":"e1","type":"...","name":"...","properties":{"p1":"..."}}],
 ///  "relations":[{"from":"e1","to":"e2","type":"..."}]}
 /// ```
 ///
@@ -73,7 +74,7 @@ pub fn render_knowledge_extract_prompt(
     out.push_str("\n\n");
     out.push_str(ANTI_HALLUCINATION_SECTION);
     out.push_str("\n\n");
-    out.push_str(OUTPUT_SECTION);
+    render_output_section(&mut out, &ontology.entity_types);
     out.push_str("\n\n");
     out.push_str(SELF_VALIDATION_SECTION);
     out.push_str("\n\n");
@@ -109,6 +110,35 @@ fn render_entity_list(out: &mut String, types: &[EntityTypeSpec]) {
                 let _ = writeln!(out, "* `{}`", t.name);
             }
         }
+        if !t.properties.is_empty() {
+            let _ = writeln!(out, "  Properties:");
+            for p in &t.properties {
+                let type_str = match p.property_type {
+                    OntologyPropertyType::String => "string",
+                    OntologyPropertyType::Int => "int",
+                    OntologyPropertyType::Float => "float",
+                    OntologyPropertyType::Bool => "bool",
+                };
+                let req = if p.required { " (required)" } else { " (optional)" };
+                match &p.description {
+                    Some(d) => {
+                        let _ = writeln!(out, "  * `{}` ({type_str}){req} — {d}", p.name);
+                    }
+                    None => {
+                        let _ = writeln!(out, "  * `{}` ({type_str}){req}", p.name);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn render_output_section(out: &mut String, entity_types: &[EntityTypeSpec]) {
+    let has_props = entity_types.iter().any(|t| !t.properties.is_empty());
+    if has_props {
+        out.push_str(OUTPUT_SECTION_WITH_PROPERTIES);
+    } else {
+        out.push_str(OUTPUT_SECTION);
     }
 }
 
@@ -289,6 +319,59 @@ Return ONLY valid JSON:
   * entities
   * relations";
 
+pub const OUTPUT_SECTION_WITH_PROPERTIES: &str = "# 🔹 OUTPUT MODE (CRITICAL)
+
+You MUST output ONLY a valid JSON object.
+
+- Output MUST start with `{` and end with `}`
+- No text before or after JSON
+- No markdown
+- No code fences
+- No explanations
+
+Return ONLY valid JSON:
+
+```json
+{
+  \"entities\": [
+    {
+      \"id\": \"e1\",
+      \"type\": \"TypeName\",
+      \"name\": \"canonical entity name\",
+      \"properties\": {
+        \"string_prop\": \"value\",
+        \"int_prop\": 42,
+        \"float_prop\": 3.14,
+        \"bool_prop\": true
+      }
+    }
+  ],
+  \"relations\": [
+    {
+      \"from\": \"e1\",
+      \"to\": \"e2\",
+      \"type\": \"RELATION_TYPE\"
+    }
+  ]
+}
+```
+
+## Property Rules
+
+* For entity types that define properties: populate a `\"properties\"` object with the declared keys
+* Use `null` for optional properties you cannot find in the text
+* Do NOT invent property keys that are not declared in the ontology
+* Property value types MUST match the declared type (string → `\"...\"`, int → integer, float → number, bool → `true`/`false`)
+
+## Constraints
+
+* No extra fields outside declared properties
+* No comments
+* No markdown
+* No explanations
+* Top-level entity keys MUST be exactly: `id`, `type`, `name` (and `properties` when applicable)
+* Top-level relation keys MUST be exactly: `from`, `to`, `type`";
+
 pub const SELF_VALIDATION_SECTION: &str = "# 🔹 SELF-VALIDATION (MANDATORY)
 
 Before output, you MUST:
@@ -407,5 +490,67 @@ mod tests {
         let frag = "raw text including {domain} literally";
         let p = render_knowledge_extract_prompt(frag, "legal", &DomainOntology::default());
         assert!(p.contains("raw text including {domain} literally"));
+    }
+
+    #[test]
+    fn property_specs_appear_in_entity_listing() {
+        use super::super::ontology::{OntologyPropertyType, PropertySpec};
+        let onto = DomainOntology {
+            entity_types: vec![EntityTypeSpec {
+                name: "Person".to_string(),
+                description: None,
+                properties: vec![
+                    PropertySpec {
+                        name: "first_name".to_string(),
+                        description: None,
+                        property_type: OntologyPropertyType::String,
+                        required: true,
+                    },
+                    PropertySpec {
+                        name: "age".to_string(),
+                        description: Some("Age in years.".to_string()),
+                        property_type: OntologyPropertyType::Int,
+                        required: false,
+                    },
+                ],
+            }],
+            relation_types: vec![],
+        };
+        let p = render_knowledge_extract_prompt("text", "demo", &onto);
+        assert!(p.contains("* `Person`"));
+        assert!(p.contains("* `first_name` (string) (required)"));
+        assert!(p.contains("* `age` (int) (optional) — Age in years."));
+    }
+
+    #[test]
+    fn output_section_with_properties_used_when_specs_present() {
+        use super::super::ontology::{OntologyPropertyType, PropertySpec};
+        let onto = DomainOntology {
+            entity_types: vec![EntityTypeSpec {
+                name: "Invoice".to_string(),
+                description: None,
+                properties: vec![PropertySpec {
+                    name: "amount".to_string(),
+                    description: None,
+                    property_type: OntologyPropertyType::Float,
+                    required: true,
+                }],
+            }],
+            relation_types: vec![],
+        };
+        let p = render_knowledge_extract_prompt("text", "demo", &onto);
+        assert!(p.contains("\"properties\""));
+        assert!(p.contains("Property Rules"));
+    }
+
+    #[test]
+    fn output_section_without_properties_when_no_specs() {
+        let onto = DomainOntology {
+            entity_types: vec![EntityTypeSpec::new("Foo")],
+            relation_types: vec![],
+        };
+        let p = render_knowledge_extract_prompt("text", "demo", &onto);
+        assert!(!p.contains("Property Rules"));
+        assert!(p.contains("\"name\": \"string\""));
     }
 }

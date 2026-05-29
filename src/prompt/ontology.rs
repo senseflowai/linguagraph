@@ -12,6 +12,29 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+/// Type of a property defined in the ontology.
+/// Maps to LinguaGraph's `PropertyType`: `String` → `Text` (embedded),
+/// `Int`/`Float` → `Number`, `Bool` → `Boolean`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OntologyPropertyType {
+    String,
+    Int,
+    Float,
+    Bool,
+}
+
+/// One typed property that an entity of a given type may carry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PropertySpec {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub property_type: OntologyPropertyType,
+    #[serde(default)]
+    pub required: bool,
+}
+
 /// One allowed entity type the LLM may emit.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EntityTypeSpec {
@@ -20,6 +43,9 @@ pub struct EntityTypeSpec {
     /// Optional one-line description shown alongside the name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Typed properties the LLM should extract for entities of this type.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub properties: Vec<PropertySpec>,
 }
 
 impl EntityTypeSpec {
@@ -27,6 +53,7 @@ impl EntityTypeSpec {
         Self {
             name: name.into(),
             description: None,
+            properties: vec![],
         }
     }
 
@@ -34,6 +61,7 @@ impl EntityTypeSpec {
         Self {
             name: name.into(),
             description: Some(desc.into()),
+            properties: vec![],
         }
     }
 }
@@ -179,6 +207,39 @@ mod tests {
             back.get("demo").unwrap().entity_types[0],
             EntityTypeSpec::with_description("Foo", "A foo.")
         );
+    }
+
+    #[test]
+    fn entity_type_spec_with_properties_round_trips() {
+        let spec = EntityTypeSpec {
+            name: "Person".to_string(),
+            description: Some("A human being.".to_string()),
+            properties: vec![
+                PropertySpec {
+                    name: "first_name".to_string(),
+                    description: None,
+                    property_type: OntologyPropertyType::String,
+                    required: true,
+                },
+                PropertySpec {
+                    name: "age".to_string(),
+                    description: Some("Age in years.".to_string()),
+                    property_type: OntologyPropertyType::Int,
+                    required: false,
+                },
+            ],
+        };
+        let raw = serde_json::to_string(&spec).unwrap();
+        let back: EntityTypeSpec = serde_json::from_str(&raw).unwrap();
+        assert_eq!(back, spec);
+    }
+
+    #[test]
+    fn entity_type_spec_without_properties_deserializes_empty_vec() {
+        // Old JSON rows without "properties" must deserialize cleanly.
+        let raw = r#"{"name":"Foo","description":"bar"}"#;
+        let spec: EntityTypeSpec = serde_json::from_str(raw).unwrap();
+        assert!(spec.properties.is_empty());
     }
 
     #[test]

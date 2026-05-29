@@ -93,6 +93,11 @@ pub struct EntityInput {
     #[serde(rename = "type")]
     pub kind: String,
     pub name: String,
+    /// Additional typed properties from ontology-driven LLM extraction.
+    /// String values are embedded as `SemanticText`; numbers and bools
+    /// are stored as plain literals.
+    #[serde(default)]
+    pub properties: Option<HashMap<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -266,6 +271,58 @@ pub fn build_document_plan(
             }
             // Preserve LLM-original type wording (may include spaces/etc).
             ent_props.insert("type".to_string(), Literal::String(ent.kind.clone()));
+
+            // Additional typed properties from ontology-driven extraction.
+            if let Some(props) = &ent.properties {
+                let mut sorted_keys: Vec<&String> = props.keys().collect();
+                sorted_keys.sort();
+                for prop_name in &sorted_keys {
+                    match &props[*prop_name] {
+                        serde_json::Value::String(s) => {
+                            let lit = apply_semantic_text(
+                                &semantic_handler,
+                                &sanitized,
+                                "id",
+                                &entity_key,
+                                prop_name,
+                                s,
+                                effects,
+                            )?;
+                            if let Some(lit) = lit {
+                                ent_props.insert((*prop_name).clone(), lit);
+                            }
+                        }
+                        serde_json::Value::Number(n) => {
+                            if let Some(f) = n.as_f64() {
+                                ent_props.insert(
+                                    (*prop_name).clone(),
+                                    Literal::Float(f),
+                                );
+                            }
+                        }
+                        serde_json::Value::Bool(b) => {
+                            ent_props.insert((*prop_name).clone(), Literal::Bool(*b));
+                        }
+                        _ => {} // null / array / object — skip
+                    }
+                }
+
+                // Canonical embedding: full entity profile for traversal search.
+                let canonical = build_canonical_text(&ent.kind, &ent.name, props);
+                let canon_lit = apply_semantic_text(
+                    &semantic_handler,
+                    &sanitized,
+                    "id",
+                    &entity_key,
+                    "_canonical",
+                    &canonical,
+                    effects,
+                )?;
+                if let Some(lit) = canon_lit {
+                    ent_props.insert("_canonical".to_string(), lit);
+                }
+            }
+
             entities_by_label
                 .entry(sanitized.clone())
                 .or_default()
@@ -496,6 +553,27 @@ fn is_reserved_label(s: &str) -> bool {
 
 fn is_reserved_relation(s: &str) -> bool {
     matches!(s, HAS_CHUNK_REL | MENTIONS_REL)
+}
+
+/// Build a canonical text representation of an entity for whole-profile embedding.
+/// Format: `type: {kind}\nname: {name}\n{prop}: {val}\n...` (properties sorted alphabetically).
+/// This deterministic string is used as `_canonical` for traversal search and soft-merge.
+fn build_canonical_text(
+    kind: &str,
+    name: &str,
+    props: &HashMap<String, serde_json::Value>,
+) -> String {
+    let mut lines = vec![format!("type: {kind}"), format!("name: {name}")];
+    let mut keys: Vec<&String> = props.keys().collect();
+    keys.sort();
+    for k in keys {
+        let v = match &props[k] {
+            serde_json::Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        lines.push(format!("{k}: {v}"));
+    }
+    lines.join("\n")
 }
 
 /// Deterministic id for a chunk node.

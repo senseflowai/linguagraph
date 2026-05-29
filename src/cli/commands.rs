@@ -215,25 +215,6 @@ pub enum Command {
         #[arg(long)]
         no_summary: bool,
     },
-    /// Ingest a document JSON (`{document: {name, path, chunks: [...]}}`)
-    /// directly via the document-shaped ingestion path. Embeds chunk
-    /// text and writes the Document/Chunk/Entity graph to the database.
-    IngestDocument {
-        /// Path to the document JSON file.
-        path: PathBuf,
-        /// Maximum rows per UNWIND batch.
-        #[arg(long, default_value_t = 1000)]
-        batch_size: usize,
-    },
-    /// Like `ingest-document` but prints the generated Cypher batches
-    /// instead of executing them. Skips the embedding side-effects
-    /// (which require a live embedder + Qdrant) so the output is
-    /// purely declarative.
-    IngestDocumentCypher {
-        path: PathBuf,
-        #[arg(long, default_value_t = 1000)]
-        batch_size: usize,
-    },
     /// Delete every node belonging to a single ingest `Source`:
     /// chunks attached via `:part_of` (always — they're 1:1 with the
     /// source) and user entities whose only `:mention` link was to
@@ -352,12 +333,6 @@ pub async fn run(cli: Cli) -> Result<()> {
             no_examples,
             no_summary,
         } => cmd_generate_prompt(&cli.config, path, hints, prefer, no_examples, no_summary).await,
-        Command::IngestDocument { path, batch_size } => {
-            cmd_ingest_document(&cli.config, path, batch_size).await
-        }
-        Command::IngestDocumentCypher { path, batch_size } => {
-            cmd_ingest_document_cypher(&cli.config, path, batch_size).await
-        }
         Command::KnowledgePrompt {
             path,
             domain,
@@ -839,32 +814,6 @@ async fn cmd_ingest_graph(
     let summary = pipeline.ingest(&graph).await?;
     println!("{}", serde_json::to_string_pretty(&summary)?);
     Ok(())
-}
-
-async fn cmd_ingest_document(
-    config_path: &std::path::Path,
-    path: PathBuf,
-    batch_size: usize,
-) -> Result<()> {
-    let _ = (config_path, path, batch_size);
-    Err(crate::error::Error::Ingest(
-        crate::ingest::IngestError::Type(
-            "document ingest was removed; build a graph::Graph and call Pipeline::ingest(&graph)"
-                .into(),
-        ),
-    ))
-}
-
-async fn cmd_ingest_document_cypher(
-    config_path: &std::path::Path,
-    path: PathBuf,
-    batch_size: usize,
-) -> Result<()> {
-    let _ = (config_path, path, batch_size);
-    Err(crate::error::Error::Ingest(crate::ingest::IngestError::Type(
-        "document ingest-cypher was removed; build a graph::Graph and call Pipeline::compile_insert(&graph)"
-            .into(),
-    )))
 }
 
 async fn cmd_delete_by_source(

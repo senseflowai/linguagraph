@@ -1,12 +1,9 @@
 //! Prompt renderer for the LLM **knowledge extractor**.
 //!
-//! Given a text fragment and a [`DomainOntology`], produces a
-//! complete system+user prompt instructing the LLM to extract a list of
-//! entities and relations in the *exact* JSON shape consumed by
-//! [`crate::ingest::ChunkInput::entities`] /
-//! [`crate::ingest::ChunkInput::relations`]. The caller can then drop
-//! the LLM output straight into a [`crate::ingest::DocumentInput`] and
-//! feed it to [`crate::core::Pipeline::ingest_document`].
+//! Given a text fragment and a [`DomainOntology`], produces a complete
+//! system+user prompt instructing the LLM to extract entities and relations
+//! as JSON. The caller parses the JSON output, converts it to a
+//! [`crate::graph::Graph`], and feeds it to [`crate::core::Pipeline::ingest`].
 //!
 //! Pure function — no I/O.
 
@@ -36,9 +33,6 @@ pub const DOMAIN_PLACEHOLDER: &str = "{domain}";
 /// {"entities":[{"id":"e1","type":"...","name":"...","properties":{"p1":"..."}}],
 ///  "relations":[{"from":"e1","to":"e2","type":"..."}]}
 /// ```
-///
-/// which parses directly as `(Vec<EntityInput>, Vec<RelationInput>)`
-/// for a [`crate::ingest::ChunkInput`].
 pub fn render_knowledge_extract_prompt(
     fragment: &str,
     domain: &str,

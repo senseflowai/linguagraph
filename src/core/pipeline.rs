@@ -221,6 +221,10 @@ impl Pipeline {
         self
     }
 
+    pub fn embedder(&self) -> Option<SharedEmbedder> {
+        self.embedder.clone()
+    }
+
     /// Pre-load the graph specification snapshot used to auto-resolve
     /// filter types.
     pub fn with_graph_specification(self, specification: Arc<GraphSpecification>) -> Self {

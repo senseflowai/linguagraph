@@ -11,6 +11,11 @@ use crate::embeddings::{SharedEmbedder, SharedReranker};
 use crate::graph::{GraphSpecification, PropertySpecRecord};
 use crate::types::TypeRegistry;
 
+/// Properties added by the senseflow ingestion pipeline that carry no
+/// semantic meaning for DSL query construction and should be hidden from
+/// the schema block shown to the LLM.
+const SCHEMA_HIDDEN_PROPS: &[&str] = &["entity_id", "primary_key"];
+
 #[derive(Debug, Clone)]
 pub struct PromptSchemaSelection {
     /// Maximum graph-schema relationship hops to include around the
@@ -274,6 +279,7 @@ fn render_props(owner: &str, props: &[Property], spec: Option<&GraphSpecificatio
     }
     let inner: Vec<String> = props
         .iter()
+        .filter(|p| !SCHEMA_HIDDEN_PROPS.contains(&p.name.as_str()))
         .map(|p| {
             let property_spec = spec.and_then(|s| s.get_property(owner, &p.name));
             // Property header shape:
@@ -297,6 +303,9 @@ fn render_props(owner: &str, props: &[Property], spec: Option<&GraphSpecificatio
             base
         })
         .collect();
+    if inner.is_empty() {
+        return String::new();
+    }
     format!(" {{ {} }}", inner.join(", "))
 }
 
@@ -581,5 +590,29 @@ mod tests {
         assert!(!prompt.contains("Invoice"));
         assert!(!prompt.contains("HAS_USER"));
         assert!(!prompt.contains("BILLED_BY"));
+    }
+
+    #[test]
+    fn system_properties_are_excluded_from_schema_prompt() {
+        let schema = GraphSchema {
+            nodes: vec![NodeKind {
+                label: "Document".into(),
+                properties: vec![
+                    Property { name: "entity_id".into(), ty: PT::String },
+                    Property { name: "primary_key".into(), ty: PT::String },
+                    Property { name: "title".into(), ty: PT::String },
+                    Property { name: "created_at".into(), ty: PT::Datetime },
+                    // Generic "id" field from a user-defined schema is NOT hidden.
+                    Property { name: "doc_number".into(), ty: PT::String },
+                ],
+            }],
+            relationships: vec![],
+        };
+        let prompt = generate_system_prompt(&schema, &PromptOptions::default());
+        assert!(prompt.contains("title"), "user property must appear");
+        assert!(prompt.contains("created_at"), "user property must appear");
+        assert!(prompt.contains("doc_number"), "user property must appear");
+        assert!(!prompt.contains("entity_id"), "entity_id must be excluded");
+        assert!(!prompt.contains("primary_key"), "primary_key must be excluded");
     }
 }

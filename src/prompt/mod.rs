@@ -31,7 +31,8 @@ pub use generator::{
 };
 pub use knowledge::{render_knowledge_extract_prompt, DOMAIN_PLACEHOLDER};
 pub use ontology::{
-    DomainOntology, EntityTypeSpec, OntologyCatalog, OntologyError, RelationTypeSpec,
+    DomainOntology, EntityTypeSpec, OntologyCatalog, OntologyError, OntologyPropertyType,
+    PropertySpec, RelationTypeSpec,
 };
 pub use schema::{GraphSchema, NodeKind, Property, PropertyType, RelKind};
 pub use storage::{

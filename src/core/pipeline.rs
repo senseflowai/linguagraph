@@ -10,7 +10,7 @@ use crate::db::{GraphClient, QueryResult, Row, Value as DbValue};
 use crate::dsl::{Direction as DslDirection, DslQuery, TraversalQuery};
 use crate::embeddings::SharedEmbedder;
 use crate::error::Result;
-use crate::graph::{Graph, GraphSpecification, GraphSpecificationStorage};
+use crate::graph::{Graph, OntologyCatalog, OntologyCatalogStorage};
 use crate::ingest::{self, soft_merge, DeletePlan, DiscoveredNodes, IngestError, PlannerOptions};
 use crate::types::{handlers, SharedRegistry, SideEffect, SideEffectQueue};
 
@@ -26,7 +26,7 @@ pub struct Pipeline {
     max_depth: u32,
     default_limit: u32,
     ingest_batch_size: usize,
-    graph_specification_storage: Option<Arc<dyn GraphSpecificationStorage>>,
+    ontology_catalog_storage: Option<Arc<dyn OntologyCatalogStorage>>,
     /// Registry of [`crate::types::TypeHandler`] instances. Defaults to
     /// an empty registry so plain (untyped) DSL queries don't need any
     /// configuration; the CLI / library callers register handlers via
@@ -36,10 +36,11 @@ pub struct Pipeline {
     /// pipeline). Optional: when not configured, queries that reference
     /// types requiring an embedder fail at lowering time, not at ingest.
     embedder: Option<SharedEmbedder>,
-    /// In-memory snapshot of [`GraphSpecification`] consulted by
+    /// In-memory snapshot of [`OntologyCatalog`] consulted by
     /// [`Self::lower`] to auto-resolve filter types when the DSL omits
-    /// `"type"`.
-    graph_specification: Arc<RwLock<Option<Arc<GraphSpecification>>>>,
+    /// `"type"`, and by [`Self::live_schema`] to enrich introspection
+    /// results with descriptions.
+    ontology_catalog: Arc<RwLock<Option<Arc<OntologyCatalog>>>>,
     /// Optional Cypher label stamped onto every ingested entity and
     /// onto every node in lowered queries. Lets a caller scope inserts
     /// and reads to a tenant, dataset or document without having to
@@ -71,8 +72,8 @@ impl std::fmt::Debug for Pipeline {
             .field("default_limit", &self.default_limit)
             .field("ingest_batch_size", &self.ingest_batch_size)
             .field(
-                "graph_specification_storage",
-                &self.graph_specification_storage.is_some(),
+                "ontology_catalog_storage",
+                &self.ontology_catalog_storage.is_some(),
             )
             .field("registry", &self.registry)
             .field("embedder", &self.embedder.is_some())
@@ -132,14 +133,14 @@ impl Pipeline {
             max_depth: config.query.max_traversal_depth,
             default_limit: config.query.default_limit,
             ingest_batch_size: 1000,
-            graph_specification_storage: None,
+            ontology_catalog_storage: None,
             // Default registry contains the built-in scalar parsers.
             // Graph `Text` properties route through `SemanticText`, so
             // callers ingesting text-rich graphs should register that
             // handler via [`Self::with_registry`].
             registry: Arc::new(handlers::core_registry()),
             embedder: None,
-            graph_specification: Arc::new(RwLock::new(None)),
+            ontology_catalog: Arc::new(RwLock::new(None)),
             prefix_label: None,
             prefix_index: None,
             semantic_collection,
@@ -187,17 +188,18 @@ impl Pipeline {
         self
     }
 
-    /// Attach graph specification storage for query-time type inference.
-    pub fn with_graph_specification_storage(
+    /// Attach an ontology-catalog storage for query-time type inference
+    /// and live-schema enrichment.
+    pub fn with_ontology_catalog_storage(
         mut self,
-        storage: Arc<dyn GraphSpecificationStorage>,
+        storage: Arc<dyn OntologyCatalogStorage>,
     ) -> Self {
-        self.graph_specification_storage = Some(storage);
+        self.ontology_catalog_storage = Some(storage);
         self
     }
 
-    pub fn graph_specification_storage(&self) -> Option<&Arc<dyn GraphSpecificationStorage>> {
-        self.graph_specification_storage.as_ref()
+    pub fn ontology_catalog_storage(&self) -> Option<&Arc<dyn OntologyCatalogStorage>> {
+        self.ontology_catalog_storage.as_ref()
     }
 
     /// Attach a type-handler registry. Without one, typed DSL filters
@@ -225,38 +227,42 @@ impl Pipeline {
         self.embedder.clone()
     }
 
-    /// Pre-load the graph specification snapshot used to auto-resolve
-    /// filter types.
-    pub fn with_graph_specification(self, specification: Arc<GraphSpecification>) -> Self {
+    /// Pre-load the ontology-catalog snapshot used to auto-resolve
+    /// filter types and enrich live schema with descriptions.
+    pub fn with_ontology_catalog(self, catalog: Arc<OntologyCatalog>) -> Self {
         *self
-            .graph_specification
+            .ontology_catalog
             .write()
-            .expect("graph specification lock poisoned") = Some(specification);
+            .expect("ontology catalog lock poisoned") = Some(catalog);
         self
     }
 
-    /// Eagerly load the graph specification snapshot from configured storage.
+    /// Eagerly load the ontology-catalog snapshot from configured storage.
     /// No-op when no storage is set.
-    pub async fn load_graph_specification(&self) -> Result<()> {
-        if let Some(storage) = &self.graph_specification_storage {
-            let specification = storage.load().await?;
+    pub async fn load_ontology_catalog(&self) -> Result<()> {
+        if let Some(storage) = &self.ontology_catalog_storage {
+            let catalog = storage.load().await?;
             *self
-                .graph_specification
+                .ontology_catalog
                 .write()
-                .expect("graph specification lock poisoned") = Some(Arc::new(specification));
+                .expect("ontology catalog lock poisoned") = Some(Arc::new(catalog));
         }
         Ok(())
     }
 
-    /// Snapshot of the graph specification currently informing query lowering.
-    pub fn graph_specification(&self) -> Option<Arc<GraphSpecification>> {
-        self.graph_specification
+    /// Snapshot of the ontology catalog currently informing query
+    /// lowering and live-schema enrichment.
+    pub fn ontology_catalog(&self) -> Option<Arc<OntologyCatalog>> {
+        self.ontology_catalog
             .read()
-            .expect("graph specification lock poisoned")
+            .expect("ontology catalog lock poisoned")
             .clone()
     }
 
-    /// Fetch the live graph schema from the underlying client.
+    /// Fetch the live graph schema from the underlying client and, when
+    /// an [`OntologyCatalog`] snapshot is loaded, enrich every node and
+    /// relationship with descriptions (and domain labels resolved from
+    /// the Cypher labels the planner stamps at ingest time).
     ///
     /// Convenience pass-through to [`GraphClient::schema`] so callers
     /// can drive [`crate::prompt::generate_system_prompt`] without
@@ -267,23 +273,27 @@ impl Pipeline {
         &self,
         filter: &[S],
     ) -> Result<crate::prompt::GraphSchema> {
-        Ok(self
+        let mut schema = self
             .client
             .schema()
             .await?
-            .filter_node_labels_containing(filter))
+            .filter_node_labels_containing(filter);
+        if let Some(catalog) = self.ontology_catalog() {
+            catalog.enrich(&mut schema);
+        }
+        Ok(schema)
     }
 
     // ── Read path ───────────────────────────────────────────────────────────
 
     /// Lower a DSL document to the typed AST. Pure; no I/O.
     ///
-    /// When a [`GraphSpecification`] snapshot is loaded, filters that
+    /// When an [`OntologyCatalog`] snapshot is loaded, filters that
     /// omit `"type"` are auto-resolved against it: if the property's
-    /// type is `SemanticText`, the SemanticText handler is selected
-    /// without any DSL change.
+    /// type is `Text` (SemanticText), the SemanticText handler is
+    /// selected without any DSL change.
     pub fn lower(&self, dsl: DslQuery) -> Result<ReadQuery> {
-        let graph_specification = self.graph_specification();
+        let catalog = self.ontology_catalog();
         // The DSL's own `prefix_label` / `prefix_index` win over the
         // Pipeline's configured defaults: a per-query override (e.g.
         // for a one-off search across all tenants) can drop or replace
@@ -303,7 +313,7 @@ impl Pipeline {
             dsl,
             self.max_depth,
             &self.registry,
-            graph_specification.as_deref(),
+            catalog.as_deref(),
         )?;
         if q.limit.is_none() {
             q.limit = Some(self.default_limit);
@@ -643,7 +653,7 @@ impl Pipeline {
         let all_ids = discovered.all_ids();
 
         // ── qlink cleanup: one call per collection, full id list. ────
-        let collections = plan.qlink_collections(self.graph_specification().as_deref());
+        let collections = plan.qlink_collections(self.ontology_catalog().as_deref());
         for coll in &collections {
             let q = plan.qlink_delete_batch_query(coll, &all_ids);
             let _ = self.client.execute(&q).await?;

@@ -20,7 +20,7 @@ pub mod schema;
 use thiserror::Error;
 
 pub use extractor::{extract, EntityRow, Extracted, ExtractedEntity};
-pub use graph::{to_graph, MappedGraph};
+pub use graph::{to_graph, MappedGraph, DEFAULT_MAPPING_DOMAIN};
 pub use path::{JsonPath, PathError};
 pub use schema::{EntityMapping, Mapping, PropertyMapping, RelationshipMapping};
 

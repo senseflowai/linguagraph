@@ -38,6 +38,21 @@ fn matches_label_filter<S: AsRef<str>>(label: &str, filter: &[S]) -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeKind {
     pub label: String,
+    /// Domain label resolved against an `OntologyCatalog` during
+    /// enrichment. Set when one of `extra_labels` matches a known
+    /// domain name.
+    #[serde(default)]
+    pub domain: Option<String>,
+    /// All Cypher labels seen on sample nodes of this kind, minus
+    /// `label`. Carries prefix (tenant) labels, domain labels, and any
+    /// other labels stamped at ingestion. Consumed by enrichment;
+    /// callers normally read `domain` instead.
+    #[serde(default)]
+    pub extra_labels: Vec<String>,
+    /// Description resolved from an `OntologyCatalog`, when one is
+    /// attached to the pipeline.
+    #[serde(default)]
+    pub description: Option<String>,
     #[serde(default)]
     pub properties: Vec<Property>,
 }
@@ -45,6 +60,13 @@ pub struct NodeKind {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelKind {
     pub label: String,
+    /// Domain of the relation, inferred from its endpoint nodes or set
+    /// explicitly during enrichment.
+    #[serde(default)]
+    pub domain: Option<String>,
+    /// Description resolved from an `OntologyCatalog`.
+    #[serde(default)]
+    pub description: Option<String>,
     #[serde(default)]
     pub from: Option<String>,
     #[serde(default)]
@@ -57,6 +79,9 @@ pub struct RelKind {
 pub struct Property {
     pub name: String,
     pub ty: PropertyType,
+    /// Description resolved from an `OntologyCatalog`.
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -78,6 +103,9 @@ mod tests {
     fn node(label: &str) -> NodeKind {
         NodeKind {
             label: label.to_string(),
+            domain: None,
+            extra_labels: Vec::new(),
+            description: None,
             properties: Vec::new(),
         }
     }
@@ -85,6 +113,8 @@ mod tests {
     fn rel(label: &str, from: Option<&str>, to: Option<&str>) -> RelKind {
         RelKind {
             label: label.to_string(),
+            domain: None,
+            description: None,
             from: from.map(str::to_string),
             to: to.map(str::to_string),
             properties: Vec::new(),

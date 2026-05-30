@@ -25,7 +25,7 @@ use thiserror::Error;
 use crate::ast::query::Literal;
 use crate::builder::CypherQuery;
 use crate::graph::{
-    GraphSpecification, PropertyType, SpecRecord, CHUNK_LABEL, MENTION_REL, PART_OF_REL,
+    OntologyCatalog, OntologyPropertyType, CHUNK_LABEL, MENTION_REL, PART_OF_REL,
     SOURCE_LABEL,
 };
 
@@ -210,23 +210,24 @@ impl DeletePlan {
     ///
     /// The `SemanticText` handler stores one collection per property
     /// name (`{prefix_index}__{base}__{property}`). We pull every
-    /// known text property name from the [`GraphSpecification`] (the
-    /// cache of mapping-time type info) and union it with the two
-    /// built-in property names — `name` (Source) and `text` (Chunk) —
-    /// so the deletion is correct even when the spec cache is missing
-    /// or stale for built-ins.
-    pub fn qlink_collections(&self, spec: Option<&GraphSpecification>) -> Vec<String> {
+    /// known semantic-text property name from the [`OntologyCatalog`]
+    /// and union it with the two built-in property names — `name`
+    /// (Source) and `text` (Chunk) — so the deletion is correct even
+    /// when the catalog snapshot is missing or stale for built-ins.
+    pub fn qlink_collections(&self, catalog: Option<&OntologyCatalog>) -> Vec<String> {
         let mut props: BTreeSet<String> = BTreeSet::new();
         // Built-ins. Source.name and Chunk.text are always embedded
         // when a SemanticText handler is registered.
         props.insert("name".into());
         props.insert("text".into());
 
-        if let Some(spec) = spec {
-            for record in spec.records().values() {
-                if let SpecRecord::Property(prop) = record {
-                    if prop.r#type == PropertyType::Text {
-                        props.insert(prop.name.clone());
+        if let Some(catalog) = catalog {
+            for ontology in catalog.domains_view().values() {
+                for entity in &ontology.entity_types {
+                    for prop in &entity.properties {
+                        if prop.property_type == OntologyPropertyType::Text {
+                            props.insert(prop.name.clone());
+                        }
                     }
                 }
             }

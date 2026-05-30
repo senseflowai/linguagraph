@@ -94,6 +94,21 @@ pub fn render_knowledge_extract_prompt(
     out
 }
 
+/// Lexical label for an ontology property type. Must match exactly the
+/// vocabulary the LLM is asked to use in the ontology-suggest prompt.
+pub fn property_type_label(t: OntologyPropertyType) -> &'static str {
+    match t {
+        OntologyPropertyType::String => "string",
+        OntologyPropertyType::Text => "text",
+        OntologyPropertyType::Int => "int",
+        OntologyPropertyType::Float => "float",
+        OntologyPropertyType::Bool => "bool",
+        OntologyPropertyType::Date => "date",
+        OntologyPropertyType::Datetime => "datetime",
+        OntologyPropertyType::List => "list",
+    }
+}
+
 fn render_entity_list(out: &mut String, types: &[EntityTypeSpec]) {
     for t in types {
         match &t.description {
@@ -107,15 +122,7 @@ fn render_entity_list(out: &mut String, types: &[EntityTypeSpec]) {
         if !t.properties.is_empty() {
             let _ = writeln!(out, "  Properties:");
             for p in &t.properties {
-                let type_str = match p.property_type {
-                    OntologyPropertyType::String | OntologyPropertyType::Text => "string",
-                    OntologyPropertyType::Int => "int",
-                    OntologyPropertyType::Float => "float",
-                    OntologyPropertyType::Bool => "bool",
-                    OntologyPropertyType::Date => "date",
-                    OntologyPropertyType::Datetime => "datetime",
-                    OntologyPropertyType::List => "list",
-                };
+                let type_str = property_type_label(p.property_type);
                 let req = if p.required { " (required)" } else { " (optional)" };
                 match &p.description {
                     Some(d) => {
@@ -279,42 +286,30 @@ You MUST output ONLY a valid JSON object.
 - No code fences
 - No explanations
 
-Return ONLY valid JSON:
+## Compact Shape
 
 ```json
 {
   \"entities\": [
-    {
-      \"id\": \"e1\",
-      \"type\": \"TypeName\",
-      \"name\": \"string\"
-    },
-    {
-      \"id\": \"e2\",
-      \"type\": \"TypeName\",
-      \"name\": \"string\"
-    }
+    {\"id\":\"e1\",\"type\":\"TypeName\",\"name\":\"string\"},
+    {\"id\":\"e2\",\"type\":\"TypeName\",\"name\":\"string\"}
   ],
   \"relations\": [
-    {
-      \"from\": \"e1\",
-      \"to\": \"e2\",
-      \"type\": \"RELATION_TYPE\"
-    }
+    {\"s\":\"e1\",\"o\":\"e2\",\"t\":\"RELATION_TYPE\"}
   ]
 }
 ```
 
+In relations: `s` = subject (source entity id), `o` = object (target id),
+`t` = relation type (UPPER_SNAKE).
+
 ## Constraints
 
 * No extra fields
-* No comments
-* No markdown
-* No explanations
-* Keys MUST be exactly:
-
-  * entities
-  * relations";
+* No comments, markdown, explanations
+* Top-level keys MUST be exactly: `entities`, `relations`
+* Entity keys MUST be exactly: `id`, `type`, `name`
+* Relation keys MUST be exactly: `s`, `o`, `t`";
 
 pub const OUTPUT_SECTION_WITH_PROPERTIES: &str = "# 🔹 OUTPUT MODE (CRITICAL)
 
@@ -326,48 +321,58 @@ You MUST output ONLY a valid JSON object.
 - No code fences
 - No explanations
 
-Return ONLY valid JSON:
+## Compact Shape
+
+To minimize tokens, properties are placed **inline** in the entity object
+(no wrapping `properties` key), and relations use short keys `s`/`o`/`t`:
 
 ```json
 {
   \"entities\": [
-    {
-      \"id\": \"e1\",
-      \"type\": \"TypeName\",
-      \"name\": \"canonical entity name\",
-      \"properties\": {
-        \"string_prop\": \"value\",
-        \"int_prop\": 42,
-        \"float_prop\": 3.14,
-        \"bool_prop\": true
-      }
-    }
+    {\"id\":\"e1\",\"type\":\"TypeA\",\"name\":\"canonical name\",\"prop_a\":\"value\",\"prop_b\":42},
+    {\"id\":\"e2\",\"type\":\"TypeB\",\"name\":\"another\",\"date_prop\":\"2024-01-15\"}
   ],
   \"relations\": [
-    {
-      \"from\": \"e1\",
-      \"to\": \"e2\",
-      \"type\": \"RELATION_TYPE\"
-    }
+    {\"s\":\"e1\",\"o\":\"e2\",\"t\":\"RELATION_TYPE\"}
   ]
 }
 ```
 
-## Property Rules
+In relations: `s` = subject (source entity id), `o` = object (target id),
+`t` = relation type (UPPER_SNAKE).
 
-* For entity types that define properties: populate a `\"properties\"` object with the declared keys
-* Use `null` for optional properties you cannot find in the text
-* Do NOT invent property keys that are not declared in the ontology
-* Property value types MUST match the declared type (string → `\"...\"`, int → integer, float → number, bool → `true`/`false`)
+## Reserved Entity Keys
+
+These keys have fixed meaning and are NOT properties:
+
+* `id` — local string id (referenced by relations)
+* `type` — entity type from the ontology
+* `name` — canonical name (string)
+
+**Every other key in the entity object is treated as an ontology property
+for that entity type.** Use ONLY property names declared for the entity's
+type in the ontology — never invent new keys.
+
+## Property Value Types
+
+Match the declared type exactly:
+
+* `string` / `text` → `\"...\"`
+* `int` → integer (no quotes), e.g. `42`
+* `float` → number (no quotes), e.g. `3.14`
+* `bool` → `true` or `false` (no quotes)
+* `date` → `\"YYYY-MM-DD\"`
+* `datetime` → ISO-8601 string, e.g. `\"2024-01-15T09:30:00Z\"`
+* `list` → JSON array, e.g. `[\"a\",\"b\"]`
+
+Omit the key entirely for optional properties you cannot find in the text.
+Do NOT emit `null`.
 
 ## Constraints
 
-* No extra fields outside declared properties
-* No comments
-* No markdown
-* No explanations
-* Top-level entity keys MUST be exactly: `id`, `type`, `name` (and `properties` when applicable)
-* Top-level relation keys MUST be exactly: `from`, `to`, `type`";
+* No comments, markdown, explanations
+* No keys other than reserved + declared ontology properties
+* Relations use ONLY keys `s`, `o`, `t`";
 
 pub const SELF_VALIDATION_SECTION: &str = "# 🔹 SELF-VALIDATION (MANDATORY)
 
@@ -461,8 +466,13 @@ mod tests {
         let p = render_knowledge_extract_prompt("x", "demo", &DomainOntology::default());
         assert!(p.contains("\"entities\""));
         assert!(p.contains("\"relations\""));
-        assert!(p.contains("\"id\": \"e1\""));
-        assert!(p.contains("\"from\": \"e1\""));
+        assert!(p.contains("\"id\":\"e1\""));
+        // Relations use compact short keys.
+        assert!(p.contains("\"s\":\"e1\""));
+        assert!(p.contains("\"o\":\"e2\""));
+        assert!(p.contains("\"t\":\"RELATION_TYPE\""));
+        // Old verbose keys MUST NOT appear in the example.
+        assert!(!p.contains("\"from\": \"e1\""));
     }
 
     #[test]
@@ -536,8 +546,14 @@ mod tests {
             relation_types: vec![],
         };
         let p = render_knowledge_extract_prompt("text", "demo", &onto);
-        assert!(p.contains("\"properties\""));
-        assert!(p.contains("Property Rules"));
+        // New compact format: properties are inline; no wrapping `properties` key.
+        assert!(p.contains("Compact Shape"));
+        assert!(p.contains("Reserved Entity Keys"));
+        assert!(p.contains("Property Value Types"));
+        // Inline property example present.
+        assert!(p.contains("\"prop_a\":\"value\""));
+        // The wrapping `"properties": {` block must be gone from the schema.
+        assert!(!p.contains("\"properties\": {"));
     }
 
     #[test]
@@ -547,7 +563,31 @@ mod tests {
             relation_types: vec![],
         };
         let p = render_knowledge_extract_prompt("text", "demo", &onto);
-        assert!(!p.contains("Property Rules"));
-        assert!(p.contains("\"name\": \"string\""));
+        assert!(!p.contains("Property Value Types"));
+        assert!(p.contains("\"name\":\"string\""));
+    }
+
+    #[test]
+    fn text_property_type_uses_text_label_not_string() {
+        use crate::graph::{OntologyPropertyType, PropertySpec};
+        let onto = DomainOntology {
+            entity_types: vec![EntityTypeSpec {
+                name: "Doc".to_string(),
+                description: None,
+                properties: vec![PropertySpec {
+                    name: "body".to_string(),
+                    description: None,
+                    property_type: OntologyPropertyType::Text,
+                    required: false,
+                }],
+                embedding: None,
+            }],
+            relation_types: vec![],
+        };
+        let p = render_knowledge_extract_prompt("t", "demo", &onto);
+        // The label must be `text`, matching the suggest-prompt vocabulary.
+        assert!(p.contains("* `body` (text) (optional)"));
+        // And the old mis-label `(string)` for a Text property must be gone.
+        assert!(!p.contains("* `body` (string)"));
     }
 }

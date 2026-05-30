@@ -9,7 +9,8 @@
 
 mod builder;
 mod generator;
-mod knowledge;
+pub(crate) mod knowledge;
+mod ontology_suggest;
 mod schema;
 
 pub use builder::PromptGenerator;
@@ -17,5 +18,6 @@ pub use generator::{
     generate_query_prompt, generate_system_prompt, select_query_schema, PromptOptions,
     PromptSchemaSelection,
 };
-pub use knowledge::{render_knowledge_extract_prompt, DOMAIN_PLACEHOLDER};
+pub use knowledge::{property_type_label, render_knowledge_extract_prompt, DOMAIN_PLACEHOLDER};
+pub use ontology_suggest::render_schema_suggest_prompt;
 pub use schema::{GraphSchema, NodeKind, Property, PropertyType, RelKind};

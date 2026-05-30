@@ -82,6 +82,7 @@ pub fn plan_graph_with_registry_and_prefixes(
             EntityKey {
                 label: shape.label.clone(),
                 key_field: shape.merge_on.clone(),
+                domain: shape.domain.clone(),
                 id: id.clone(),
             },
         );
@@ -101,6 +102,13 @@ pub fn plan_graph_with_registry_and_prefixes(
             .ok_or_else(|| IngestError::UnknownGraphEntityRef(relation.to.index()))?;
         let props = lower_relation_properties(&relation.properties, registry)?;
 
+        // A relation gets a domain label only when both endpoints share
+        // the same domain — otherwise we can't safely scope the MATCH.
+        let rel_domain = match (&from.domain, &to.domain) {
+            (Some(a), Some(b)) if a == b => Some(a.clone()),
+            _ => None,
+        };
+
         relation_batches
             .entry(RelationShape {
                 rel_type: relation.r#type.clone(),
@@ -108,6 +116,7 @@ pub fn plan_graph_with_registry_and_prefixes(
                 from_key: from.key_field.clone(),
                 to_label: to.label.clone(),
                 to_key: to.key_field.clone(),
+                domain: rel_domain,
             })
             .or_default()
             .push(RelationRow {
@@ -126,6 +135,7 @@ pub fn plan_graph_with_registry_and_prefixes(
                     label: shape.label.clone(),
                     merge_on: shape.merge_on.clone(),
                     prefix_label: prefix_label.clone(),
+                    domain_label: shape.domain.clone(),
                     rows: chunk.to_vec(),
                 })
                 .collect::<Vec<_>>()
@@ -146,6 +156,7 @@ pub fn plan_graph_with_registry_and_prefixes(
                     to_label: shape.to_label.clone(),
                     to_key: shape.to_key.clone(),
                     prefix_label: prefix_label.clone(),
+                    domain_label: shape.domain.clone(),
                     rows: chunk.to_vec(),
                 })
                 .collect::<Vec<_>>()
@@ -162,6 +173,7 @@ pub fn plan_graph_with_registry_and_prefixes(
 struct EntityKey {
     label: String,
     key_field: String,
+    domain: Option<String>,
     id: Literal,
 }
 
@@ -169,6 +181,7 @@ struct EntityKey {
 struct NodeShape {
     label: String,
     merge_on: String,
+    domain: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -178,6 +191,7 @@ struct RelationShape {
     from_key: String,
     to_label: String,
     to_key: String,
+    domain: Option<String>,
 }
 
 fn node_shape(entity: &EntityGraph) -> Result<NodeShape, IngestError> {
@@ -189,6 +203,7 @@ fn node_shape(entity: &EntityGraph) -> Result<NodeShape, IngestError> {
     Ok(NodeShape {
         label: entity.r#type.clone(),
         merge_on,
+        domain: entity.domain.clone(),
     })
 }
 

@@ -68,8 +68,12 @@ pub async fn introspect_schema(
             opts.sample_size,
         )
         .await?;
+        let extra_labels = fetch_extra_node_labels(client, label).await?;
         nodes.push(NodeKind {
             label: label.clone(),
+            domain: None,
+            extra_labels,
+            description: None,
             properties,
         });
     }
@@ -95,6 +99,8 @@ pub async fn introspect_schema(
             // dropping the type.
             relationships.push(RelKind {
                 label: rt.clone(),
+                domain: None,
+                description: None,
                 from: None,
                 to: None,
                 properties,
@@ -103,6 +109,8 @@ pub async fn introspect_schema(
             for (from, to) in endpoints {
                 relationships.push(RelKind {
                     label: rt.clone(),
+                    domain: None,
+                    description: None,
                     from: Some(from),
                     to: Some(to),
                     properties: properties.clone(),
@@ -129,6 +137,30 @@ async fn fetch_node_labels(client: &dyn GraphClient) -> Result<Vec<String>, DbEr
         .rows
         .iter()
         .filter_map(|r| r.fields.get("label").and_then(value_as_string))
+        .collect();
+    out.sort();
+    out.dedup();
+    Ok(out)
+}
+
+async fn fetch_extra_node_labels(
+    client: &dyn GraphClient,
+    label: &str,
+) -> Result<Vec<String>, DbError> {
+    let mut params = BTreeMap::new();
+    params.insert("label".to_string(), Literal::String(label.to_string()));
+    let q = cypher(
+        "MATCH (n) WHERE $label IN labels(n) \
+         UNWIND labels(n) AS lab \
+         WITH DISTINCT lab WHERE lab <> $label \
+         RETURN lab",
+        params,
+    );
+    let res = client.execute(&q).await?;
+    let mut out: Vec<String> = res
+        .rows
+        .iter()
+        .filter_map(|r| r.fields.get("lab").and_then(value_as_string))
         .collect();
     out.sort();
     out.dedup();
@@ -211,6 +243,7 @@ async fn fetch_props(
             Some(Property {
                 name: key,
                 ty: infer_type(&sample_vec),
+                description: None,
             })
         })
         .collect();

@@ -11,7 +11,7 @@ use thiserror::Error;
 
 use crate::ast::query::*;
 use crate::dsl::schema as d;
-use crate::graph::GraphSpecification;
+use crate::graph::OntologyCatalog;
 use crate::types::context::{LowerCtx, RawTypedFilter};
 use crate::types::{TypeError, TypeId, TypeRegistry, TypedOp};
 
@@ -71,7 +71,7 @@ pub fn lower_with_registry(
 
 /// Lower a DSL query, dispatching typed filters through `registry`,
 /// and **auto-resolve** the type for filters that omit `"type"` by
-/// looking the field up in `graph_specification`.
+/// looking the field up in `catalog`.
 ///
 /// The lookup key is `<node-label>.<property>` — the same shape
 /// [`crate::graph::GraphSpecification`] writes. Aliases bound to a
@@ -86,7 +86,7 @@ pub fn lower_full(
     dsl: d::DslQuery,
     max_depth: u32,
     registry: &TypeRegistry,
-    graph_specification: Option<&GraphSpecification>,
+    catalog: Option<&OntologyCatalog>,
 ) -> Result<ReadQuery, AstError> {
     let mut bound: HashMap<String, ()> = HashMap::new();
     bound.insert(dsl.start.alias.clone(), ());
@@ -169,7 +169,7 @@ pub fn lower_full(
         &bound,
         &alias_labels,
         registry,
-        graph_specification,
+        catalog,
         query_prefix_index.as_deref(),
     )?;
     let mut returns = lower_returns(&dsl.return_, &bound)?;
@@ -231,7 +231,7 @@ fn lower_filters(
     bound: &HashMap<String, ()>,
     alias_labels: &HashMap<String, String>,
     registry: &TypeRegistry,
-    graph_specification: Option<&GraphSpecification>,
+    catalog: Option<&OntologyCatalog>,
     prefix_index: Option<&str>,
 ) -> Result<Option<FilterExpression>, AstError> {
     if filters.is_empty() {
@@ -258,7 +258,7 @@ fn lower_filters(
         let effective_type = f
             .field_type
             .clone()
-            .or_else(|| infer_type(&field, alias_labels, graph_specification));
+            .or_else(|| infer_type(&field, alias_labels, catalog));
 
         match effective_type {
             // Plain (untyped) predicate: parse the op and convert the
@@ -310,7 +310,7 @@ fn lower_filters(
     }))
 }
 
-/// Look up the registered type for `field` in `graph_specification`. Returns
+/// Look up the registered type for `field` in `catalog`. Returns
 /// `None` when:
 ///
 /// * the alias has no recorded label (shouldn't happen for valid
@@ -322,9 +322,9 @@ fn lower_filters(
 fn infer_type(
     field: &PropertyRef,
     alias_labels: &HashMap<String, String>,
-    graph_specification: Option<&GraphSpecification>,
+    catalog: Option<&OntologyCatalog>,
 ) -> Option<String> {
-    let spec = graph_specification?;
+    let spec = catalog?;
     let prop = field.property.as_deref()?;
     let label = alias_labels.get(field.alias.as_str())?;
     spec.get_query_type(label, prop).map(str::to_string)

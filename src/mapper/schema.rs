@@ -17,6 +17,12 @@ use super::MapperError;
 pub struct Mapping {
     #[serde(default)]
     pub source: Option<String>,
+    /// Ontology domain stamped on every entity produced from this
+    /// mapping. Defaults to [`crate::mapper::DEFAULT_MAPPING_DOMAIN`]
+    /// when not supplied. The domain is also the key under which the
+    /// derived [`crate::graph::OntologyCatalog`] entry is filed.
+    #[serde(default)]
+    pub domain: Option<String>,
     pub entities: Vec<EntityMapping>,
     #[serde(default)]
     pub relationships: Vec<RelationshipMapping>,

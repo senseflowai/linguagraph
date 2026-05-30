@@ -9,12 +9,14 @@
 //!   prompt (delegates to [`super::knowledge::render_knowledge_extract_prompt`]).
 
 use crate::config::PromptConfig;
+use crate::graph::{
+    DomainOntology, JsonFileOntologyCatalogStorage, OntologyCatalog, OntologyCatalogStorage,
+    OntologyError,
+};
 
 use super::generator::{self, PromptOptions};
 use super::knowledge::render_knowledge_extract_prompt;
-use super::ontology::{DomainOntology, OntologyCatalog, OntologyError};
 use super::schema::GraphSchema;
-use super::storage::{JsonFileOntologyCatalogStorage, OntologyCatalogStorage};
 
 /// Unified entry point for prompt generation.
 #[derive(Debug, Clone, Default)]
@@ -139,7 +141,7 @@ impl PromptGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prompt::ontology::{EntityTypeSpec, RelationTypeSpec};
+    use crate::graph::{EntityTypeSpec, RelationTypeSpec};
     use crate::prompt::storage::InMemoryOntologyCatalogStorage;
 
     #[test]

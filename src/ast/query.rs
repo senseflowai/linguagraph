@@ -299,6 +299,11 @@ pub struct NodeBatch {
     /// and `prefix_label`, scoping deduplication to that prefix.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefix_label: Option<String>,
+    /// Optional ontology domain rendered as an additional Cypher label
+    /// (e.g. `:legal`). Lets live-schema introspection resolve
+    /// descriptions for this node from an `OntologyCatalog` later on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain_label: Option<String>,
     /// Each row contributes one MERGE.
     pub rows: Vec<NodeRow>,
 }
@@ -325,6 +330,11 @@ pub struct RelationBatch {
     /// so a relation only merges between entities that share the prefix.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefix_label: Option<String>,
+    /// Ontology domain shared by both endpoint nodes. When set, the
+    /// MATCH patterns include the domain as an additional label so the
+    /// relation only joins entities in that domain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain_label: Option<String>,
     pub rows: Vec<RelationRow>,
 }
 

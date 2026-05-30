@@ -42,6 +42,10 @@ impl Property {
 pub struct EntityGraph {
     pub r#type: String,
     pub labels: Vec<String>,
+    /// Optional ontology domain ("legal", "medical", ...). When set, the
+    /// planner emits an extra Cypher label so live schema introspection
+    /// can later resolve descriptions for this node from the catalog.
+    pub domain: Option<String>,
     pub primary_key: Option<PrimaryKey>,
     pub properties: HashMap<String, Property>,
 }
@@ -51,6 +55,7 @@ impl EntityGraph {
         Self {
             r#type: r#type.into(),
             labels: Vec::new(),
+            domain: None,
             primary_key: None,
             properties: HashMap::new(),
         }
@@ -63,6 +68,11 @@ impl EntityGraph {
 
     pub fn labels(mut self, labels: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.labels.extend(labels.into_iter().map(Into::into));
+        self
+    }
+
+    pub fn domain(mut self, domain: impl Into<String>) -> Self {
+        self.domain = Some(domain.into());
         self
     }
 

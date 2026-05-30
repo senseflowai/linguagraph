@@ -45,13 +45,10 @@ fn render_node_batch(batch: &NodeBatch) -> Result<CypherQuery, InsertError> {
     }
     check_ident(&batch.label)?;
     check_ident(&batch.merge_on)?;
-    let prefix_suffix = match batch.prefix_label.as_deref() {
-        Some(p) if !p.is_empty() => {
-            check_ident(p)?;
-            format!(":{p}")
-        }
-        _ => String::new(),
-    };
+    let label_suffix = build_label_suffix(
+        batch.prefix_label.as_deref(),
+        batch.domain_label.as_deref(),
+    )?;
 
     // Each row becomes `{ id: <pk>, props: { ...other props... } }`. The
     // builder is the single place that knows the row layout — the planner
@@ -74,10 +71,10 @@ fn render_node_batch(batch: &NodeBatch) -> Result<CypherQuery, InsertError> {
 
     let text = format!(
         "UNWIND $rows AS row\n\
-         MERGE (n:{label}{prefix} {{{key}: row.id}})\n\
+         MERGE (n:{label}{suffix} {{{key}: row.id}})\n\
          SET n += row.props",
         label = batch.label,
-        prefix = prefix_suffix,
+        suffix = label_suffix,
         key = batch.merge_on,
     );
 
@@ -85,6 +82,26 @@ fn render_node_batch(batch: &NodeBatch) -> Result<CypherQuery, InsertError> {
     params.insert("rows".to_string(), Literal::List(rows));
 
     Ok(CypherQuery::new(text, params))
+}
+
+/// Build the trailing `:prefix[:domain]` chunk applied to every MERGE /
+/// MATCH pattern. Identifiers are validated here, not at the call site.
+fn build_label_suffix(
+    prefix: Option<&str>,
+    domain: Option<&str>,
+) -> Result<String, InsertError> {
+    let mut out = String::new();
+    if let Some(p) = prefix.filter(|s| !s.is_empty()) {
+        check_ident(p)?;
+        out.push(':');
+        out.push_str(p);
+    }
+    if let Some(d) = domain.filter(|s| !s.is_empty()) {
+        check_ident(d)?;
+        out.push(':');
+        out.push_str(d);
+    }
+    Ok(out)
 }
 
 fn render_relation_batch(batch: &RelationBatch) -> Result<CypherQuery, InsertError> {
@@ -96,13 +113,10 @@ fn render_relation_batch(batch: &RelationBatch) -> Result<CypherQuery, InsertErr
     check_ident(&batch.to_label)?;
     check_ident(&batch.from_key)?;
     check_ident(&batch.to_key)?;
-    let prefix_suffix = match batch.prefix_label.as_deref() {
-        Some(p) if !p.is_empty() => {
-            check_ident(p)?;
-            format!(":{p}")
-        }
-        _ => String::new(),
-    };
+    let label_suffix = build_label_suffix(
+        batch.prefix_label.as_deref(),
+        batch.domain_label.as_deref(),
+    )?;
 
     let mut rows = Vec::with_capacity(batch.rows.len());
     for row in &batch.rows {
@@ -118,8 +132,8 @@ fn render_relation_batch(batch: &RelationBatch) -> Result<CypherQuery, InsertErr
 
     let text = format!(
         "UNWIND $rels AS rel\n\
-         MATCH (a:{from_label}{prefix} {{{from_key}: rel.from}})\n\
-         MATCH (b:{to_label}{prefix} {{{to_key}: rel.to}})\n\
+         MATCH (a:{from_label}{suffix} {{{from_key}: rel.from}})\n\
+         MATCH (b:{to_label}{suffix} {{{to_key}: rel.to}})\n\
          MERGE (a)-[r:{rel_type}]->(b)\n\
          SET r += rel.props",
         from_label = batch.from_label,
@@ -127,7 +141,7 @@ fn render_relation_batch(batch: &RelationBatch) -> Result<CypherQuery, InsertErr
         to_label = batch.to_label,
         to_key = batch.to_key,
         rel_type = batch.rel_type,
-        prefix = prefix_suffix,
+        suffix = label_suffix,
     );
 
     let mut params = BTreeMap::new();

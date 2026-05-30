@@ -15,8 +15,8 @@ pub struct Config {
     pub llm: LlmConfig,
     #[serde(default)]
     pub query: QueryConfig,
-    #[serde(default)]
-    pub graph_specification: GraphSpecificationConfig,
+    #[serde(default, alias = "graph_specification")]
+    pub ontology_catalog: OntologyCatalogConfig,
     /// Prompt-generation settings (ontologies file, default domain).
     #[serde(default)]
     pub prompt: PromptConfig,
@@ -168,17 +168,17 @@ fn default_limit() -> u32 {
     100
 }
 
-/// Graph specification settings. The specification is used to annotate
-/// prompts and to select query-relevant entity types by embedding entity
-/// descriptions.
+/// Ontology catalog settings. The catalog is used to annotate prompts,
+/// to select query-relevant entity types by embedding entity
+/// descriptions, and to enrich live-schema introspection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GraphSpecificationConfig {
-    /// Path to the graph specification cache file.
-    #[serde(default = "default_graph_specification_cache_path")]
+pub struct OntologyCatalogConfig {
+    /// Path to the ontology catalog cache file (JSON backend).
+    #[serde(default = "default_ontology_catalog_cache_path")]
     pub cache_path: String,
-    /// Path to the embedding model used for graph-specification entity
-    /// matching. When omitted, the configured embedder falls back to the
-    /// default mock backend in builds without a concrete model.
+    /// Path to the embedding model used for entity matching. When
+    /// omitted, the configured embedder falls back to the default mock
+    /// backend in builds without a concrete model.
     #[serde(default)]
     pub embedding_model: Option<String>,
     /// Path to the reranking model used after coarse embedding retrieval.
@@ -188,34 +188,34 @@ pub struct GraphSpecificationConfig {
     pub reranking_model: Option<String>,
     /// Embedding dimension hint, used by the mock embedder when no real
     /// model is configured.
-    #[serde(default = "default_graph_specification_embedding_dim")]
+    #[serde(default = "default_ontology_catalog_embedding_dim")]
     pub embedding_dim: usize,
     /// Minimum score required after reranking.
-    #[serde(default = "default_graph_specification_reranking_threshold")]
+    #[serde(default = "default_ontology_catalog_reranking_threshold")]
     pub reranking_threshold: f64,
 }
 
-impl Default for GraphSpecificationConfig {
+impl Default for OntologyCatalogConfig {
     fn default() -> Self {
         Self {
-            cache_path: default_graph_specification_cache_path(),
+            cache_path: default_ontology_catalog_cache_path(),
             embedding_model: None,
             reranking_model: None,
-            embedding_dim: default_graph_specification_embedding_dim(),
-            reranking_threshold: default_graph_specification_reranking_threshold(),
+            embedding_dim: default_ontology_catalog_embedding_dim(),
+            reranking_threshold: default_ontology_catalog_reranking_threshold(),
         }
     }
 }
 
-fn default_graph_specification_cache_path() -> String {
-    crate::graph::DEFAULT_GRAPH_SPECIFICATION_CACHE_PATH.into()
+fn default_ontology_catalog_cache_path() -> String {
+    crate::graph::DEFAULT_ONTOLOGY_CATALOG_CACHE_PATH.into()
 }
 
-fn default_graph_specification_embedding_dim() -> usize {
+fn default_ontology_catalog_embedding_dim() -> usize {
     384
 }
 
-fn default_graph_specification_reranking_threshold() -> f64 {
+fn default_ontology_catalog_reranking_threshold() -> f64 {
     0.3
 }
 

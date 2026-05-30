@@ -8,7 +8,7 @@ use std::fmt::Write;
 
 use super::schema::{GraphSchema, NodeKind, Property, RelKind};
 use crate::embeddings::{SharedEmbedder, SharedReranker};
-use crate::graph::{GraphSpecification, PropertySpecRecord};
+use crate::graph::{OntologyCatalog, OntologyPropertyType, PropertySpec};
 use crate::types::TypeRegistry;
 
 /// Properties added by the senseflow ingestion pipeline that carry no
@@ -21,7 +21,7 @@ pub struct PromptSchemaSelection {
     /// Maximum graph-schema relationship hops to include around the
     /// entities matched by the query.
     pub related_entity_hops: usize,
-    /// Minimum cosine score accepted from [`GraphSpecification::find`].
+    /// Minimum cosine score accepted from [`OntologyCatalog::find`].
     pub entity_match_threshold: f32,
     /// Minimum score accepted after reranking.
     pub reranking_threshold: f64,
@@ -43,12 +43,12 @@ pub struct PromptOptions {
     pub preamble: Option<String>,
     /// If true, include 1-2 worked examples after the rules.
     pub include_examples: bool,
-    /// Optional graph specification. When provided, each schema entry whose
-    /// key matches `<NodeLabel>.<property>` (or `<NodeLabel>` for the node
-    /// itself) is annotated inline.
-    pub graph_specification: Option<GraphSpecification>,
-    /// Embedder used to match the user's query against the graph
-    /// specification. When omitted, the full schema is rendered.
+    /// Optional ontology catalog. When provided, descriptions and
+    /// SemanticText markers are emitted next to each node, relationship,
+    /// and property in the rendered schema block.
+    pub ontology_catalog: Option<OntologyCatalog>,
+    /// Embedder used to match the user's query against the catalog.
+    /// When omitted, the full schema is rendered.
     pub embedding_model: Option<SharedEmbedder>,
     /// Reranker applied after embedding retrieval. When omitted, embedding
     /// retrieval scores are used directly.
@@ -69,7 +69,7 @@ impl Default for PromptOptions {
                     .into(),
             ),
             include_examples: true,
-            graph_specification: None,
+            ontology_catalog: None,
             embedding_model: None,
             reranking_model: None,
             schema_selection: PromptSchemaSelection::default(),
@@ -96,11 +96,11 @@ fn render_prompt(schema: &GraphSchema, opts: &PromptOptions) -> String {
     }
 
     out.push_str("# Graph schema\n");
-    write_nodes(&mut out, &schema.nodes, opts.graph_specification.as_ref());
+    write_nodes(&mut out, &schema.nodes, opts.ontology_catalog.as_ref());
     write_rels(
         &mut out,
         &schema.relationships,
-        opts.graph_specification.as_ref(),
+        opts.ontology_catalog.as_ref(),
     );
 
     if let Some(reg) = &opts.type_registry {
@@ -120,12 +120,12 @@ fn render_prompt(schema: &GraphSchema, opts: &PromptOptions) -> String {
 
 /// Select the schema slice relevant to `query`.
 ///
-/// The default strategy uses [`GraphSpecification::find`] to seed relevant
+/// The default strategy uses [`OntologyCatalog::find`] to seed relevant
 /// entity labels, then expands through schema relationships according to
 /// [`PromptSchemaSelection`]. Callers can use this directly when they need
 /// the selected schema separately from prompt rendering.
 pub fn select_query_schema(query: &str, schema: &GraphSchema, opts: &PromptOptions) -> GraphSchema {
-    let Some(spec) = opts.graph_specification.as_ref() else {
+    let Some(catalog) = opts.ontology_catalog.as_ref() else {
         return schema.clone();
     };
     let Some(embedder) = opts.embedding_model.as_deref() else {
@@ -135,7 +135,7 @@ pub fn select_query_schema(query: &str, schema: &GraphSchema, opts: &PromptOptio
         return schema.clone();
     }
 
-    let Ok(matches) = spec.find(
+    let Ok(matches) = catalog.find(
         query,
         opts.schema_selection.entity_match_threshold,
         embedder,
@@ -148,8 +148,10 @@ pub fn select_query_schema(query: &str, schema: &GraphSchema, opts: &PromptOptio
         return GraphSchema::default();
     }
 
-    let mut labels: std::collections::BTreeSet<String> =
-        matches.into_iter().map(|m| m.record.name.clone()).collect();
+    let mut labels: std::collections::BTreeSet<String> = matches
+        .into_iter()
+        .map(|m| m.entity_type.name.clone())
+        .collect();
     let mut frontier = labels.clone();
     for _ in 0..opts.schema_selection.related_entity_hops {
         let mut next = std::collections::BTreeSet::new();
@@ -227,33 +229,41 @@ fn write_field_types(out: &mut String, registry: &TypeRegistry) {
     }
 }
 
-fn write_nodes(out: &mut String, nodes: &[NodeKind], spec: Option<&GraphSpecification>) {
+fn write_nodes(out: &mut String, nodes: &[NodeKind], catalog: Option<&OntologyCatalog>) {
     if nodes.is_empty() {
         out.push_str("(no node labels declared)\n");
         return;
     }
     out.push_str("Nodes:\n");
     for n in nodes {
-        let header_desc = spec.and_then(|s| s.get_entity(&n.label).map(|e| e.description.as_str()));
+        let header_desc = n
+            .description
+            .as_deref()
+            .or_else(|| {
+                catalog.and_then(|c| {
+                    c.get_entity(&n.label)
+                        .and_then(|(_, e)| e.description.as_deref())
+                })
+            });
         let _ = match header_desc {
             Some(d) => writeln!(
                 out,
                 "  - {} — {}{}",
                 n.label,
                 d,
-                render_props(&n.label, &n.properties, spec)
+                render_props(&n.label, n.domain.as_deref(), &n.properties, catalog)
             ),
             None => writeln!(
                 out,
                 "  - {}{}",
                 n.label,
-                render_props(&n.label, &n.properties, spec)
+                render_props(&n.label, n.domain.as_deref(), &n.properties, catalog)
             ),
         };
     }
 }
 
-fn write_rels(out: &mut String, rels: &[RelKind], spec: Option<&GraphSpecification>) {
+fn write_rels(out: &mut String, rels: &[RelKind], catalog: Option<&OntologyCatalog>) {
     if rels.is_empty() {
         out.push_str("Relationships: (none declared)\n");
         return;
@@ -264,16 +274,29 @@ fn write_rels(out: &mut String, rels: &[RelKind], spec: Option<&GraphSpecificati
             (Some(f), Some(t)) => format!("({f})-[:{}]->({t})", r.label),
             _ => format!("[:{}]", r.label),
         };
-        let _ = writeln!(
-            out,
-            "  - {}{}",
-            endpoints,
-            render_props(&r.label, &r.properties, spec)
-        );
+        let header_desc = r
+            .description
+            .as_deref()
+            .or_else(|| {
+                catalog.and_then(|c| {
+                    c.get_relation(&r.label)
+                        .and_then(|(_, spec)| spec.description.as_deref())
+                })
+            });
+        let tail = render_props(&r.label, r.domain.as_deref(), &r.properties, catalog);
+        let _ = match header_desc {
+            Some(d) => writeln!(out, "  - {} — {}{}", endpoints, d, tail),
+            None => writeln!(out, "  - {}{}", endpoints, tail),
+        };
     }
 }
 
-fn render_props(owner: &str, props: &[Property], spec: Option<&GraphSpecification>) -> String {
+fn render_props(
+    owner: &str,
+    domain: Option<&str>,
+    props: &[Property],
+    catalog: Option<&OntologyCatalog>,
+) -> String {
     if props.is_empty() {
         return String::new();
     }
@@ -281,24 +304,26 @@ fn render_props(owner: &str, props: &[Property], spec: Option<&GraphSpecificatio
         .iter()
         .filter(|p| !SCHEMA_HIDDEN_PROPS.contains(&p.name.as_str()))
         .map(|p| {
-            let property_spec = spec.and_then(|s| s.get_property(owner, &p.name));
+            let property_spec: Option<&PropertySpec> = catalog.and_then(|c| match domain {
+                Some(d) => c.get_property_in(d, owner, &p.name),
+                None => c.get_property(owner, &p.name),
+            });
             // Property header shape:
             //   <name>: <scalar-ty>                       (untyped, undocumented)
             //   <name>: <scalar-ty> @<FieldType>           (typed, e.g. SemanticText)
             //   <name>: <scalar-ty> /* description */      (documented only)
             //   <name>: <scalar-ty> @<FieldType> /* … */   (both)
-            //
-            // Graph Text fields route through SemanticText ingestion and
-            // query handlers, so surface that type marker in the prompt.
             let mut base = format!("{}: {}", p.name, format_ty(p.ty));
             if let Some(ty) = property_spec.and_then(field_type_marker) {
                 base = format!("{base} @{ty}");
             }
-            if let Some(desc) = property_spec
-                .map(|p| p.description.as_str())
-                .filter(|desc| !desc.is_empty())
-            {
-                base = format!("{base} /* {desc} */");
+            let desc = p
+                .description
+                .as_deref()
+                .or_else(|| property_spec.and_then(|p| p.description.as_deref()))
+                .filter(|d| !d.is_empty());
+            if let Some(d) = desc {
+                base = format!("{base} /* {d} */");
             }
             base
         })
@@ -309,9 +334,9 @@ fn render_props(owner: &str, props: &[Property], spec: Option<&GraphSpecificatio
     format!(" {{ {} }}", inner.join(", "))
 }
 
-fn field_type_marker(spec: &PropertySpecRecord) -> Option<&'static str> {
-    match spec.r#type {
-        crate::graph::PropertyType::Text => Some("SemanticText"),
+fn field_type_marker(spec: &PropertySpec) -> Option<&'static str> {
+    match spec.property_type {
+        OntologyPropertyType::Text => Some("SemanticText"),
         _ => None,
     }
 }
@@ -421,15 +446,19 @@ mod tests {
                     Property {
                         name: "name".into(),
                         ty: PT::String,
+                        description: None,
                     },
                     Property {
                         name: "age".into(),
                         ty: PT::Int,
+                        description: None,
                     },
                 ],
             }],
             relationships: vec![RelKind {
                 label: "KNOWS".into(),
+                domain: None,
+                description: None,
                 from: Some("Person".into()),
                 to: Some("Person".into()),
                 properties: vec![],
@@ -451,10 +480,12 @@ mod tests {
                     Property {
                         name: "id".into(),
                         ty: PT::String,
+                        description: None,
                     },
                     Property {
                         name: "state".into(),
                         ty: PT::String,
+                        description: None,
                     },
                 ],
             }],
@@ -513,46 +544,69 @@ mod tests {
             nodes: vec![
                 NodeKind {
                     label: "Camera".into(),
+                    domain: None,
+                    extra_labels: Vec::new(),
+                    description: None,
                     properties: vec![],
                 },
                 NodeKind {
                     label: "Site".into(),
+                    domain: None,
+                    extra_labels: Vec::new(),
+                    description: None,
                     properties: vec![],
                 },
                 NodeKind {
                     label: "Company".into(),
+                    domain: None,
+                    extra_labels: Vec::new(),
+                    description: None,
                     properties: vec![],
                 },
                 NodeKind {
                     label: "User".into(),
+                    domain: None,
+                    extra_labels: Vec::new(),
+                    description: None,
                     properties: vec![],
                 },
                 NodeKind {
                     label: "Invoice".into(),
+                    domain: None,
+                    extra_labels: Vec::new(),
+                    description: None,
                     properties: vec![],
                 },
             ],
             relationships: vec![
                 RelKind {
                     label: "INSTALLED_AT".into(),
+                    domain: None,
+                    description: None,
                     from: Some("Camera".into()),
                     to: Some("Site".into()),
                     properties: vec![],
                 },
                 RelKind {
                     label: "OWNED_BY".into(),
+                    domain: None,
+                    description: None,
                     from: Some("Site".into()),
                     to: Some("Company".into()),
                     properties: vec![],
                 },
                 RelKind {
                     label: "HAS_USER".into(),
+                    domain: None,
+                    description: None,
                     from: Some("Company".into()),
                     to: Some("User".into()),
                     properties: vec![],
                 },
                 RelKind {
                     label: "BILLED_BY".into(),
+                    domain: None,
+                    description: None,
                     from: Some("Invoice".into()),
                     to: Some("Company".into()),
                     properties: vec![],
@@ -598,12 +652,12 @@ mod tests {
             nodes: vec![NodeKind {
                 label: "Document".into(),
                 properties: vec![
-                    Property { name: "entity_id".into(), ty: PT::String },
-                    Property { name: "primary_key".into(), ty: PT::String },
-                    Property { name: "title".into(), ty: PT::String },
-                    Property { name: "created_at".into(), ty: PT::Datetime },
+                    Property { name: "entity_id".into(), ty: PT::String, description: None },
+                    Property { name: "primary_key".into(), ty: PT::String, description: None },
+                    Property { name: "title".into(), ty: PT::String, description: None },
+                    Property { name: "created_at".into(), ty: PT::Datetime, description: None },
                     // Generic "id" field from a user-defined schema is NOT hidden.
-                    Property { name: "doc_number".into(), ty: PT::String },
+                    Property { name: "doc_number".into(), ty: PT::String, description: None },
                 ],
             }],
             relationships: vec![],

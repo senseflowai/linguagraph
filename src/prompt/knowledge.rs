@@ -9,7 +9,7 @@
 
 use std::fmt::Write;
 
-use super::ontology::{DomainOntology, EntityTypeSpec, OntologyPropertyType, RelationTypeSpec};
+use crate::graph::{DomainOntology, EntityTypeSpec, OntologyPropertyType, RelationTypeSpec};
 
 /// Placeholder substituted with the active domain name when the prompt
 /// is rendered. Present in the static section constants
@@ -108,10 +108,13 @@ fn render_entity_list(out: &mut String, types: &[EntityTypeSpec]) {
             let _ = writeln!(out, "  Properties:");
             for p in &t.properties {
                 let type_str = match p.property_type {
-                    OntologyPropertyType::String => "string",
+                    OntologyPropertyType::String | OntologyPropertyType::Text => "string",
                     OntologyPropertyType::Int => "int",
                     OntologyPropertyType::Float => "float",
                     OntologyPropertyType::Bool => "bool",
+                    OntologyPropertyType::Date => "date",
+                    OntologyPropertyType::Datetime => "datetime",
+                    OntologyPropertyType::List => "list",
                 };
                 let req = if p.required { " (required)" } else { " (optional)" };
                 match &p.description {
@@ -488,7 +491,7 @@ mod tests {
 
     #[test]
     fn property_specs_appear_in_entity_listing() {
-        use super::super::ontology::{OntologyPropertyType, PropertySpec};
+        use crate::graph::{OntologyPropertyType, PropertySpec};
         let onto = DomainOntology {
             entity_types: vec![EntityTypeSpec {
                 name: "Person".to_string(),
@@ -518,7 +521,7 @@ mod tests {
 
     #[test]
     fn output_section_with_properties_used_when_specs_present() {
-        use super::super::ontology::{OntologyPropertyType, PropertySpec};
+        use crate::graph::{OntologyPropertyType, PropertySpec};
         let onto = DomainOntology {
             entity_types: vec![EntityTypeSpec {
                 name: "Invoice".to_string(),

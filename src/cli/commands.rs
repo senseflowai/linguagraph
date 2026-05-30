@@ -13,14 +13,11 @@ use crate::dsl;
 use crate::embeddings::{self, SharedEmbedder};
 use crate::error::Result;
 use crate::graph::{
-    FileGraphSpecificationStorage, GraphBuilder, GraphSpecificationStorage,
-    DEFAULT_GRAPH_SPECIFICATION_CACHE_PATH,
+    DomainOntology, EntityTypeSpec, GraphBuilder, JsonFileOntologyCatalogStorage,
+    OntologyCatalogStorage, RelationTypeSpec, DEFAULT_ONTOLOGY_CATALOG_CACHE_PATH,
 };
 use crate::mapper::{self, Mapping};
-use crate::prompt::{
-    self, DomainOntology, EntityTypeSpec, GraphSchema, PromptGenerator, PromptOptions,
-    RelationTypeSpec,
-};
+use crate::prompt::{self, GraphSchema, PromptGenerator, PromptOptions};
 use crate::types::{self, SharedRegistry};
 use clap::{Parser, Subcommand, ValueEnum};
 use tabled::{builder::Builder, settings::Style};
@@ -144,7 +141,7 @@ pub enum Command {
         /// Path to the mapper JSON file.
         mapper: PathBuf,
         /// Path to the graph specification cache file.
-        #[arg(long = "spec-cache", default_value = DEFAULT_GRAPH_SPECIFICATION_CACHE_PATH)]
+        #[arg(long = "spec-cache", default_value = DEFAULT_ONTOLOGY_CATALOG_CACHE_PATH)]
         spec_cache: PathBuf,
         /// Maximum rows per UNWIND batch.
         #[arg(long, default_value_t = 1000)]
@@ -237,7 +234,7 @@ pub enum Command {
         /// the Qdrant collections that may hold vectors for the
         /// doomed entities (one collection per `Text` property name).
         /// Defaults to the same path the ingest commands use.
-        #[arg(long = "spec-cache", default_value = DEFAULT_GRAPH_SPECIFICATION_CACHE_PATH)]
+        #[arg(long = "spec-cache", default_value = DEFAULT_ONTOLOGY_CATALOG_CACHE_PATH)]
         spec_cache: PathBuf,
     },
     /// Emit a prompt instructing an LLM to extract entities and
@@ -376,10 +373,10 @@ fn build_registry(cfg: &Config) -> Result<(SharedRegistry, Option<SharedEmbedder
     Ok((std::sync::Arc::new(registry), Some(embedder)))
 }
 
-fn build_graph_specification_embedder(cfg: &Config) -> Result<SharedEmbedder> {
+fn build_ontology_catalog_embedder(cfg: &Config) -> Result<SharedEmbedder> {
     embeddings::default_embedder(
-        cfg.graph_specification.embedding_model.as_deref(),
-        cfg.graph_specification.embedding_dim,
+        cfg.ontology_catalog.embedding_model.as_deref(),
+        cfg.ontology_catalog.embedding_dim,
     )
     .map_err(|e| {
         crate::error::Error::Ingest(crate::ingest::IngestError::Type(format!(
@@ -388,10 +385,10 @@ fn build_graph_specification_embedder(cfg: &Config) -> Result<SharedEmbedder> {
     })
 }
 
-fn build_graph_specification_reranker(cfg: &Config) -> Result<embeddings::SharedReranker> {
+fn build_ontology_catalog_reranker(cfg: &Config) -> Result<embeddings::SharedReranker> {
     embeddings::default_reranker(
-        cfg.graph_specification.reranking_model.as_deref(),
-        cfg.graph_specification.embedding_dim,
+        cfg.ontology_catalog.reranking_model.as_deref(),
+        cfg.ontology_catalog.embedding_dim,
     )
     .map_err(|e| {
         crate::error::Error::Ingest(crate::ingest::IngestError::Type(format!(
@@ -418,18 +415,18 @@ async fn cmd_cypher(
     // `{"field": "c.name", "op": "search", ...}` resolves to the
     // SemanticText handler automatically when the cached mapping
     // tagged `Company.name` as such — no `"type"` needed in the DSL.
-    let spec_storage: Arc<dyn GraphSpecificationStorage> = Arc::new(
-        FileGraphSpecificationStorage::new(&cfg.graph_specification.cache_path),
+    let spec_storage: Arc<dyn OntologyCatalogStorage> = Arc::new(
+        JsonFileOntologyCatalogStorage::new(&cfg.ontology_catalog.cache_path),
     );
     let mut pipeline = Pipeline::new(Arc::new(crate::db::MockClient::new()), &cfg)
         .with_registry(registry)
-        .with_graph_specification_storage(spec_storage)
+        .with_ontology_catalog_storage(spec_storage)
         .with_prefix_label(prefix_label)
         .with_prefix_index(prefix_index);
     if let Some(e) = embedder {
         pipeline = pipeline.with_embedder(e);
     }
-    pipeline.load_graph_specification().await?;
+    pipeline.load_ontology_catalog().await?;
     let dsl_query = dsl::parse(&path).await?;
     let cypher = pipeline.compile(dsl_query)?;
     println!("-- Cypher --\n{}", cypher.text);
@@ -505,18 +502,18 @@ async fn cmd_run(
     let cfg = config::load(config_path).await?;
     let client = MemgraphClient::connect(&cfg.database).await?;
     let (registry, embedder) = build_registry(&cfg)?;
-    let spec_storage: Arc<dyn GraphSpecificationStorage> = Arc::new(
-        FileGraphSpecificationStorage::new(&cfg.graph_specification.cache_path),
+    let spec_storage: Arc<dyn OntologyCatalogStorage> = Arc::new(
+        JsonFileOntologyCatalogStorage::new(&cfg.ontology_catalog.cache_path),
     );
     let mut pipeline = Pipeline::new(Arc::new(client), &cfg)
         .with_registry(registry)
-        .with_graph_specification_storage(spec_storage)
+        .with_ontology_catalog_storage(spec_storage)
         .with_prefix_label(prefix_label)
         .with_prefix_index(prefix_index);
     if let Some(e) = embedder {
         pipeline = pipeline.with_embedder(e);
     }
-    pipeline.load_graph_specification().await?;
+    pipeline.load_ontology_catalog().await?;
     let dsl_query = dsl::parse(&path).await?;
     let result = pipeline.run(dsl_query).await?;
     print_query_result_table(&result);
@@ -532,18 +529,18 @@ async fn cmd_traversal(
     let cfg = config::load(config_path).await?;
     let client = MemgraphClient::connect(&cfg.database).await?;
     let (registry, embedder) = build_registry(&cfg)?;
-    let spec_storage: Arc<dyn GraphSpecificationStorage> = Arc::new(
-        FileGraphSpecificationStorage::new(&cfg.graph_specification.cache_path),
+    let spec_storage: Arc<dyn OntologyCatalogStorage> = Arc::new(
+        JsonFileOntologyCatalogStorage::new(&cfg.ontology_catalog.cache_path),
     );
     let mut pipeline = Pipeline::new(Arc::new(client), &cfg)
         .with_registry(registry)
-        .with_graph_specification_storage(spec_storage)
+        .with_ontology_catalog_storage(spec_storage)
         .with_prefix_label(prefix_label.clone())
         .with_prefix_index(prefix_index.clone());
     if let Some(e) = embedder {
         pipeline = pipeline.with_embedder(e);
     }
-    pipeline.load_graph_specification().await?;
+    pipeline.load_ontology_catalog().await?;
 
     let raw = fs::read_to_string(&path).await?;
     let mut traversal: dsl::TraversalQuery = serde_json::from_str(&raw)?;
@@ -657,42 +654,42 @@ async fn cmd_prompt(
         }
     };
     let (registry, _embedder) = build_registry(&cfg)?;
-    let graph_specification_embedder = if query.is_some() {
-        Some(build_graph_specification_embedder(&cfg)?)
+    let ontology_catalog_embedder = if query.is_some() {
+        Some(build_ontology_catalog_embedder(&cfg)?)
     } else {
         None
     };
-    let graph_specification_reranker = if query.is_some() {
-        Some(build_graph_specification_reranker(&cfg)?)
+    let ontology_catalog_reranker = if query.is_some() {
+        Some(build_ontology_catalog_reranker(&cfg)?)
     } else {
         None
     };
-    let graph_specification = if no_specification {
+    let ontology_catalog = if no_specification {
         None
     } else {
-        let store = FileGraphSpecificationStorage::default();
-        let mut spec = store.load().await?;
-        if spec.is_empty() {
+        let store = JsonFileOntologyCatalogStorage::default();
+        let mut catalog = store.load().await?;
+        if catalog.is_empty() {
             None
         } else {
-            if let Some(embedder) = graph_specification_embedder.as_ref() {
-                spec.compute(embedder.as_ref()).map_err(|e| {
+            if let Some(embedder) = ontology_catalog_embedder.as_ref() {
+                catalog.compute(embedder.as_ref()).map_err(|e| {
                     crate::error::Error::Ingest(crate::ingest::IngestError::Type(format!(
-                        "graph specification embedding: {e}"
+                        "ontology catalog embedding: {e}"
                     )))
                 })?;
             }
-            Some(spec)
+            Some(catalog)
         }
     };
     let registry_for_prompt = (*registry).clone();
     let opts = PromptOptions {
         include_examples: !no_examples,
-        graph_specification,
-        embedding_model: graph_specification_embedder,
-        reranking_model: graph_specification_reranker,
+        ontology_catalog,
+        embedding_model: ontology_catalog_embedder,
+        reranking_model: ontology_catalog_reranker,
         schema_selection: prompt::PromptSchemaSelection {
-            reranking_threshold: cfg.graph_specification.reranking_threshold,
+            reranking_threshold: cfg.ontology_catalog.reranking_threshold,
             ..Default::default()
         },
         type_registry: if registry_for_prompt.is_empty() {
@@ -760,19 +757,19 @@ async fn cmd_ingest_json(
     let value: serde_json::Value = serde_json::from_str(&raw)?;
     let mapped = mapper::to_graph(&mapping, &value)?;
     let (registry, embedder) = build_registry(&cfg)?;
-    let graph_specification_embedder = build_graph_specification_embedder(&cfg)?;
+    let ontology_catalog_embedder = build_ontology_catalog_embedder(&cfg)?;
 
-    let spec_storage = FileGraphSpecificationStorage::new(spec_cache);
-    let mut specification = spec_storage.load().await?;
-    specification.merge(&mapped.specification);
-    specification
-        .compute(graph_specification_embedder.as_ref())
+    let catalog_storage = JsonFileOntologyCatalogStorage::new(spec_cache);
+    let mut catalog = catalog_storage.load().await.unwrap_or_default();
+    catalog.merge(&mapped.catalog);
+    catalog
+        .compute(ontology_catalog_embedder.as_ref())
         .map_err(|e| {
             crate::error::Error::Ingest(crate::ingest::IngestError::Type(format!(
-                "graph specification embedding: {e}"
+                "ontology catalog embedding: {e}"
             )))
         })?;
-    spec_storage.save(&specification).await?;
+    catalog_storage.save(&catalog).await?;
 
     let client = MemgraphClient::connect(&cfg.database).await?;
     let mut pipeline = Pipeline::new(Arc::new(client), &cfg)
@@ -829,19 +826,19 @@ async fn cmd_delete_by_source(
     // Load the spec snapshot so the pipeline can enumerate per-property
     // Qdrant collections. Missing cache is fine — the deletion still
     // covers the two built-in collections (Source.name, Chunk.text).
-    let spec_storage: Arc<dyn GraphSpecificationStorage> =
-        Arc::new(FileGraphSpecificationStorage::new(spec_cache));
+    let spec_storage: Arc<dyn OntologyCatalogStorage> =
+        Arc::new(JsonFileOntologyCatalogStorage::new(spec_cache));
 
     let client = MemgraphClient::connect(&cfg.database).await?;
     let mut pipeline = Pipeline::new(Arc::new(client), &cfg)
         .with_registry(registry)
-        .with_graph_specification_storage(spec_storage)
+        .with_ontology_catalog_storage(spec_storage)
         .with_prefix_label(prefix_label)
         .with_prefix_index(prefix_index);
     if let Some(e) = embedder {
         pipeline = pipeline.with_embedder(e);
     }
-    pipeline.load_graph_specification().await?;
+    pipeline.load_ontology_catalog().await?;
 
     let summary = pipeline.delete_by_source(source).await?;
     println!("{}", serde_json::to_string_pretty(&summary)?);
@@ -918,7 +915,7 @@ async fn load_config_or_default(path: &std::path::Path) -> Config {
             },
             llm: Default::default(),
             query: Default::default(),
-            graph_specification: Default::default(),
+            ontology_catalog: Default::default(),
             prompt: Default::default(),
             ingest: Default::default(),
             types: Default::default(),

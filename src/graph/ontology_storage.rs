@@ -3,8 +3,8 @@
 //! The default backend, [`JsonFileOntologyCatalogStorage`], reads and
 //! writes a single JSON file. Custom backends (Postgres, S3, an HTTP
 //! service) implement the [`OntologyCatalogStorage`] trait and can be
-//! plugged into [`super::PromptGenerator`] via
-//! [`super::PromptGenerator::from_storage`].
+//! plugged into [`crate::prompt::PromptGenerator`] via
+//! [`crate::prompt::PromptGenerator::from_storage`].
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -34,9 +34,12 @@ pub trait OntologyCatalogStorage: Send + Sync + std::fmt::Debug {
 }
 
 /// A shared, dynamically-typed storage handle. Convenient for wiring a
-/// backend into [`super::PromptGenerator`] without leaking the concrete
+/// backend into [`crate::prompt::PromptGenerator`] without leaking the concrete
 /// type through call sites.
 pub type SharedOntologyCatalogStorage = Arc<dyn OntologyCatalogStorage>;
+
+/// Default on-disk location for the JSON catalog cache.
+pub const DEFAULT_ONTOLOGY_CATALOG_CACHE_PATH: &str = ".linguagraph/ontology_catalog.json";
 
 /// Filesystem-backed storage: reads and atomically rewrites a single
 /// JSON file holding the full catalog.
@@ -52,6 +55,16 @@ impl JsonFileOntologyCatalogStorage {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    pub fn default_path() -> PathBuf {
+        PathBuf::from(DEFAULT_ONTOLOGY_CATALOG_CACHE_PATH)
+    }
+}
+
+impl Default for JsonFileOntologyCatalogStorage {
+    fn default() -> Self {
+        Self::new(Self::default_path())
     }
 }
 
@@ -114,7 +127,7 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::super::ontology::{DomainOntology, EntityTypeSpec, RelationTypeSpec};
+    use super::super::{DomainOntology, EntityTypeSpec, RelationTypeSpec};
     use super::*;
 
     static COUNTER: AtomicU64 = AtomicU64::new(0);

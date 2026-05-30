@@ -5,25 +5,35 @@ use std::collections::{BTreeMap, HashMap};
 use serde_json::Value;
 
 use crate::ast::query::Literal;
-use crate::graph::{EntityGraph, EntityRef, Graph, GraphBuilder, GraphSpecification, PropertyType};
+use crate::graph::{
+    DomainOntology, EntityGraph, EntityRef, EntityTypeSpec, Graph, GraphBuilder, OntologyCatalog,
+    OntologyPropertyType, PropertySpec, PropertyType, RelationTypeSpec,
+};
 
 use super::{extract, Extracted, MapperError, Mapping};
+
+/// Default domain used by [`catalog_from_mapping`] when the mapping
+/// document doesn't carry its own. Picked to match what senseflowai
+/// historically used for raw JSON ingest paths.
+pub const DEFAULT_MAPPING_DOMAIN: &str = "mapping";
 
 /// Result of mapping raw JSON into graph-native structures.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MappedGraph {
     pub graph: Graph,
-    pub specification: GraphSpecification,
+    pub catalog: OntologyCatalog,
+    pub domain: String,
 }
 
 impl MappedGraph {
-    pub fn into_parts(self) -> (Graph, GraphSpecification) {
-        (self.graph, self.specification)
+    pub fn into_parts(self) -> (Graph, OntologyCatalog, String) {
+        (self.graph, self.catalog, self.domain)
     }
 }
 
-/// Build an ingestion [`Graph`] and [`GraphSpecification`] from raw JSON
-/// plus a mapping document.
+/// Build an ingestion [`Graph`] and [`OntologyCatalog`] entries from raw
+/// JSON plus a mapping document. The catalog is built under the
+/// mapping's `domain` (or [`DEFAULT_MAPPING_DOMAIN`] when unset).
 ///
 /// This is the bridge from the mapper layer to the graph-only ingestion
 /// pipeline. It preserves the mapper's existing extraction behavior:
@@ -34,15 +44,24 @@ impl MappedGraph {
 /// * relationship endpoints are inferred from extraction context prefixes.
 pub fn to_graph(mapping: &Mapping, data: &Value) -> Result<MappedGraph, MapperError> {
     let extracted = extract(mapping, data)?;
-    let graph = graph_from_extracted(mapping, &extracted)?;
-    let specification = specification_from_mapping(mapping)?;
+    let domain = mapping
+        .domain
+        .clone()
+        .unwrap_or_else(|| DEFAULT_MAPPING_DOMAIN.to_string());
+    let graph = graph_from_extracted(mapping, &extracted, &domain)?;
+    let catalog = catalog_from_mapping(mapping, &domain)?;
     Ok(MappedGraph {
         graph,
-        specification,
+        catalog,
+        domain,
     })
 }
 
-fn graph_from_extracted(mapping: &Mapping, extracted: &Extracted) -> Result<Graph, MapperError> {
+fn graph_from_extracted(
+    mapping: &Mapping,
+    extracted: &Extracted,
+    domain: &str,
+) -> Result<Graph, MapperError> {
     let mut builder = match mapping.source.as_deref() {
         Some(source) if !source.trim().is_empty() => GraphBuilder::with_source(source),
         _ => GraphBuilder::new(),
@@ -87,6 +106,7 @@ fn graph_from_extracted(mapping: &Mapping, extracted: &Extracted) -> Result<Grap
 
         for id in order {
             let mut entity = EntityGraph::new(ent.label.clone())
+                .domain(domain)
                 .strict_primary_key(ent.primary_key_field.clone());
             if let Some(properties) = rows.remove(&id) {
                 for (name, (property_type, value)) in properties {
@@ -162,17 +182,15 @@ fn property_types_by_name(
         .collect()
 }
 
-fn specification_from_mapping(mapping: &Mapping) -> Result<GraphSpecification, MapperError> {
-    let mut spec = GraphSpecification::new();
+fn catalog_from_mapping(mapping: &Mapping, domain: &str) -> Result<OntologyCatalog, MapperError> {
+    let mut entity_types: Vec<EntityTypeSpec> = Vec::with_capacity(mapping.entities.len());
     for entity in &mapping.entities {
-        spec.add_entity(
-            entity.kind.clone(),
-            entity
-                .description
-                .clone()
-                .or_else(|| entity.name.clone())
-                .unwrap_or_default(),
-        );
+        let description = entity
+            .description
+            .clone()
+            .or_else(|| entity.name.clone());
+
+        let mut props: Vec<PropertySpec> = Vec::with_capacity(entity.properties.len() + 1);
 
         let pk_name = primary_key_property_name(entity);
         if !entity
@@ -180,24 +198,62 @@ fn specification_from_mapping(mapping: &Mapping) -> Result<GraphSpecification, M
             .iter()
             .any(|property| property.name == pk_name)
         {
-            spec.add_property(
-                entity.kind.clone(),
-                pk_name,
-                PropertyType::String,
-                "Primary key.",
-            );
+            props.push(PropertySpec {
+                name: pk_name,
+                description: Some("Primary key.".into()),
+                property_type: OntologyPropertyType::String,
+                required: true,
+            });
         }
 
         for property in &entity.properties {
-            spec.add_property(
-                entity.kind.clone(),
-                property.name.clone(),
-                graph_property_type(property.type_name())?,
-                property.description.clone().unwrap_or_default(),
-            );
+            props.push(PropertySpec {
+                name: property.name.clone(),
+                description: property.description.clone(),
+                property_type: ontology_property_type(property.type_name())?,
+                required: false,
+            });
         }
+
+        entity_types.push(EntityTypeSpec {
+            name: entity.kind.clone(),
+            description,
+            properties: props,
+            embedding: None,
+        });
     }
-    Ok(spec)
+
+    let mut relation_types: Vec<RelationTypeSpec> = Vec::with_capacity(mapping.relationships.len());
+    for rel in &mapping.relationships {
+        relation_types.push(RelationTypeSpec {
+            name: rel.kind.clone(),
+            description: None,
+        });
+    }
+
+    let mut catalog = OntologyCatalog::default();
+    catalog.insert(
+        domain,
+        DomainOntology {
+            entity_types,
+            relation_types,
+        },
+    );
+    Ok(catalog)
+}
+
+fn ontology_property_type(type_name: &str) -> Result<OntologyPropertyType, MapperError> {
+    match type_name {
+        "String" => Ok(OntologyPropertyType::String),
+        "Text" | "SemanticText" => Ok(OntologyPropertyType::Text),
+        "Number" | "Int" => Ok(OntologyPropertyType::Int),
+        "Float" => Ok(OntologyPropertyType::Float),
+        "Boolean" | "Bool" => Ok(OntologyPropertyType::Bool),
+        "Date" => Ok(OntologyPropertyType::Date),
+        "DateTime" | "Datetime" | "Timestamp" => Ok(OntologyPropertyType::Datetime),
+        "List" => Ok(OntologyPropertyType::List),
+        other => Err(MapperError::UnknownPropertyType(other.to_string())),
+    }
 }
 
 fn primary_key_property_name(entity: &super::EntityMapping) -> String {

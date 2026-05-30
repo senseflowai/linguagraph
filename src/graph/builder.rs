@@ -442,6 +442,15 @@ impl EntityBuilder<'_> {
         self
     }
 
+    /// Tag this entity with an ontology domain. The planner emits the
+    /// domain as a second Cypher label (e.g. `(:LegalNorm:legal)`),
+    /// which lets live-schema introspection resolve descriptions for
+    /// this node from the corresponding [`OntologyCatalog`] entry.
+    pub fn domain(mut self, domain: impl Into<String>) -> Self {
+        self.entity = self.entity.domain(domain);
+        self
+    }
+
     pub fn strict_primary_key(mut self, field: impl Into<String>) -> Self {
         self.entity = self.entity.strict_primary_key(field);
         self

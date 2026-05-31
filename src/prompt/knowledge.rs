@@ -63,7 +63,7 @@ pub fn render_knowledge_extract_prompt(domain: &str, ontology: &DomainOntology) 
     out.push_str("\n\n");
     out.push_str(ANTI_HALLUCINATION_SECTION);
     out.push_str("\n\n");
-    render_output_section(&mut out, &ontology.entity_types);
+    out.push_str(OUTPUT_SECTION);
     out.push_str("\n\n");
     out.push_str(SELF_VALIDATION_SECTION);
     out.push_str("\n\n");
@@ -119,15 +119,6 @@ fn render_entity_list(out: &mut String, types: &[EntityTypeSpec]) {
                 }
             }
         }
-    }
-}
-
-fn render_output_section(out: &mut String, entity_types: &[EntityTypeSpec]) {
-    let has_props = entity_types.iter().any(|t| !t.properties.is_empty());
-    if has_props {
-        out.push_str(OUTPUT_SECTION_WITH_PROPERTIES);
-    } else {
-        out.push_str(OUTPUT_SECTION);
     }
 }
 
@@ -273,41 +264,6 @@ You MUST output ONLY a valid JSON object.
 
 ## Compact Shape
 
-```json
-{
-  \"entities\": [
-    {\"id\":\"e1\",\"type\":\"TypeName\",\"name\":\"string\"},
-    {\"id\":\"e2\",\"type\":\"TypeName\",\"name\":\"string\"}
-  ],
-  \"relations\": [
-    {\"s\":\"e1\",\"o\":\"e2\",\"t\":\"RELATION_TYPE\"}
-  ]
-}
-```
-
-In relations: `s` = subject (source entity id), `o` = object (target id),
-`t` = relation type (UPPER_SNAKE).
-
-## Constraints
-
-* No extra fields
-* No comments, markdown, explanations
-* Top-level keys MUST be exactly: `entities`, `relations`
-* Entity keys MUST be exactly: `id`, `type`, `name`
-* Relation keys MUST be exactly: `s`, `o`, `t`";
-
-pub const OUTPUT_SECTION_WITH_PROPERTIES: &str = "# 🔹 OUTPUT MODE (CRITICAL)
-
-You MUST output ONLY a valid JSON object.
-
-- Output MUST start with `{` and end with `}`
-- No text before or after JSON
-- No markdown
-- No code fences
-- No explanations
-
-## Compact Shape
-
 To minimize tokens, properties are placed **inline** in the entity object
 (no wrapping `properties` key), and relations use short keys `s`/`o`/`t`:
 
@@ -332,11 +288,11 @@ These keys have fixed meaning and are NOT properties:
 
 * `id` — local string id (referenced by relations)
 * `type` — entity type from the ontology
-* `name` — canonical name (string)
 
 **Every other key in the entity object is treated as an ontology property
-for that entity type.** Use ONLY property names declared for the entity's
-type in the ontology — never invent new keys.
+for that entity type — including `name` if the ontology declares it.**
+Use ONLY property names declared for the entity's type in the ontology
+— never invent new keys.
 
 ## Property Value Types
 
@@ -457,6 +413,11 @@ mod tests {
         assert!(p.contains("\"t\":\"RELATION_TYPE\""));
         // Old verbose keys MUST NOT appear in the example.
         assert!(!p.contains("\"from\": \"e1\""));
+        // Reserved keys list MUST NOT include `name` — it's an ordinary
+        // property now.
+        assert!(p.contains("`id` — local string id"));
+        assert!(p.contains("`type` — entity type from the ontology"));
+        assert!(!p.contains("`name` — canonical name"));
     }
 
     #[test]
@@ -512,9 +473,10 @@ mod tests {
     }
 
     #[test]
-    fn output_section_with_properties_used_when_specs_present() {
+    fn output_section_is_unified_regardless_of_properties() {
         use crate::graph::{OntologyPropertyType, PropertySpec};
-        let onto = DomainOntology {
+        // With properties.
+        let with_props = DomainOntology {
             entity_types: vec![EntityTypeSpec {
                 name: "Invoice".to_string(),
                 description: None,
@@ -528,26 +490,26 @@ mod tests {
             }],
             relation_types: vec![],
         };
-        let p = render_knowledge_extract_prompt("demo", &onto);
-        // New compact format: properties are inline; no wrapping `properties` key.
-        assert!(p.contains("Compact Shape"));
-        assert!(p.contains("Reserved Entity Keys"));
-        assert!(p.contains("Property Value Types"));
-        // Inline property example present.
-        assert!(p.contains("\"prop_a\":\"value\""));
-        // The wrapping `"properties": {` block must be gone from the schema.
-        assert!(!p.contains("\"properties\": {"));
-    }
-
-    #[test]
-    fn output_section_without_properties_when_no_specs() {
-        let onto = DomainOntology {
+        // Without properties.
+        let no_props = DomainOntology {
             entity_types: vec![EntityTypeSpec::new("Foo")],
             relation_types: vec![],
         };
-        let p = render_knowledge_extract_prompt("demo", &onto);
-        assert!(!p.contains("Property Value Types"));
-        assert!(p.contains("\"name\":\"string\""));
+        let p_with = render_knowledge_extract_prompt("demo", &with_props);
+        let p_no = render_knowledge_extract_prompt("demo", &no_props);
+        // Both prompts contain the same OUTPUT sections.
+        assert!(p_with.contains("Compact Shape"));
+        assert!(p_no.contains("Compact Shape"));
+        assert!(p_with.contains("Reserved Entity Keys"));
+        assert!(p_no.contains("Reserved Entity Keys"));
+        assert!(p_with.contains("Property Value Types"));
+        assert!(p_no.contains("Property Value Types"));
+        // The unified inline example MUST appear in both.
+        assert!(p_with.contains("\"prop_a\":\"value\""));
+        assert!(p_no.contains("\"prop_a\":\"value\""));
+        // No wrapping `"properties": {` block in either.
+        assert!(!p_with.contains("\"properties\": {"));
+        assert!(!p_no.contains("\"properties\": {"));
     }
 
     #[test]

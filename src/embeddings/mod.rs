@@ -162,7 +162,7 @@ pub fn default_reranker(
     ))))
 }
 
-fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+pub(crate) fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     debug_assert_eq!(a.len(), b.len());
     let mut dot = 0.0f32;
     let mut a_norm = 0.0f32;

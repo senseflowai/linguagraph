@@ -35,7 +35,7 @@ use crate::ast::query::Literal;
 use crate::builder::CypherQuery;
 use crate::config::SoftMergeConfig;
 use crate::db::{GraphClient, Value as DbValue};
-use crate::embeddings::Embedder;
+use crate::embeddings::{cosine_similarity, Embedder};
 use crate::graph::{Graph, PrimaryKey};
 use crate::ingest::IngestError;
 use crate::types::handlers::semantic_text;
@@ -47,8 +47,14 @@ pub struct SoftMergeReport {
     /// Number of soft-merge candidates considered (entities with
     /// `PrimaryKey::Soft` and a non-empty key property).
     pub candidates: usize,
-    /// Number of candidates that were rewritten to a canonical value.
+    /// Number of candidates that were rewritten to a canonical value
+    /// fetched from a pre-existing graph node via Qdrant.
     pub rewrites: usize,
+    /// Number of candidates collapsed onto an in-batch representative
+    /// before talking to Qdrant. Each duplicate's primary-key property
+    /// is rewritten to match the representative's, so the standard
+    /// Cypher MERGE then folds the duplicates into one node.
+    pub in_batch_dedup_collapsed: usize,
 }
 
 /// Resolve `PrimaryKey::Soft` entities in `graph` against the existing
@@ -94,7 +100,17 @@ pub async fn resolve_soft_keys(
     }
 
     let mut report = SoftMergeReport::default();
-    for ((label, field), group) in groups {
+    for ((label, field), mut group) in groups {
+        // In-batch deduplication: collapse near-identical embeddings
+        // within this group onto a single representative before talking
+        // to Qdrant. Duplicates have their primary-key property
+        // rewritten to match the representative, so the standard Cypher
+        // MERGE later folds them into one node. We skip the Qdrant
+        // round-trip for duplicates entirely; only representatives go
+        // out to similarity search.
+        let collapsed = deduplicate_in_batch(graph, &mut group, &field, cfg)?;
+        report.in_batch_dedup_collapsed += collapsed;
+
         report.candidates += group.len();
         let collection = semantic_text::with_prefix_index(
             prefix_index,
@@ -166,6 +182,97 @@ struct Candidate {
 struct EmbeddedCandidate {
     entity_index: usize,
     vec: Vec<f32>,
+}
+
+/// Collapse near-identical embeddings within `group` onto a single
+/// representative. For every duplicate, rewrite the entity's
+/// soft-merge property (`field`) to match the representative's value
+/// in `graph` — the standard Cypher MERGE then folds the two rows
+/// into one node. The duplicate is also removed from `group` so the
+/// downstream Qdrant query only carries representatives.
+///
+/// Single-link clustering by cosine similarity against the configured
+/// threshold. Within a single ingest, identical or near-identical LLM
+/// extractions ("Microsoft" vs "Microsoft Corp.") collapse here
+/// instead of producing two separate nodes that may or may not merge
+/// at the database level depending on whether one of them happens to
+/// match a pre-existing node first.
+fn deduplicate_in_batch(
+    graph: &mut Graph,
+    group: &mut Vec<EmbeddedCandidate>,
+    field: &str,
+    cfg: &SoftMergeConfig,
+) -> Result<usize, IngestError> {
+    if group.len() < 2 {
+        return Ok(0);
+    }
+    let threshold = cfg.similarity_threshold as f32;
+
+    // Indices into `group` of cluster representatives chosen so far.
+    let mut representatives: Vec<usize> = Vec::with_capacity(group.len());
+    // For each index in `group`, the representative it was assigned to
+    // (`None` for representatives themselves).
+    let mut assignment: Vec<Option<usize>> = vec![None; group.len()];
+
+    for i in 0..group.len() {
+        let mut best: Option<(usize, f32)> = None;
+        for &rep in &representatives {
+            let sim = cosine_similarity(&group[i].vec, &group[rep].vec);
+            if sim >= threshold {
+                match best {
+                    Some((_, current)) if sim <= current => {}
+                    _ => best = Some((rep, sim)),
+                }
+            }
+        }
+        match best {
+            Some((rep, _)) => assignment[i] = Some(rep),
+            None => representatives.push(i),
+        }
+    }
+
+    let mut collapsed = 0usize;
+    for (i, maybe_rep) in assignment.iter().enumerate() {
+        let Some(rep_index) = *maybe_rep else { continue };
+        let rep_entity_index = group[rep_index].entity_index;
+        let dup_entity_index = group[i].entity_index;
+        let canonical_value = {
+            let rep_entity = graph.entities_mut().get(rep_entity_index).ok_or_else(|| {
+                IngestError::SoftMerge(format!(
+                    "in-batch dedup: representative idx {rep_entity_index} out of bounds"
+                ))
+            })?;
+            rep_entity
+                .properties
+                .get(field)
+                .map(|p| p.value.clone())
+                .ok_or_else(|| {
+                    IngestError::SoftMerge(format!(
+                        "in-batch dedup: representative missing field `{field}`"
+                    ))
+                })?
+        };
+        let dup_entity = graph.entities_mut().get_mut(dup_entity_index).ok_or_else(|| {
+            IngestError::SoftMerge(format!(
+                "in-batch dedup: duplicate idx {dup_entity_index} out of bounds"
+            ))
+        })?;
+        if let Some(prop) = dup_entity.properties.get_mut(field) {
+            prop.value = canonical_value;
+            collapsed += 1;
+        }
+    }
+
+    // Filter group down to representatives only. Order preserved.
+    let keep: std::collections::BTreeSet<usize> = representatives.into_iter().collect();
+    let mut idx = 0usize;
+    group.retain(|_| {
+        let k = keep.contains(&idx);
+        idx += 1;
+        k
+    });
+
+    Ok(collapsed)
 }
 
 fn collect_candidates(graph: &Graph) -> Result<Vec<Candidate>, IngestError> {
@@ -541,5 +648,143 @@ mod tests {
             &Literal::String("Tenant1__semantic_text__name".into()),
             "soft-merge collection must fold in the prefix_index"
         );
+    }
+
+    /// Embedder that returns a pre-baked vector for each known input.
+    /// Lets in-batch dedup tests force two texts to either share an
+    /// embedding (collapse) or hold opposite ones (stay separate).
+    #[derive(Debug)]
+    struct StubEmbedder {
+        dim: usize,
+        map: std::collections::HashMap<String, Vec<f32>>,
+    }
+
+    impl StubEmbedder {
+        fn new(dim: usize, pairs: Vec<(&'static str, Vec<f32>)>) -> Self {
+            Self {
+                dim,
+                map: pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+            }
+        }
+    }
+
+    impl Embedder for StubEmbedder {
+        fn dim(&self) -> usize {
+            self.dim
+        }
+
+        fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbedError> {
+            texts
+                .iter()
+                .map(|t| {
+                    self.map.get(*t).cloned().ok_or_else(|| {
+                        EmbedError::Backend(format!("StubEmbedder: no vector for `{t}`"))
+                    })
+                })
+                .collect()
+        }
+    }
+
+    use crate::embeddings::EmbedError;
+
+    fn normalised(mut v: Vec<f32>) -> Vec<f32> {
+        let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+        if norm > 0.0 {
+            for x in &mut v {
+                *x /= norm;
+            }
+        }
+        v
+    }
+
+    #[tokio::test]
+    async fn in_batch_dedup_collapses_above_threshold() {
+        // Two soft entities with almost-identical embeddings end up
+        // with the same primary-key value after dedup; only one of
+        // them goes out to Qdrant.
+        let client = Arc::new(MockClient::new());
+        client.enqueue(QueryResult::default()); // no Qdrant hit
+
+        let mut b = GraphBuilder::new();
+        b.add_entity(entity_named("Microsoft"));
+        b.add_entity(entity_named("Microsoft Corp."));
+        let mut graph = b.build();
+
+        let embedder = StubEmbedder::new(
+            3,
+            vec![
+                ("Microsoft", normalised(vec![1.0, 0.0, 0.0])),
+                ("Microsoft Corp.", normalised(vec![0.99, 0.01, 0.0])),
+            ],
+        );
+
+        let report = resolve_soft_keys(
+            &mut graph,
+            &embedder,
+            client.as_ref(),
+            &cfg(),
+            "semantic_text",
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(report.in_batch_dedup_collapsed, 1);
+        // Duplicate's `name` was rewritten to representative's value.
+        let names: Vec<&serde_json::Value> = graph
+            .entities()
+            .iter()
+            .map(|e| &e.properties["name"].value)
+            .collect();
+        assert_eq!(names[0], &json!("Microsoft"));
+        assert_eq!(names[1], &json!("Microsoft"));
+        // Only the representative went out to Qdrant (one captured query).
+        let captured = client.captured.lock().unwrap();
+        assert_eq!(captured.len(), 1);
+        let rows = captured[0]
+            .params
+            .get("rows")
+            .expect("rows param must be bound");
+        if let Literal::List(items) = rows {
+            assert_eq!(items.len(), 1, "only the representative should hit Qdrant");
+        } else {
+            panic!("rows param must be a list");
+        }
+    }
+
+    #[tokio::test]
+    async fn in_batch_dedup_below_threshold_keeps_both() {
+        // Two soft entities with orthogonal embeddings stay distinct;
+        // both proceed to Qdrant search.
+        let client = Arc::new(MockClient::new());
+        client.enqueue(QueryResult::default());
+
+        let mut b = GraphBuilder::new();
+        b.add_entity(entity_named("apple"));
+        b.add_entity(entity_named("car"));
+        let mut graph = b.build();
+
+        let embedder = StubEmbedder::new(
+            3,
+            vec![
+                ("apple", normalised(vec![1.0, 0.0, 0.0])),
+                ("car", normalised(vec![0.0, 1.0, 0.0])),
+            ],
+        );
+
+        let report = resolve_soft_keys(
+            &mut graph,
+            &embedder,
+            client.as_ref(),
+            &cfg(),
+            "semantic_text",
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(report.in_batch_dedup_collapsed, 0);
+        assert_eq!(graph.entities()[0].properties["name"].value, json!("apple"));
+        assert_eq!(graph.entities()[1].properties["name"].value, json!("car"));
     }
 }

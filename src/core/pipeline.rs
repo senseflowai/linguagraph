@@ -309,12 +309,7 @@ impl Pipeline {
                 dsl.prefix_index = Some(p.clone());
             }
         }
-        let mut q = from_dsl::lower_full(
-            dsl,
-            self.max_depth,
-            &self.registry,
-            catalog.as_deref(),
-        )?;
+        let mut q = from_dsl::lower_full(dsl, self.max_depth, &self.registry, catalog.as_deref())?;
         if q.limit.is_none() {
             q.limit = Some(self.default_limit);
         }

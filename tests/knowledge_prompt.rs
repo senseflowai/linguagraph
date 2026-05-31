@@ -1,16 +1,18 @@
 //! Integration tests for the knowledge-extraction prompt generator.
 
-use linguagraph::prompt::{
-    render_knowledge_extract_prompt, DomainOntology, EntityTypeSpec,
-    InMemoryOntologyCatalogStorage, OntologyCatalog, OntologyCatalogStorage, PromptGenerator,
-    RelationTypeSpec,
+use linguagraph::{
+    graph::{
+        DomainOntology, EntityTypeSpec, InMemoryOntologyCatalogStorage, OntologyCatalog,
+        OntologyCatalogStorage, RelationTypeSpec,
+    },
+    prompt::{render_knowledge_extract_prompt, PromptGenerator},
 };
 
 #[test]
 fn builtin_legal_domain_renders_with_legal_vocabulary() {
     let generator = PromptGenerator::with_builtin_catalog();
     let p = generator
-        .knowledge_extract_prompt("some legal text", Some("legal"))
+        .knowledge_extract_prompt(Some("legal"))
         .expect("legal domain must be present in built-in catalog");
 
     // Spot-check a few of the bundled defaults are in the rendered list.
@@ -33,7 +35,7 @@ fn custom_entity_and_relation_types_are_used() {
             RelationTypeSpec::with_description("CONTAINS", "Article contains a sub-article."),
         ],
     };
-    let p = render_knowledge_extract_prompt("Article 1 cites Article 2.", "custom", &ontology);
+    let p = render_knowledge_extract_prompt("custom", &ontology);
     assert!(p.contains("* `Article`"));
     assert!(p.contains("* `Citation` — Reference to another article."));
     assert!(p.contains("* `CITES`"));
@@ -69,13 +71,11 @@ fn prompt_json_shape_is_valid_json_with_expected_fields() {
 }
 
 #[test]
-fn fragment_is_embedded_in_a_code_block() {
+fn prompt_does_not_embed_fragment_text() {
     let generator = PromptGenerator::with_builtin_catalog();
-    let p = generator
-        .knowledge_extract_prompt("The court grants the right to appeal.", Some("legal"))
-        .unwrap();
-    assert!(p.contains("# 🔹 Text Fragment"));
-    assert!(p.contains("```\nThe court grants the right to appeal."));
+    let p = generator.knowledge_extract_prompt(Some("legal")).unwrap();
+    assert!(!p.contains("# 🔹 Text Fragment"));
+    assert!(!p.contains("The court grants the right to appeal."));
 }
 
 #[tokio::test]
@@ -96,16 +96,13 @@ async fn custom_storage_backend_drives_the_generator() {
             ],
         },
     );
-    let storage: InMemoryOntologyCatalogStorage =
-        InMemoryOntologyCatalogStorage::new(catalog);
+    let storage: InMemoryOntologyCatalogStorage = InMemoryOntologyCatalogStorage::new(catalog);
     // Verify the trait-level API too.
     let loaded = OntologyCatalogStorage::load(&storage).await.unwrap();
     assert!(loaded.get("medical").is_some());
 
     let generator = PromptGenerator::from_storage(&storage).await.unwrap();
-    let p = generator
-        .knowledge_extract_prompt("Patient presents with fever.", Some("medical"))
-        .unwrap();
+    let p = generator.knowledge_extract_prompt(Some("medical")).unwrap();
     assert!(p.contains("* `Disease` — A pathological condition."));
     assert!(p.contains("* `Symptom`"));
     assert!(p.contains("* `CAUSES`"));
@@ -132,9 +129,7 @@ fn extending_a_domain_ontology_at_runtime() {
         .push(RelationTypeSpec::new("REFERENCES_EXTERNAL"));
 
     let generator = PromptGenerator::new(catalog);
-    let p = generator
-        .knowledge_extract_prompt("x", Some("legal"))
-        .unwrap();
+    let p = generator.knowledge_extract_prompt(Some("legal")).unwrap();
     assert!(p.contains("* `LegalNorm`"));
     assert!(p.contains("* `CustomThing`"));
     assert!(p.contains("* `GRANTS`"));

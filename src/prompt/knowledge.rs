@@ -1,8 +1,8 @@
 //! Prompt renderer for the LLM **knowledge extractor**.
 //!
-//! Given a text fragment and a [`DomainOntology`], produces a complete
-//! system+user prompt instructing the LLM to extract entities and relations
-//! as JSON. The caller parses the JSON output, converts it to a
+//! Given a [`DomainOntology`], produces a complete system prompt instructing
+//! the LLM to extract entities and relations as JSON. The caller parses the
+//! JSON output, converts it to a
 //! [`crate::graph::Graph`], and feeds it to [`crate::core::Pipeline::ingest`].
 //!
 //! Pure function — no I/O.
@@ -17,27 +17,22 @@ use crate::graph::{DomainOntology, EntityTypeSpec, OntologyPropertyType, Relatio
 /// pull the sections directly can do the substitution themselves.
 pub const DOMAIN_PLACEHOLDER: &str = "{domain}";
 
-/// Render the knowledge-extraction prompt for `fragment` using the
-/// entity/relation vocabulary defined in `ontology`.
+/// Render the knowledge-extraction system prompt using the entity/relation
+/// vocabulary defined in `ontology`.
 ///
 /// `domain` is the human label substituted into the prompt's framing
 /// (role, input structure, rules) — e.g. `"legal"`, `"medical"`. It is
 /// only a label; the actual vocabulary comes from `ontology`.
 ///
-/// The returned string is the *complete* prompt — system rules first,
-/// then the text fragment under a clearly-labelled section. The LLM is
-/// instructed to output **only** JSON. When entity types define `properties`,
-/// the shape includes an optional `properties` dict:
+/// The returned string is the complete system prompt. The LLM is instructed to
+/// output **only** JSON. When entity types define `properties`, the shape
+/// includes inline property keys:
 ///
 /// ```json
-/// {"entities":[{"id":"e1","type":"...","name":"...","properties":{"p1":"..."}}],
-///  "relations":[{"from":"e1","to":"e2","type":"..."}]}
+/// {"entities":[{"id":"e1","type":"...","name":"...","p1":"..."}],
+///  "relations":[{"s":"e1","o":"e2","t":"..."}]}
 /// ```
-pub fn render_knowledge_extract_prompt(
-    fragment: &str,
-    domain: &str,
-    ontology: &DomainOntology,
-) -> String {
+pub fn render_knowledge_extract_prompt(domain: &str, ontology: &DomainOntology) -> String {
     let mut out = String::with_capacity(4096);
 
     out.push_str(ROLE_SECTION);
@@ -77,21 +72,7 @@ pub fn render_knowledge_extract_prompt(
     out.push_str(FINAL_CHECKLIST_SECTION);
     out.push_str("\n\n");
 
-    // Substitute the domain placeholder in the rules sections built so
-    // far. The fragment is appended afterward so its content is never
-    // touched by the substitution.
-    let mut out = out.replace(DOMAIN_PLACEHOLDER, domain);
-
-    // Text fragment — last so it's the freshest context window slice.
-    out.push_str("# 🔹 Text Fragment\n\n");
-    out.push_str("```\n");
-    out.push_str(fragment);
-    if !fragment.ends_with('\n') {
-        out.push('\n');
-    }
-    out.push_str("```\n");
-
-    out
+    out.replace(DOMAIN_PLACEHOLDER, domain)
 }
 
 /// Lexical label for an ontology property type. Must match exactly the
@@ -123,7 +104,11 @@ fn render_entity_list(out: &mut String, types: &[EntityTypeSpec]) {
             let _ = writeln!(out, "  Properties:");
             for p in &t.properties {
                 let type_str = property_type_label(p.property_type);
-                let req = if p.required { " (required)" } else { " (optional)" };
+                let req = if p.required {
+                    " (required)"
+                } else {
+                    " (optional)"
+                };
                 match &p.description {
                     Some(d) => {
                         let _ = writeln!(out, "  * `{}` ({type_str}){req} — {d}", p.name);
@@ -170,7 +155,7 @@ pub const ROLE_SECTION: &str = "## 🔹 Role
 
 You are an expert knowledge engineer specializing in **{domain} information extraction**, **ontology-driven semantic modeling**, and **embedding-optimized canonicalization**.
 
-Your task is to extract structured knowledge from a {domain} text fragment and produce a **semantically consistent, embedding-ready representation**.
+Your task is to extract structured knowledge from {domain} text supplied by the user and produce a **semantically consistent, embedding-ready representation**.
 
 You must strictly distinguish between:
 
@@ -181,7 +166,7 @@ pub const INPUT_STRUCTURE_SECTION: &str = "## 🔹 Input Structure
 
 The input contains:
 
-* **Text Fragment** — authoritative {domain} content";
+* authoritative {domain} content supplied by the user";
 
 pub const CORE_PRINCIPLES_SECTION: &str = "## 🔹 Core Principles
 
@@ -419,7 +404,7 @@ mod tests {
             entity_types: vec![EntityTypeSpec::new("Foo"), EntityTypeSpec::new("Bar")],
             relation_types: vec![RelationTypeSpec::new("KNOWS")],
         };
-        let p = render_knowledge_extract_prompt("hello", "demo", &onto);
+        let p = render_knowledge_extract_prompt("demo", &onto);
         assert!(p.contains("* `Foo`"));
         assert!(p.contains("* `Bar`"));
         assert!(p.contains("* `KNOWS`"));
@@ -434,17 +419,16 @@ mod tests {
             entity_types: vec![EntityTypeSpec::new("X")],
             relation_types: vec![RelationTypeSpec::new("works-at")],
         };
-        let p = render_knowledge_extract_prompt("t", "demo", &onto);
+        let p = render_knowledge_extract_prompt("demo", &onto);
         assert!(p.contains("* `WORKS-AT`"));
     }
 
     #[test]
-    fn fragment_appears_at_the_end() {
+    fn prompt_does_not_include_a_fragment_section() {
         let onto = DomainOntology::default();
-        let p = render_knowledge_extract_prompt("the court grants the right", "legal", &onto);
-        let idx_fragment = p.find("the court grants the right").unwrap();
-        let idx_rules = p.find("# 🔹 Final Checklist").unwrap();
-        assert!(idx_fragment > idx_rules);
+        let p = render_knowledge_extract_prompt("legal", &onto);
+        assert!(!p.contains("# 🔹 Text Fragment"));
+        assert!(!p.contains("```"));
     }
 
     #[test]
@@ -456,14 +440,14 @@ mod tests {
             )],
             relation_types: vec![RelationTypeSpec::with_description("KNOWS", "Acquaintance.")],
         };
-        let p = render_knowledge_extract_prompt("x", "demo", &onto);
+        let p = render_knowledge_extract_prompt("demo", &onto);
         assert!(p.contains("* `Person` — A natural person."));
         assert!(p.contains("* `KNOWS` — Acquaintance."));
     }
 
     #[test]
     fn output_section_specifies_exact_json_shape() {
-        let p = render_knowledge_extract_prompt("x", "demo", &DomainOntology::default());
+        let p = render_knowledge_extract_prompt("demo", &DomainOntology::default());
         assert!(p.contains("\"entities\""));
         assert!(p.contains("\"relations\""));
         assert!(p.contains("\"id\":\"e1\""));
@@ -477,9 +461,9 @@ mod tests {
 
     #[test]
     fn domain_placeholder_is_substituted_into_framing_sections() {
-        let p = render_knowledge_extract_prompt("x", "medical", &DomainOntology::default());
+        let p = render_knowledge_extract_prompt("medical", &DomainOntology::default());
         assert!(p.contains("**medical information extraction**"));
-        assert!(p.contains("from a medical text fragment"));
+        assert!(p.contains("from medical text supplied by the user"));
         assert!(p.contains("authoritative medical content"));
         assert!(p.contains("real-world/medical concept"));
         assert!(p.contains("smallest medical-meaningful unit"));
@@ -487,16 +471,13 @@ mod tests {
         assert!(!p.contains(DOMAIN_PLACEHOLDER));
         // No "legal" framing left over either.
         assert!(!p.contains("legal information extraction"));
-        assert!(!p.contains("legal text fragment"));
+        assert!(!p.contains("legal text supplied by the user"));
     }
 
     #[test]
-    fn domain_substitution_does_not_touch_fragment() {
-        // The fragment text MUST NOT be mutated even if it happens to
-        // contain the placeholder token verbatim.
-        let frag = "raw text including {domain} literally";
-        let p = render_knowledge_extract_prompt(frag, "legal", &DomainOntology::default());
-        assert!(p.contains("raw text including {domain} literally"));
+    fn no_domain_placeholder_remains() {
+        let p = render_knowledge_extract_prompt("legal", &DomainOntology::default());
+        assert!(!p.contains(DOMAIN_PLACEHOLDER));
     }
 
     #[test]
@@ -520,10 +501,11 @@ mod tests {
                         required: false,
                     },
                 ],
+                embedding: None,
             }],
             relation_types: vec![],
         };
-        let p = render_knowledge_extract_prompt("text", "demo", &onto);
+        let p = render_knowledge_extract_prompt("demo", &onto);
         assert!(p.contains("* `Person`"));
         assert!(p.contains("* `first_name` (string) (required)"));
         assert!(p.contains("* `age` (int) (optional) — Age in years."));
@@ -542,10 +524,11 @@ mod tests {
                     property_type: OntologyPropertyType::Float,
                     required: true,
                 }],
+                embedding: None,
             }],
             relation_types: vec![],
         };
-        let p = render_knowledge_extract_prompt("text", "demo", &onto);
+        let p = render_knowledge_extract_prompt("demo", &onto);
         // New compact format: properties are inline; no wrapping `properties` key.
         assert!(p.contains("Compact Shape"));
         assert!(p.contains("Reserved Entity Keys"));
@@ -562,7 +545,7 @@ mod tests {
             entity_types: vec![EntityTypeSpec::new("Foo")],
             relation_types: vec![],
         };
-        let p = render_knowledge_extract_prompt("text", "demo", &onto);
+        let p = render_knowledge_extract_prompt("demo", &onto);
         assert!(!p.contains("Property Value Types"));
         assert!(p.contains("\"name\":\"string\""));
     }
@@ -584,7 +567,7 @@ mod tests {
             }],
             relation_types: vec![],
         };
-        let p = render_knowledge_extract_prompt("t", "demo", &onto);
+        let p = render_knowledge_extract_prompt("demo", &onto);
         // The label must be `text`, matching the suggest-prompt vocabulary.
         assert!(p.contains("* `body` (text) (optional)"));
         // And the old mis-label `(string)` for a Text property must be gone.

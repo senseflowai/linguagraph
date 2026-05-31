@@ -185,10 +185,7 @@ fn property_types_by_name(
 fn catalog_from_mapping(mapping: &Mapping, domain: &str) -> Result<OntologyCatalog, MapperError> {
     let mut entity_types: Vec<EntityTypeSpec> = Vec::with_capacity(mapping.entities.len());
     for entity in &mapping.entities {
-        let description = entity
-            .description
-            .clone()
-            .or_else(|| entity.name.clone());
+        let description = entity.description.clone().or_else(|| entity.name.clone());
 
         let mut props: Vec<PropertySpec> = Vec::with_capacity(entity.properties.len() + 1);
 

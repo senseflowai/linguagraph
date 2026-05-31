@@ -34,14 +34,17 @@ pub fn render_schema_suggest_prompt(
     out.push('\n');
 
     out.push_str("## 🔹 Existing Ontology (READ-ONLY)\n\n");
-    out.push_str("These entity types exist. Listed under each are properties already \
+    out.push_str(
+        "These entity types exist. Listed under each are properties already \
                   defined for it — you MUST NOT propose any property whose name matches \
-                  an existing one.\n\n");
+                  an existing one.\n\n",
+    );
     render_existing_entity_types(&mut out, &ontology.entity_types);
     out.push('\n');
 
     out.push_str("## 🔹 Allowed Property Types\n\n");
-    out.push_str("Use ONLY these `property_type` values (lowercase):\n\n\
+    out.push_str(
+        "Use ONLY these `property_type` values (lowercase):\n\n\
                   * `string`  — short single-line string\n\
                   * `text`    — long free-form text (will be embedded for semantic search)\n\
                   * `int`     — integer\n\
@@ -49,7 +52,8 @@ pub fn render_schema_suggest_prompt(
                   * `bool`    — true/false\n\
                   * `date`    — calendar date (YYYY-MM-DD)\n\
                   * `datetime`— ISO-8601 timestamp\n\
-                  * `list`    — JSON array\n\n");
+                  * `list`    — JSON array\n\n",
+    );
 
     out.push_str("## 🔹 Hard Constraints\n\n\
                   * DO NOT introduce new entity types\n\
@@ -62,18 +66,22 @@ pub fn render_schema_suggest_prompt(
     out.push_str("## 🔹 Output Format (STRICT)\n\n");
     out.push_str("Return ONLY a JSON object of this exact shape:\n\n");
     out.push_str("```json\n");
-    out.push_str("{\n  \"entity_types\": {\n    \"<EntityTypeName>\": [\n      \
+    out.push_str(
+        "{\n  \"entity_types\": {\n    \"<EntityTypeName>\": [\n      \
                   {\"name\":\"<snake_case>\",\"property_type\":\"<one of the allowed types>\",\
-                  \"required\":false,\"description\":\"short why\"}\n    ]\n  }\n}\n");
+                  \"required\":false,\"description\":\"short why\"}\n    ]\n  }\n}\n",
+    );
     out.push_str("```\n\n");
-    out.push_str("Rules:\n\
+    out.push_str(
+        "Rules:\n\
                   * Top-level key MUST be exactly `entity_types`\n\
                   * Property `name` MUST be `snake_case`, unique within its entity type, \
                     and MUST NOT collide with an existing property of that entity type\n\
                   * `required` should be `false` unless the text shows this attribute \
                     is mandatory for every instance\n\
                   * `description` ≤ 80 chars, no newlines\n\
-                  * No comments, no markdown, no text outside the JSON object\n\n");
+                  * No comments, no markdown, no text outside the JSON object\n\n",
+    );
 
     out.push_str("## 🔹 Text Fragment\n\n```\n");
     out.push_str(fragment);
@@ -104,7 +112,11 @@ fn render_existing_entity_types(out: &mut String, types: &[EntityTypeSpec]) {
         } else {
             let _ = writeln!(out, "  Existing properties (DO NOT redefine):");
             for p in &t.properties {
-                let req = if p.required { " (required)" } else { " (optional)" };
+                let req = if p.required {
+                    " (required)"
+                } else {
+                    " (optional)"
+                };
                 let _ = writeln!(
                     out,
                     "  * `{}` ({}){}",
@@ -170,7 +182,14 @@ mod tests {
         // otherwise the suggest output won't deserialize back into PropertySpec.
         let p = render_schema_suggest_prompt("any", "demo", &sample_ontology());
         for label in [
-            "`string`", "`text`", "`int`", "`float`", "`bool`", "`date`", "`datetime`", "`list`",
+            "`string`",
+            "`text`",
+            "`int`",
+            "`float`",
+            "`bool`",
+            "`date`",
+            "`datetime`",
+            "`list`",
         ] {
             assert!(p.contains(label), "missing type label {label}");
         }

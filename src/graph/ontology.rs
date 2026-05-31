@@ -267,7 +267,9 @@ impl OntologyCatalog {
     /// Query-side type id for an `(entity, property)` pair, used by the
     /// DSL lowering to auto-resolve filter handlers (e.g. SemanticText).
     pub fn get_query_type(&self, entity: &str, property: &str) -> Option<&'static str> {
-        self.get_property(entity, property)?.property_type.query_type_id()
+        self.get_property(entity, property)?
+            .property_type
+            .query_type_id()
     }
 
     // ── Mutation ───────────────────────────────────────────────────────
@@ -276,12 +278,7 @@ impl OntologyCatalog {
     /// description and embedding untouched. Creates the domain and entry
     /// when missing. Useful when bootstrapping a workspace catalog from
     /// pre-existing graph labels.
-    pub fn insert_entity_description(
-        &mut self,
-        domain: &str,
-        name: &str,
-        description: &str,
-    ) {
+    pub fn insert_entity_description(&mut self, domain: &str, name: &str, description: &str) {
         let ontology = self.domains.entry(domain.to_string()).or_default();
         match ontology.entity_types.iter_mut().find(|e| e.name == name) {
             Some(existing) => {
@@ -407,8 +404,10 @@ impl OntologyCatalog {
         }
         if let Some(reranker) = reranker {
             if !matches.is_empty() {
-                let documents: Vec<String> =
-                    matches.iter().map(|m| entity_embedding_text(m.entity_type)).collect();
+                let documents: Vec<String> = matches
+                    .iter()
+                    .map(|m| entity_embedding_text(m.entity_type))
+                    .collect();
                 let scores = reranker.rerank(prompt.as_str(), &documents)?;
                 if scores.len() != matches.len() {
                     return Err(EmbedError::Backend(format!(
@@ -449,15 +448,12 @@ impl OntologyCatalog {
             // Pick a domain hint: an explicit `domain` first, then the
             // first `extra_label` that names a known domain in this
             // catalog (this is what the planner stamps at ingest time).
-            let domain_hint = node
-                .domain
-                .clone()
-                .or_else(|| {
-                    node.extra_labels
-                        .iter()
-                        .find(|l| self.domains.contains_key(l.as_str()))
-                        .cloned()
-                });
+            let domain_hint = node.domain.clone().or_else(|| {
+                node.extra_labels
+                    .iter()
+                    .find(|l| self.domains.contains_key(l.as_str()))
+                    .cloned()
+            });
             let (domain, spec) = self.resolve_entity_view(&node.label, domain_hint.as_deref());
             node.domain = domain;
             node.description = spec.and_then(|s| s.description.clone());
@@ -596,11 +592,7 @@ mod tests {
     fn loads_builtin_catalog_with_legal_domain() {
         let cat = OntologyCatalog::builtin();
         let legal = cat.get("legal").expect("legal domain must be present");
-        let entity_names: Vec<&str> = legal
-            .entity_types
-            .iter()
-            .map(|e| e.name.as_str())
-            .collect();
+        let entity_names: Vec<&str> = legal.entity_types.iter().map(|e| e.name.as_str()).collect();
         assert!(entity_names.contains(&"LegalNorm"));
         assert!(entity_names.contains(&"StateBody"));
         let rel_names: Vec<&str> = legal
@@ -673,8 +665,8 @@ mod tests {
 
     #[test]
     fn load_missing_path_errors() {
-        let err = OntologyCatalog::load_from_path(Path::new("/nonexistent/ontologies.json"))
-            .unwrap_err();
+        let err =
+            OntologyCatalog::load_from_path(Path::new("/nonexistent/ontologies.json")).unwrap_err();
         assert!(matches!(err, OntologyError::NotFound(_)));
     }
 

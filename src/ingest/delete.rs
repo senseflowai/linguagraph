@@ -25,8 +25,7 @@ use thiserror::Error;
 use crate::ast::query::Literal;
 use crate::builder::CypherQuery;
 use crate::graph::{
-    OntologyCatalog, OntologyPropertyType, CHUNK_LABEL, MENTION_REL, PART_OF_REL,
-    SOURCE_LABEL,
+    OntologyCatalog, OntologyPropertyType, CHUNK_LABEL, MENTION_REL, PART_OF_REL, SOURCE_LABEL,
 };
 
 /// Errors produced when assembling a [`DeletePlan`].

@@ -452,7 +452,7 @@ declares an `embedding_model`).
 
 ### Knowledge-extraction prompt
 
-`knowledge-prompt` emits a deterministic LLM prompt whose output is a
+`knowledge-prompt` emits a deterministic LLM system prompt whose output is a
 `{entities, relations}` document — exactly the graph-JSON shape `ingest-graph`
 consumes. The entity/relation vocabulary is supplied by a *domain ontology*
 loaded from a JSON catalog; the crate ships a built-in `legal` ontology and
@@ -461,21 +461,18 @@ JSON file.
 
 ```bash
 # Use the built-in legal ontology.
-linguagraph knowledge-prompt fragment.txt --domain legal
+linguagraph knowledge-prompt --domain legal
 
 # When [prompt].default_domain is set in config, --domain is optional.
-linguagraph knowledge-prompt fragment.txt
+linguagraph knowledge-prompt
 
 # Ad-hoc override: ignore the catalog entirely for one run.
-linguagraph knowledge-prompt fragment.txt \
+linguagraph knowledge-prompt \
     --entity-type Article \
     --entity-type Citation \
     --relation-type CITES \
     --relation-type CONTAINS \
     -o extract_prompt.md
-
-# Pipe a fragment in from stdin.
-cat fragment.txt | linguagraph knowledge-prompt - --domain legal
 ```
 
 The built-in `legal` domain:
@@ -532,9 +529,9 @@ use linguagraph::prompt::{
 let generator = PromptGenerator::with_builtin_catalog()
     .with_default_domain("legal");
 
-let prompt = generator.knowledge_extract_prompt(fragment, Some("legal"))?;
+let prompt = generator.knowledge_extract_prompt(Some("legal"))?;
 // or fall back to default_domain:
-let prompt = generator.knowledge_extract_prompt(fragment, None)?;
+let prompt = generator.knowledge_extract_prompt(None)?;
 
 // Extend a built-in domain at runtime.
 let mut catalog = OntologyCatalog::builtin();
@@ -550,7 +547,7 @@ let ad_hoc = DomainOntology {
     entity_types: vec![EntityTypeSpec::new("Article")],
     relation_types: vec![RelationTypeSpec::new("CITES")],
 };
-let prompt = generator.knowledge_extract_prompt_with(fragment, "custom", &ad_hoc);
+let prompt = generator.knowledge_extract_prompt_with("custom", &ad_hoc);
 ```
 
 #### Pluggable storage backend
@@ -728,7 +725,7 @@ to the entity types relevant to a specific natural-language query.
 | `linguagraph ingest-json <data.json> <mapper.json>` | Mapping-driven ingest; execute against the configured DB. |
 | `linguagraph ingest-graph <graph.json>` | Ingest a compact `{entities, relations}` graph JSON. |
 | `linguagraph generate-prompt <data.json>` | Generate a mapping-authoring prompt for an LLM. |
-| `linguagraph knowledge-prompt <fragment.txt> [--domain D] [--entity-type X] [--relation-type Y]` | Generate a knowledge-extraction prompt for a domain ontology. `--entity-type` / `--relation-type` override the catalog for one run. |
+| `linguagraph knowledge-prompt [--domain D] [--entity-type X] [--relation-type Y]` | Generate a knowledge-extraction system prompt for a domain ontology. `--entity-type` / `--relation-type` override the catalog for one run. |
 | `linguagraph delete-by-source --source <name>` | Delete a source-rooted subgraph and its vectors. |
 
 Global flag: `--config <path>` (default `config.toml`). The ingest, `run`,

@@ -136,9 +136,7 @@ pub fn select_query_schema(query: &str, schema: &GraphSchema, opts: &PromptOptio
     // still run the same relationship-expansion loop so the prompt
     // includes the natural neighborhood of the pinned types.
     let seed_labels: Option<std::collections::BTreeSet<String>> = match &opts.pinned_labels {
-        Some(labels) if !labels.is_empty() => {
-            Some(labels.iter().cloned().collect())
-        }
+        Some(labels) if !labels.is_empty() => Some(labels.iter().cloned().collect()),
         _ => None,
     };
 
@@ -259,15 +257,12 @@ fn write_nodes(out: &mut String, nodes: &[NodeKind], catalog: Option<&OntologyCa
     }
     out.push_str("Nodes:\n");
     for n in nodes {
-        let header_desc = n
-            .description
-            .as_deref()
-            .or_else(|| {
-                catalog.and_then(|c| {
-                    c.get_entity(&n.label)
-                        .and_then(|(_, e)| e.description.as_deref())
-                })
-            });
+        let header_desc = n.description.as_deref().or_else(|| {
+            catalog.and_then(|c| {
+                c.get_entity(&n.label)
+                    .and_then(|(_, e)| e.description.as_deref())
+            })
+        });
         let _ = match header_desc {
             Some(d) => writeln!(
                 out,
@@ -297,15 +292,12 @@ fn write_rels(out: &mut String, rels: &[RelKind], catalog: Option<&OntologyCatal
             (Some(f), Some(t)) => format!("({f})-[:{}]->({t})", r.label),
             _ => format!("[:{}]", r.label),
         };
-        let header_desc = r
-            .description
-            .as_deref()
-            .or_else(|| {
-                catalog.and_then(|c| {
-                    c.get_relation(&r.label)
-                        .and_then(|(_, spec)| spec.description.as_deref())
-                })
-            });
+        let header_desc = r.description.as_deref().or_else(|| {
+            catalog.and_then(|c| {
+                c.get_relation(&r.label)
+                    .and_then(|(_, spec)| spec.description.as_deref())
+            })
+        });
         let tail = render_props(&r.label, r.domain.as_deref(), &r.properties, catalog);
         let _ = match header_desc {
             Some(d) => writeln!(out, "  - {} — {}{}", endpoints, d, tail),
@@ -675,12 +667,32 @@ mod tests {
             nodes: vec![NodeKind {
                 label: "Document".into(),
                 properties: vec![
-                    Property { name: "entity_id".into(), ty: PT::String, description: None },
-                    Property { name: "primary_key".into(), ty: PT::String, description: None },
-                    Property { name: "title".into(), ty: PT::String, description: None },
-                    Property { name: "created_at".into(), ty: PT::Datetime, description: None },
+                    Property {
+                        name: "entity_id".into(),
+                        ty: PT::String,
+                        description: None,
+                    },
+                    Property {
+                        name: "primary_key".into(),
+                        ty: PT::String,
+                        description: None,
+                    },
+                    Property {
+                        name: "title".into(),
+                        ty: PT::String,
+                        description: None,
+                    },
+                    Property {
+                        name: "created_at".into(),
+                        ty: PT::Datetime,
+                        description: None,
+                    },
                     // Generic "id" field from a user-defined schema is NOT hidden.
-                    Property { name: "doc_number".into(), ty: PT::String, description: None },
+                    Property {
+                        name: "doc_number".into(),
+                        ty: PT::String,
+                        description: None,
+                    },
                 ],
             }],
             relationships: vec![],
@@ -690,6 +702,9 @@ mod tests {
         assert!(prompt.contains("created_at"), "user property must appear");
         assert!(prompt.contains("doc_number"), "user property must appear");
         assert!(!prompt.contains("entity_id"), "entity_id must be excluded");
-        assert!(!prompt.contains("primary_key"), "primary_key must be excluded");
+        assert!(
+            !prompt.contains("primary_key"),
+            "primary_key must be excluded"
+        );
     }
 }

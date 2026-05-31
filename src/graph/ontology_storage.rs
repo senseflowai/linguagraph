@@ -167,10 +167,7 @@ mod tests {
         let cat = sample_catalog();
         storage.save(&cat).await.unwrap();
         let back = storage.load().await.unwrap();
-        assert_eq!(
-            back.get("demo").unwrap().entity_types[0].name,
-            "Foo"
-        );
+        assert_eq!(back.get("demo").unwrap().entity_types[0].name, "Foo");
         let _ = std::fs::remove_file(&path);
     }
 

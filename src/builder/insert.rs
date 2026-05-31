@@ -45,10 +45,8 @@ fn render_node_batch(batch: &NodeBatch) -> Result<CypherQuery, InsertError> {
     }
     check_ident(&batch.label)?;
     check_ident(&batch.merge_on)?;
-    let label_suffix = build_label_suffix(
-        batch.prefix_label.as_deref(),
-        batch.domain_label.as_deref(),
-    )?;
+    let label_suffix =
+        build_label_suffix(batch.prefix_label.as_deref(), batch.domain_label.as_deref())?;
 
     // Each row becomes `{ id: <pk>, props: { ...other props... } }`. The
     // builder is the single place that knows the row layout — the planner
@@ -86,10 +84,7 @@ fn render_node_batch(batch: &NodeBatch) -> Result<CypherQuery, InsertError> {
 
 /// Build the trailing `:prefix[:domain]` chunk applied to every MERGE /
 /// MATCH pattern. Identifiers are validated here, not at the call site.
-fn build_label_suffix(
-    prefix: Option<&str>,
-    domain: Option<&str>,
-) -> Result<String, InsertError> {
+fn build_label_suffix(prefix: Option<&str>, domain: Option<&str>) -> Result<String, InsertError> {
     let mut out = String::new();
     if let Some(p) = prefix.filter(|s| !s.is_empty()) {
         check_ident(p)?;
@@ -113,10 +108,8 @@ fn render_relation_batch(batch: &RelationBatch) -> Result<CypherQuery, InsertErr
     check_ident(&batch.to_label)?;
     check_ident(&batch.from_key)?;
     check_ident(&batch.to_key)?;
-    let label_suffix = build_label_suffix(
-        batch.prefix_label.as_deref(),
-        batch.domain_label.as_deref(),
-    )?;
+    let label_suffix =
+        build_label_suffix(batch.prefix_label.as_deref(), batch.domain_label.as_deref())?;
 
     let mut rows = Vec::with_capacity(batch.rows.len());
     for row in &batch.rows {

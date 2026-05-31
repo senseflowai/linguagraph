@@ -237,13 +237,9 @@ pub enum Command {
         #[arg(long = "spec-cache", default_value = DEFAULT_ONTOLOGY_CATALOG_CACHE_PATH)]
         spec_cache: PathBuf,
     },
-    /// Emit a prompt instructing an LLM to extract entities and
-    /// relations from a legal text fragment, in the JSON shape
-    /// consumed by `ingest-document`.
+    /// Emit a system prompt instructing an LLM to extract entities and
+    /// relations in the JSON shape consumed by `ingest-document`.
     KnowledgePrompt {
-        /// Path to a UTF-8 text file containing the fragment to
-        /// analyse. Use `-` to read from stdin.
-        path: PathBuf,
         /// Domain whose ontology should be used (e.g. `legal`).
         /// Falls back to `[prompt].default_domain` from config.
         /// Ignored when `--entity-type`/`--relation-type` are passed.
@@ -331,12 +327,11 @@ pub async fn run(cli: Cli) -> Result<()> {
             no_summary,
         } => cmd_generate_prompt(&cli.config, path, hints, prefer, no_examples, no_summary).await,
         Command::KnowledgePrompt {
-            path,
             domain,
             entity_types,
             relation_types,
             output,
-        } => cmd_knowledge_prompt(&cli.config, path, domain, entity_types, relation_types, output).await,
+        } => cmd_knowledge_prompt(&cli.config, domain, entity_types, relation_types, output).await,
         Command::DeleteBySource {
             source,
             prefix_label,
@@ -847,25 +842,11 @@ async fn cmd_delete_by_source(
 
 async fn cmd_knowledge_prompt(
     config_path: &std::path::Path,
-    path: PathBuf,
     domain: Option<String>,
     entity_types: Vec<String>,
     relation_types: Vec<String>,
     output: Option<PathBuf>,
 ) -> Result<()> {
-    use tokio::io::AsyncReadExt;
-
-    // Read the fragment from a file or stdin. `-` means stdin so the
-    // command composes cleanly with `cat doc.txt | linguagraph
-    // knowledge-prompt -`.
-    let fragment = if path == std::path::Path::new("-") {
-        let mut buf = String::new();
-        tokio::io::stdin().read_to_string(&mut buf).await?;
-        buf
-    } else {
-        fs::read_to_string(&path).await?
-    };
-
     let cfg = load_config_or_default(config_path).await;
     let generator = PromptGenerator::from_config(&cfg.prompt).await?;
 
@@ -884,9 +865,9 @@ async fn cmd_knowledge_prompt(
             .as_deref()
             .or(cfg.prompt.default_domain.as_deref())
             .unwrap_or("custom");
-        generator.knowledge_extract_prompt_with(&fragment, label, &ontology)
+        generator.knowledge_extract_prompt_with(label, &ontology)
     } else {
-        generator.knowledge_extract_prompt(&fragment, domain.as_deref())?
+        generator.knowledge_extract_prompt(domain.as_deref())?
     };
 
     match output {

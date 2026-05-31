@@ -124,7 +124,10 @@ impl GraphClient for MemgraphClient {
 /// the default `node_type: None`.
 fn merge_columns(observed: &[String], typed: &[Column]) -> Vec<Column> {
     if typed.is_empty() {
-        return observed.iter().map(|name| Column::new(name.clone())).collect();
+        return observed
+            .iter()
+            .map(|name| Column::new(name.clone()))
+            .collect();
     }
     let type_map: std::collections::BTreeMap<&str, Option<super::result::NodeType>> = typed
         .iter()

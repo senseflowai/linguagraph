@@ -11,8 +11,8 @@ use linguagraph::db::{MockClient, QueryResult, Row, Value};
 use linguagraph::dsl;
 use linguagraph::graph::{GraphBuilder, PropertyType};
 use linguagraph::prompt::{GraphSchema, RelKind};
-use linguagraph::types::{handlers, RegistryBuilder, SharedRegistry};
 use linguagraph::types::handlers::{SemanticTextConfig, SemanticTextHandler};
+use linguagraph::types::{handlers, RegistryBuilder, SharedRegistry};
 
 fn test_config() -> Config {
     Config {
@@ -422,7 +422,10 @@ async fn soft_merge_without_embedder_errors_loudly() {
     )
     .unwrap();
 
-    let err = pipeline.ingest(&graph).await.expect_err("must error without embedder");
+    let err = pipeline
+        .ingest(&graph)
+        .await
+        .expect_err("must error without embedder");
     let msg = err.to_string();
     assert!(
         msg.contains("soft-merge resolver requires an embedder"),

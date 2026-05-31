@@ -96,8 +96,10 @@ pub async fn resolve_soft_keys(
     let mut report = SoftMergeReport::default();
     for ((label, field), group) in groups {
         report.candidates += group.len();
-        let collection =
-            semantic_text::with_prefix_index(prefix_index, &format!("{semantic_collection_base}__{field}"));
+        let collection = semantic_text::with_prefix_index(
+            prefix_index,
+            &format!("{semantic_collection_base}__{field}"),
+        );
 
         let query = build_search_query(&collection, &label, &field, cfg, &group);
         let result = client
@@ -263,10 +265,7 @@ fn build_search_query(
     params.insert("label".into(), Literal::String(label.clone()));
     params.insert("rows".into(), Literal::List(rows));
     params.insert("top_k".into(), Literal::Int(cfg.top_k as i64));
-    params.insert(
-        "threshold".into(),
-        Literal::Float(cfg.similarity_threshold),
-    );
+    params.insert("threshold".into(), Literal::Float(cfg.similarity_threshold));
 
     // `search_labeled` is the pure-KNN qlink procedure: it returns the
     // top-k neighbors of `row.vec` whose payload label matches
@@ -368,9 +367,7 @@ mod tests {
         // The mock client returns one canonical row for entity idx=0.
         let client = Arc::new(MockClient::new());
         let mut canonical_row = Row::default();
-        canonical_row
-            .fields
-            .insert("idx".into(), DbValue::Int(0));
+        canonical_row.fields.insert("idx".into(), DbValue::Int(0));
         canonical_row.fields.insert(
             "canonical".into(),
             DbValue::String("общественное согласие".into()),
@@ -476,10 +473,8 @@ mod tests {
         // even though the DB returned a perfectly valid row.
         let client = Arc::new(MockClient::new());
         let mut row = Row::default();
-        row.fields.insert(
-            "idx".into(),
-            DbValue::Json(serde_json::json!(0)),
-        );
+        row.fields
+            .insert("idx".into(), DbValue::Json(serde_json::json!(0)));
         row.fields.insert(
             "canonical".into(),
             DbValue::Json(serde_json::json!("общественное согласие")),

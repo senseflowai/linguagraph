@@ -5,7 +5,7 @@
 //!
 //! * `query_prompt` — schema-aware DSL prompt (delegates to
 //!   [`super::generator::generate_query_prompt`]).
-//! * `knowledge_extract_prompt` — domain-scoped knowledge extraction
+//! * `knowledge_extract_prompt` — domain-scoped knowledge extraction system
 //!   prompt (delegates to [`super::knowledge::render_knowledge_extract_prompt`]).
 
 use crate::config::PromptConfig;
@@ -92,27 +92,18 @@ impl PromptGenerator {
 
     /// Render a DSL query prompt for `query` against `schema`.
     /// Pure delegation to the low-level renderer.
-    pub fn query_prompt(
-        &self,
-        query: &str,
-        schema: &GraphSchema,
-        opts: &PromptOptions,
-    ) -> String {
+    pub fn query_prompt(&self, query: &str, schema: &GraphSchema, opts: &PromptOptions) -> String {
         generator::generate_query_prompt(query, schema, opts)
     }
 
-    /// Render a knowledge-extraction prompt for `fragment`.
+    /// Render a knowledge-extraction system prompt.
     ///
     /// `domain` selects the ontology from the catalog. When `None`, the
     /// generator's [`default_domain`](Self::default_domain) is used; if
     /// neither is set the call fails with [`OntologyError::UnknownDomain`].
     /// The domain name is also substituted into the prompt's framing
     /// sections (role, input structure, rules).
-    pub fn knowledge_extract_prompt(
-        &self,
-        fragment: &str,
-        domain: Option<&str>,
-    ) -> Result<String, OntologyError> {
+    pub fn knowledge_extract_prompt(&self, domain: Option<&str>) -> Result<String, OntologyError> {
         let name = domain
             .map(str::to_owned)
             .or_else(|| self.default_domain.clone())
@@ -121,34 +112,28 @@ impl PromptGenerator {
             .catalog
             .get(&name)
             .ok_or_else(|| OntologyError::UnknownDomain(name.clone()))?;
-        Ok(render_knowledge_extract_prompt(fragment, &name, ontology))
+        Ok(render_knowledge_extract_prompt(&name, ontology))
     }
 
     /// Escape hatch: render with a caller-built ontology, bypassing
     /// the catalog. Useful for CLI overrides. `domain` is still used
     /// for the prompt's framing — pass something descriptive
     /// (e.g. `"custom"`, `"ad-hoc"`).
-    pub fn knowledge_extract_prompt_with(
-        &self,
-        fragment: &str,
-        domain: &str,
-        ontology: &DomainOntology,
-    ) -> String {
-        render_knowledge_extract_prompt(fragment, domain, ontology)
+    pub fn knowledge_extract_prompt_with(&self, domain: &str, ontology: &DomainOntology) -> String {
+        render_knowledge_extract_prompt(domain, ontology)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::{EntityTypeSpec, RelationTypeSpec};
-    use crate::prompt::storage::InMemoryOntologyCatalogStorage;
+    use crate::graph::{EntityTypeSpec, InMemoryOntologyCatalogStorage, RelationTypeSpec};
 
     #[test]
     fn knowledge_extract_uses_explicit_domain() {
         let g = PromptGenerator::with_builtin_catalog();
         let p = g
-            .knowledge_extract_prompt("text", Some("legal"))
+            .knowledge_extract_prompt(Some("legal"))
             .expect("legal domain present in builtin catalog");
         assert!(p.contains("* `LegalNorm`"));
         assert!(p.contains("* `GRANTS`"));
@@ -159,21 +144,21 @@ mod tests {
     #[test]
     fn knowledge_extract_uses_default_domain_when_none() {
         let g = PromptGenerator::with_builtin_catalog().with_default_domain("legal");
-        let p = g.knowledge_extract_prompt("text", None).unwrap();
+        let p = g.knowledge_extract_prompt(None).unwrap();
         assert!(p.contains("* `LegalNorm`"));
     }
 
     #[test]
     fn unknown_domain_errors() {
         let g = PromptGenerator::with_builtin_catalog();
-        let err = g.knowledge_extract_prompt("x", Some("medical")).unwrap_err();
+        let err = g.knowledge_extract_prompt(Some("medical")).unwrap_err();
         assert!(matches!(err, OntologyError::UnknownDomain(d) if d == "medical"));
     }
 
     #[test]
     fn missing_domain_and_default_errors() {
         let g = PromptGenerator::with_builtin_catalog();
-        let err = g.knowledge_extract_prompt("x", None).unwrap_err();
+        let err = g.knowledge_extract_prompt(None).unwrap_err();
         assert!(matches!(err, OntologyError::UnknownDomain(_)));
     }
 
@@ -202,7 +187,7 @@ mod tests {
             entity_types: vec![EntityTypeSpec::new("X")],
             relation_types: vec![RelationTypeSpec::new("R")],
         };
-        let p = g.knowledge_extract_prompt_with("frag", "custom", &onto);
+        let p = g.knowledge_extract_prompt_with("custom", &onto);
         assert!(p.contains("* `X`"));
         assert!(p.contains("* `R`"));
         assert!(p.contains("**custom information extraction**"));

@@ -160,7 +160,9 @@ fn projected_columns(query: &ReadQuery, inject_sources: bool, inject_score: bool
                 cols.push(Column { name, node_type });
             }
             ReturnClause::Aggregate { func, field, alias } => {
-                let name = alias.clone().unwrap_or_else(|| render_aggregate_name(func, field));
+                let name = alias
+                    .clone()
+                    .unwrap_or_else(|| render_aggregate_name(func, field));
                 cols.push(Column::new(name));
             }
         }

@@ -132,8 +132,14 @@ fn aggregate_with_multiple_aggregates_sorts_by_group_key_alias() {
         .lines()
         .find(|l| l.starts_with("RETURN "))
         .expect("query has a RETURN clause");
-    assert!(return_line.contains("count(sv) AS visits_count"), "got: {return_line}");
-    assert!(return_line.contains("sum(w.cost) AS total_revenue"), "got: {return_line}");
+    assert!(
+        return_line.contains("count(sv) AS visits_count"),
+        "got: {return_line}"
+    );
+    assert!(
+        return_line.contains("sum(w.cost) AS total_revenue"),
+        "got: {return_line}"
+    );
     assert!(
         return_line.contains("sv.work_start AS sv_work_start"),
         "RETURN must project the group_by key with an alias: {return_line}"

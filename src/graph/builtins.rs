@@ -1,5 +1,12 @@
 //! Built-in entity types and relation labels.
 //!
+//! Built-ins intentionally use strict primary keys (`name` for
+//! [`Source`], `id` for [`Chunk`]) and therefore do NOT carry the
+//! `_canonical` property that LLM-extracted user entities rely on for
+//! cosine-similarity soft merge. They never enter the soft-merge
+//! resolver path — [`Source`] is keyed by exact name, [`Chunk`] by
+//! UUID v4.
+//!
 //! The [`crate::graph::GraphBuilder`] interface exposes two first-class
 //! concepts that don't come from user mappings:
 //!

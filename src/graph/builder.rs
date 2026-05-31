@@ -1,11 +1,18 @@
 use crate::graph::builtins::{
     new_chunk, new_source, CHUNK_LABEL, MENTION_REL, PART_OF_REL, SOURCE_LABEL,
 };
+use crate::graph::canonical::build_canonical_text;
 use crate::graph::schema::{EntityGraph, PropertyType, RelationGraph};
 use crate::graph::types::{EntityRef, GraphBuildError, RelationRef};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
+
+/// Name of the universal soft-merge property. Auto-synthesised for
+/// every non-strict entity at JSON ingest, and embedded by the
+/// `SemanticText` handler so soft-merge resolves duplicates via cosine
+/// similarity.
+const CANONICAL_FIELD: &str = "_canonical";
 
 /// Owned graph assembled by [`GraphBuilder`].
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -259,21 +266,13 @@ impl GraphBuilder {
                 entity = entity.label(label);
             }
             entity = entity.labels(entity_input.labels);
+            let explicit_primary_key = entity_input.primary_key.is_some();
             if let Some(primary_key) = entity_input.primary_key {
                 entity = match primary_key {
                     JsonPrimaryKey::Field(field) => entity.strict_primary_key(field),
                     JsonPrimaryKey::Strict { strict } => entity.strict_primary_key(strict),
                     JsonPrimaryKey::Soft { soft } => entity.soft_primary_key(soft),
                 };
-            } else {
-                // Knowledge-extraction payloads come without a
-                // primary_key — the caller expects linguagraph to find
-                // semantically similar nodes of the same type and
-                // merge with them. Defaulting to Soft("name") tells
-                // the ingest path to run the embedding resolver
-                // against the `name` property; ingestion then errors
-                // out cleanly if `name` is missing.
-                entity = entity.soft_primary_key("name");
             }
 
             let mut properties = entity_input.properties;
@@ -291,6 +290,27 @@ impl GraphBuilder {
 
             if !entity.properties.contains_key("id") {
                 entity = entity.property("id", PropertyType::String, local_id.clone());
+            }
+
+            // Knowledge-extraction payloads typically come without an
+            // explicit primary_key — auto-synthesise `_canonical` and
+            // default to `Soft("_canonical")` so the soft-merge
+            // resolver dedupes by cosine similarity over the canonical
+            // text. Built-in Source/Chunk bypass this path because they
+            // come through `new_source`/`new_chunk`, not JSON ingest.
+            if !explicit_primary_key {
+                if !entity.properties.contains_key(CANONICAL_FIELD) {
+                    let raw_props: HashMap<String, Value> = entity
+                        .properties
+                        .iter()
+                        .filter(|(k, _)| k.as_str() != "id")
+                        .map(|(k, p)| (k.clone(), p.value.clone()))
+                        .collect();
+                    let canonical = build_canonical_text(&entity.r#type, &raw_props);
+                    entity =
+                        entity.property(CANONICAL_FIELD, PropertyType::Text, canonical);
+                }
+                entity = entity.soft_primary_key(CANONICAL_FIELD);
             }
 
             let entity_ref = builder.add_entity(entity);
@@ -800,6 +820,51 @@ mod tests {
         assert_eq!(graph.relations()[0].r#type, MENTION_REL);
         assert_eq!(graph.relations()[0].from.index(), 1);
         assert_eq!(graph.relations()[0].to.index(), 0);
+    }
+
+    #[test]
+    fn json_entity_without_primary_key_gets_canonical_soft_key() {
+        // No primary_key in the JSON → builder auto-synthesises
+        // `_canonical` and defaults the soft primary key to it.
+        let graph = GraphBuilder::from_json(
+            r#"{
+                "entities": [{"id": "elon", "type": "Person", "name": "Elon Musk", "role": "CEO"}],
+                "relations": []
+            }"#,
+        )
+        .unwrap();
+
+        let entity = &graph.entities()[0];
+        assert_eq!(
+            entity.primary_key,
+            Some(PrimaryKey::Soft(CANONICAL_FIELD.into()))
+        );
+        let canonical = &entity.properties[CANONICAL_FIELD];
+        assert_eq!(canonical.property_type, PropertyType::Text);
+        let text = canonical.value.as_str().expect("canonical is a string");
+        assert!(text.starts_with("type: Person"));
+        assert!(text.contains("name: Elon Musk"));
+        assert!(text.contains("role: CEO"));
+    }
+
+    #[test]
+    fn json_entity_with_explicit_primary_key_skips_canonical() {
+        let graph = GraphBuilder::from_json(
+            r#"{
+                "entities": [{
+                    "id": "p1",
+                    "type": "Person",
+                    "primary_key": "id",
+                    "name": "Alice"
+                }],
+                "relations": []
+            }"#,
+        )
+        .unwrap();
+
+        let entity = &graph.entities()[0];
+        assert_eq!(entity.primary_key, Some(PrimaryKey::Strict("id".into())));
+        assert!(!entity.properties.contains_key(CANONICAL_FIELD));
     }
 
     #[test]

@@ -58,6 +58,12 @@ pub struct PromptOptions {
     /// Registered field types whose capabilities should be advertised
     /// to the LLM. When `None`, the prompt only describes plain ops.
     pub type_registry: Option<TypeRegistry>,
+    /// Authoritative entity labels to seed schema selection. When set,
+    /// [`select_query_schema`] skips the [`OntologyCatalog::find`] hop
+    /// entirely and expands relationships around these labels instead.
+    /// Use this when the caller has out-of-band evidence (e.g. a vector
+    /// search against actual entity data) for which labels are relevant.
+    pub pinned_labels: Option<Vec<String>>,
 }
 
 impl Default for PromptOptions {
@@ -74,6 +80,7 @@ impl Default for PromptOptions {
             reranking_model: None,
             schema_selection: PromptSchemaSelection::default(),
             type_registry: None,
+            pinned_labels: None,
         }
     }
 }
@@ -125,33 +132,49 @@ fn render_prompt(schema: &GraphSchema, opts: &PromptOptions) -> String {
 /// [`PromptSchemaSelection`]. Callers can use this directly when they need
 /// the selected schema separately from prompt rendering.
 pub fn select_query_schema(query: &str, schema: &GraphSchema, opts: &PromptOptions) -> GraphSchema {
-    let Some(catalog) = opts.ontology_catalog.as_ref() else {
-        return schema.clone();
+    // Caller-pinned labels bypass the catalog-find hop entirely. We
+    // still run the same relationship-expansion loop so the prompt
+    // includes the natural neighborhood of the pinned types.
+    let seed_labels: Option<std::collections::BTreeSet<String>> = match &opts.pinned_labels {
+        Some(labels) if !labels.is_empty() => {
+            Some(labels.iter().cloned().collect())
+        }
+        _ => None,
     };
-    let Some(embedder) = opts.embedding_model.as_deref() else {
-        return schema.clone();
-    };
-    if query.trim().is_empty() {
-        return schema.clone();
-    }
 
-    let Ok(matches) = catalog.find(
-        query,
-        opts.schema_selection.entity_match_threshold,
-        embedder,
-        opts.reranking_model.as_deref(),
-        opts.schema_selection.reranking_threshold,
-    ) else {
-        return schema.clone();
-    };
-    if matches.is_empty() {
-        return GraphSchema::default();
-    }
+    let mut labels = match seed_labels {
+        Some(seed) => seed,
+        None => {
+            let Some(catalog) = opts.ontology_catalog.as_ref() else {
+                return schema.clone();
+            };
+            let Some(embedder) = opts.embedding_model.as_deref() else {
+                return schema.clone();
+            };
+            if query.trim().is_empty() {
+                return schema.clone();
+            }
 
-    let mut labels: std::collections::BTreeSet<String> = matches
-        .into_iter()
-        .map(|m| m.entity_type.name.clone())
-        .collect();
+            let Ok(matches) = catalog.find(
+                query,
+                opts.schema_selection.entity_match_threshold,
+                embedder,
+                opts.reranking_model.as_deref(),
+                opts.schema_selection.reranking_threshold,
+            ) else {
+                return schema.clone();
+            };
+            if matches.is_empty() {
+                return GraphSchema::default();
+            }
+
+            matches
+                .into_iter()
+                .map(|m| m.entity_type.name.clone())
+                .collect()
+        }
+    };
+
     let mut frontier = labels.clone();
     for _ in 0..opts.schema_selection.related_entity_hops {
         let mut next = std::collections::BTreeSet::new();

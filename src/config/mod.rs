@@ -139,7 +139,7 @@ impl Default for SoftMergeConfig {
 }
 
 fn default_soft_merge_similarity_threshold() -> f64 {
-    0.85
+    0.95
 }
 
 fn default_soft_merge_top_k() -> u32 {

@@ -305,12 +305,13 @@ async fn dsl_prefix_label_overrides_pipeline_default() {
 #[tokio::test]
 async fn soft_merge_rewrites_primary_key_to_existing_canonical() {
     // Knowledge-extraction payloads omit `primary_key`; the JSON
-    // builder now defaults to `Soft("name")` and `Pipeline::ingest`
-    // must run the soft-merge resolver against the existing graph
+    // builder synthesises `_canonical` from the entity's properties
+    // and defaults to `Soft("_canonical")`. `Pipeline::ingest` then
+    // runs the soft-merge resolver against the existing graph
     // before issuing the MERGE. We seed the mock client with a
-    // canonical-row response that pretends Qdrant + Memgraph found
-    // a near-duplicate and assert the subsequent MERGE keys off the
-    // canonical name, not the incoming variant.
+    // hits-list response that pretends Qdrant + Memgraph found a
+    // near-duplicate and assert the subsequent MERGE keys off the
+    // canonical value, not the incoming variant.
     use linguagraph::embeddings::MockEmbedder;
     use linguagraph::graph::GraphBuilder;
 
@@ -338,16 +339,23 @@ async fn soft_merge_rewrites_primary_key_to_existing_canonical() {
     // MockClient pops responses LIFO. Queue the MERGE responses first
     // (any empty result is fine for execution) and the resolver
     // response *last* so it's popped first — when the resolver
-    // runs, it pulls a canonical-row table.
+    // runs, it pulls a per-row `hits` list. The new staged resolver
+    // returns top-K hits per row (each carrying score, canonical
+    // value and the matched node's properties); a high score with
+    // strong lexical and no competing candidates → AutoMerge.
     mock.enqueue(QueryResult::default()); // MERGE batch result
     let mut canonical_row = Row::default();
     canonical_row.fields.insert("idx".into(), Value::Int(0));
     canonical_row.fields.insert(
-        "canonical".into(),
-        Value::String("общественное согласие".into()),
+        "hits".into(),
+        Value::Json(serde_json::json!([{
+            "id": 7, "score": 0.99,
+            "canonical": "общественное согласие",
+            "props": {"name": "общественное согласие"}
+        }])),
     );
     mock.enqueue(QueryResult {
-        columns: vec!["idx".into(), "canonical".into()],
+        columns: vec!["idx".into(), "hits".into()],
         rows: vec![canonical_row],
     });
 
@@ -356,14 +364,18 @@ async fn soft_merge_rewrites_primary_key_to_existing_canonical() {
     // registered SemanticText handler. Soft-merge is orthogonal to
     // SemanticText: the resolver embeds the property text itself
     // and only consults Qdrant for the lookup; the on-node value
-    // can be a plain string.
+    // can be a plain string. Pin the soft key to `name` so the
+    // resolver rewrites the visible name (rather than the
+    // synthesised `_canonical`) — that way the MERGE-rows assertion
+    // can check the name directly.
     let graph = GraphBuilder::from_json(
         r#"{
             "entities": [
                 {
                     "id": "e1",
                     "type": "LegalConcept",
-                    "name": "общественное соглас."
+                    "name": "общественное соглас.",
+                    "primary_key": {"soft": "name"}
                 }
             ],
             "relations": []

@@ -175,6 +175,7 @@ mod tests {
             label: "Camera".into(),
             merge_on: "id".into(),
             prefix_label: None,
+            domain_label: None,
             rows: vec![NodeRow { id: s("c1"), props }],
         };
 
@@ -197,6 +198,7 @@ mod tests {
             label: "Camera".into(),
             merge_on: "id".into(),
             prefix_label: Some("Tenant1".into()),
+            domain_label: None,
             rows: vec![NodeRow { id: s("c1"), props }],
         };
 
@@ -217,6 +219,7 @@ mod tests {
             to_label: "Place".into(),
             to_key: "id".into(),
             prefix_label: None,
+            domain_label: None,
             rows: vec![RelationRow {
                 from_id: s("c1"),
                 to_id: s("p1"),
@@ -240,6 +243,7 @@ mod tests {
             to_label: "Place".into(),
             to_key: "id".into(),
             prefix_label: Some("Tenant1".into()),
+            domain_label: None,
             rows: vec![RelationRow {
                 from_id: s("c1"),
                 to_id: s("p1"),
@@ -265,6 +269,7 @@ mod tests {
             label: "1Bad".into(),
             merge_on: "id".into(),
             prefix_label: None,
+            domain_label: None,
             rows: vec![NodeRow {
                 id: s("x"),
                 props: BTreeMap::new(),
@@ -282,6 +287,7 @@ mod tests {
             label: "Camera".into(),
             merge_on: "id".into(),
             prefix_label: Some("1Bad".into()),
+            domain_label: None,
             rows: vec![NodeRow {
                 id: s("x"),
                 props: BTreeMap::new(),
@@ -299,6 +305,7 @@ mod tests {
             label: "Camera) MATCH (x".into(),
             merge_on: "id".into(),
             prefix_label: None,
+            domain_label: None,
             rows: vec![NodeRow {
                 id: s("x"),
                 props: BTreeMap::new(),
@@ -316,6 +323,7 @@ mod tests {
             label: "Camera".into(),
             merge_on: "id".into(),
             prefix_label: None,
+            domain_label: None,
             rows: vec![NodeRow {
                 id: Literal::Null,
                 props: BTreeMap::new(),

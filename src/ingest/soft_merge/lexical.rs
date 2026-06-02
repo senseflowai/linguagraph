@@ -113,7 +113,7 @@ pub(super) fn lexical_score(incoming: &str, hit_canonical: &str) -> f64 {
 ///     `name: ...` line and return everything after `name: `.
 ///  2. Otherwise return the first non-`type:` line's value.
 ///  3. If the text has no `type:` prefix at all (the explicit
-///     `Soft("name")` path), return the whole text — that's already
+///     legacy raw-name path), return the whole text — that's already
 ///     just a name.
 pub(super) fn primary_name_of(canonical: &str) -> &str {
     let mut lines = canonical.lines().filter(|l| !l.trim().is_empty());
@@ -203,7 +203,7 @@ mod tests {
 
     #[test]
     fn primary_name_of_passes_through_non_canonical_text() {
-        // Explicit Soft("name") path: value is already a name, not
+        // Legacy raw-name path: value is already a name, not
         // multi-line canonical text. Return as-is.
         assert_eq!(primary_name_of("Alice"), "Alice");
     }

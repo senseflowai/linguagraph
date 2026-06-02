@@ -1,7 +1,7 @@
 //! Soft-merge candidate collection + in-batch deduplication.
 //!
-//! Candidates are entities with `PrimaryKey::Soft(field)` and a
-//! non-empty value at that field. In-batch deduplication collapses
+//! Candidates are entities with `PrimaryKey::Soft` and a non-empty
+//! `_canonical` property. In-batch deduplication collapses
 //! near-identical embeddings within one ingest call onto a single
 //! representative — duplicates have their primary-key property
 //! rewritten so the standard Cypher MERGE later folds them into the
@@ -13,7 +13,7 @@ use serde_json::Value;
 
 use crate::config::SoftMergeConfig;
 use crate::embeddings::cosine_similarity;
-use crate::graph::{Graph, PrimaryKey};
+use crate::graph::{Graph, PrimaryKey, CANONICAL_FIELD};
 use crate::ingest::IngestError;
 
 #[derive(Debug)]
@@ -34,7 +34,7 @@ pub(super) fn collect_candidates(graph: &Graph) -> Result<Vec<Candidate>, Ingest
     let mut out = Vec::new();
     for (idx, entity) in graph.entities().iter().enumerate() {
         let field = match &entity.primary_key {
-            Some(PrimaryKey::Soft(f)) => f.clone(),
+            Some(PrimaryKey::Soft) => CANONICAL_FIELD.to_string(),
             _ => continue,
         };
         let property = entity.properties.get(&field).ok_or_else(|| {
@@ -165,7 +165,7 @@ mod tests {
         let mut b = GraphBuilder::new();
         b.add_entity(
             EntityGraph::new("LegalConcept")
-                .soft_primary_key("name")
+                .soft_primary_key()
                 .property("name", PropertyType::Text, "общественное согласие"),
         );
         b.add_entity(
@@ -179,18 +179,17 @@ mod tests {
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].entity_index, 0);
         assert_eq!(got[0].label, "LegalConcept");
-        assert_eq!(got[0].field, "name");
+        assert_eq!(got[0].field, CANONICAL_FIELD);
     }
 
     #[test]
-    fn errors_when_soft_field_missing() {
+    fn soft_entity_uses_builder_created_canonical_field() {
         let mut b = GraphBuilder::new();
-        b.add_entity(EntityGraph::new("LegalConcept").soft_primary_key("name"));
-        let err = collect_candidates(&b.build()).unwrap_err();
-        assert!(matches!(
-            err,
-            IngestError::MissingGraphPrimaryKeyValue { ref label, ref field }
-                if label == "LegalConcept" && field == "name"
-        ));
+        b.add_entity(EntityGraph::new("LegalConcept").soft_primary_key());
+        let graph = b.build();
+        let got = collect_candidates(&graph).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].field, CANONICAL_FIELD);
+        assert_eq!(got[0].text, "type: LegalConcept");
     }
 }

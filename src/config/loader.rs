@@ -117,10 +117,10 @@ mod tests {
         assert_eq!(cfg.database.uri, "bolt://localhost:7687");
         assert_eq!(cfg.database.max_connections, 16);
         assert_eq!(cfg.query.default_limit, 100);
-        assert_eq!(cfg.graph_specification.embedding_model, None);
-        assert_eq!(cfg.graph_specification.reranking_model, None);
-        assert_eq!(cfg.graph_specification.embedding_dim, 384);
-        assert_eq!(cfg.graph_specification.reranking_threshold, 0.3);
+        assert_eq!(cfg.ontology_catalog.embedding_model, None);
+        assert_eq!(cfg.ontology_catalog.reranking_model, None);
+        assert_eq!(cfg.ontology_catalog.embedding_dim, 384);
+        assert_eq!(cfg.ontology_catalog.reranking_threshold, 0.3);
     }
 
     #[test]
@@ -139,15 +139,15 @@ mod tests {
         "#;
         let cfg = load_from_str(toml).unwrap();
         assert_eq!(
-            cfg.graph_specification.embedding_model.as_deref(),
+            cfg.ontology_catalog.embedding_model.as_deref(),
             Some("models/spec-embed.gguf")
         );
         assert_eq!(
-            cfg.graph_specification.reranking_model.as_deref(),
+            cfg.ontology_catalog.reranking_model.as_deref(),
             Some("models/spec-rerank.gguf")
         );
-        assert_eq!(cfg.graph_specification.embedding_dim, 768);
-        assert_eq!(cfg.graph_specification.reranking_threshold, 0.41);
+        assert_eq!(cfg.ontology_catalog.embedding_dim, 768);
+        assert_eq!(cfg.ontology_catalog.reranking_threshold, 0.41);
     }
 
     #[test]

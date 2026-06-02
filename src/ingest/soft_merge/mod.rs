@@ -272,5 +272,5 @@ pub fn has_soft_merge_candidates(graph: &Graph) -> bool {
     graph
         .entities()
         .iter()
-        .any(|e| matches!(e.primary_key, Some(PrimaryKey::Soft(_))))
+        .any(|e| matches!(e.primary_key, Some(PrimaryKey::Soft)))
 }

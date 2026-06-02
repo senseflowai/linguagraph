@@ -462,7 +462,11 @@ mod tests {
             hit_with_props(0.90, "Xyz", json!({"email": "b@example.com"})),
             hit_with_props(0.89, "Pqr", json!({})),
         ];
-        let d = classify(&cand, &hits, &strict_cfg());
+        let cfg = SoftMergeConfig {
+            max_close_candidates: 0,
+            ..strict_cfg()
+        };
+        let d = classify(&cand, &hits, &cfg);
         match d {
             Decision::NeedsReview { rejected_by, .. } => {
                 let kinds: Vec<&str> = rejected_by

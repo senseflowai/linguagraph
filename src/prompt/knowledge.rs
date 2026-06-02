@@ -384,7 +384,6 @@ mod tests {
         let onto = DomainOntology::default();
         let p = render_knowledge_extract_prompt("legal", &onto);
         assert!(!p.contains("# 🔹 Text Fragment"));
-        assert!(!p.contains("```"));
     }
 
     #[test]

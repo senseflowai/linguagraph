@@ -116,12 +116,15 @@ model code.
   ingests a compact `{entities, relations}` document directly. Both emit
   deterministic, idempotent `MERGE` batches.
 - **Soft-merge by embedding similarity.** Knowledge-extraction payloads arrive
-  without a stable primary key — entities carry only a `type` and a free-text
-  `name`. `linguagraph` defaults such entities to `PrimaryKey::Soft("name")` and,
-  before MERGE, embeds the `name`, queries Qdrant for same-label neighbours, and
-  rewrites the property to the canonical value of any hit above the configured
-  similarity threshold. The standard MERGE then folds duplicates into existing
-  nodes. See [Soft-merge](#soft-merge-deduplicating-entities-by-similarity).
+  without a stable primary key. `linguagraph` synthesises a deterministic
+  `_canonical` text from each entity's type + properties and defaults to
+  `PrimaryKey::Soft("_canonical")`. Before MERGE, a staged resolver embeds the
+  canonical text, retrieves top-K nearest neighbours from Qdrant, and routes
+  each candidate to `AutoMerge` / `NeedsReview` / `NoMerge` based on multiple
+  signals — top-1 score, top-1/top-2 margin, lexical similarity on the primary
+  name, close-candidate ambiguity, and disambiguating-property conflicts.
+  Default thresholds bias toward false-split-over-false-merge. See
+  [Soft-merge](#soft-merge-deduplicating-entities-by-similarity).
 - **TOML config + env overrides.** `LINGUAGRAPH__DATABASE__URI=...` overrides
   the file without templating.
 
@@ -407,41 +410,104 @@ as an alias for `relations`. This is the shape produced by
   is required; missing values are a hard ingest error.
 - `{"soft": "name"}` — soft merge against the existing graph by embedding
   similarity (see below).
-- *omitted entirely* — defaults to `{"soft": "name"}`. This is the shape
-  emitted by `knowledge-prompt`, where the LLM doesn't know any stable
-  identifiers — only a `type` and a `name`.
+- *omitted entirely* — the builder synthesises a deterministic `_canonical`
+  property from the entity's `type` + properties and defaults `primary_key`
+  to `{"soft": "_canonical"}`. This is the shape emitted by
+  `knowledge-prompt`, where the LLM doesn't know any stable identifiers —
+  only a `type` and a free-text `name`.
 
 ### Soft-merge: deduplicating entities by similarity
 
 When an entity uses `PrimaryKey::Soft(field)` — either explicitly or because
-the JSON omitted `primary_key` — `Pipeline::ingest` runs a resolver before the
-MERGE batches:
+the JSON omitted `primary_key` and the builder defaulted to
+`Soft("_canonical")` — `Pipeline::ingest` runs a staged resolver before the
+MERGE batches. The resolver retrieves top-K candidates from Qdrant and
+classifies each one as **AutoMerge** (rewrite the soft key, collapse at MERGE
+time), **NeedsReview** (surface in `IngestSummary.soft_merge.review_candidates`
+for human triage, do NOT collapse), or **NoMerge** (leave alone, create a new
+node).
 
-1. The resolver gathers every soft entity and embeds its key property
-   (typically `name`) in one batch through the configured `Embedder`.
-2. For every `(label, field)` group it issues one Cypher round-trip that
-   calls `libqlink.search_labeled` against the same Qdrant collection the
-   `SemanticText` handler writes `name` into (`{collection}__{field}`,
-   optionally folded with the configured `prefix_index`).
-3. For each hit at or above `similarity_threshold`, the resolver reads the
-   matched node's canonical `name` and **rewrites the incoming property in
-   place**.
-4. The standard MERGE then keys off the canonical value, folding the
-   incoming entity into the existing node. The post-MERGE
-   `qlink.insert_labeled` side effect runs as usual, so the vector index
-   stays current.
+The pipeline runs as follows:
+
+1. **Embed.** The resolver gathers every soft entity and embeds its key
+   property in one batch through the configured `Embedder`. For entities that
+   default to `Soft("_canonical")` the key is a deterministic multi-line
+   `type: X\nkey: value\n...` text (see [Canonical text format](#canonical-text-format)).
+2. **In-batch dedup.** Near-identical embeddings within the same ingest are
+   collapsed onto a single representative before talking to Qdrant.
+3. **Retrieve top-K.** For every `(label, field)` group the resolver issues
+   one Cypher round-trip that calls `libqlink.search_labeled`, then pulls
+   each hit's canonical field value AND the matched node's full property map
+   in the same query — no follow-up round-trip needed for downstream gates.
+   The collection is `{semantic_collection_base}__{field}`, optionally folded
+   with the configured `prefix_index`.
+4. **Score & decide.** Each candidate is checked against six gates:
+   * **AutoMerge threshold.** Top-1 cosine must reach `auto_merge_threshold`.
+   * **Margin.** `top1 - top2` must be at least `min_margin` (single-hit
+     cases pass automatically).
+   * **Lexical.** Jaro-Winkler against the top hit's primary-name line must
+     reach `min_lexical_similarity`. Embedding similarity alone is not enough.
+   * **Ambiguity.** At most `max_close_candidates` runner-ups may sit within
+     `close_candidate_delta` of the top score.
+   * **Hard conflict.** None of the `conflict_properties` (e.g. `email`,
+     `id`, `url`) may differ between incoming and candidate when both are
+     non-null.
+   * **Type-only guard.** Candidates whose `_canonical` text consists of just
+     `type: X` (no other properties) are blocked from AutoMerge unless
+     `allow_type_only_auto_merge = true`.
+5. **Route.** All gates clean → AutoMerge: the resolver rewrites the entity's
+   key property to the existing node's canonical value, and the standard
+   MERGE collapses the two rows into one node. Any gate failure with top-1 ≥
+   `review_threshold` → NeedsReview: the entity is left untouched and a
+   `ReviewCandidate` (top hit + runners-up + every failing gate's reason) is
+   appended to the report. Below `review_threshold` → NoMerge.
+6. **Side effects.** The post-MERGE `qlink.insert_labeled` runs as usual so
+   the vector index stays current.
 
 Configure via `[ingest.soft_merge]` (defaults shown):
 
 ```toml
 [ingest.soft_merge]
-# Minimum cosine score for a Qdrant hit to be treated as a duplicate.
+# Consideration floor — hits below this cosine score are dropped at the
+# Cypher layer and never reach the decision pipeline.
 similarity_threshold = 0.85
-# Candidate fan-out per entity. Only the top hit is ever used; the wider
-# fan-out exists so Qdrant's pre-filter doesn't hide it behind a slightly
-# noisier neighbour.
-top_k = 3
+# Candidates fetched per entity. Used in full now (margin, ambiguity counts).
+top_k = 10
+# Top-1 cosine required for an automatic rewrite. Above the floor but below
+# this routes to NeedsReview.
+auto_merge_threshold = 0.96
+# Top-1 floor for surfacing a review record at all. Below this is silently
+# routed to NoMerge.
+review_threshold = 0.75
+# Minimum top1-top2 gap required for AutoMerge.
+min_margin = 0.08
+# Minimum Jaro-Winkler on the primary-name line required for AutoMerge.
+min_lexical_similarity = 0.70
+# At most this many runner-up hits may sit within `close_candidate_delta` of
+# the top score; above blocks AutoMerge (ambiguity gate).
+max_close_candidates = 1
+close_candidate_delta = 0.03
+# When false (default), type-only candidates (`_canonical` is just `type: X`)
+# never auto-merge — they'd otherwise collapse onto whichever node of that
+# type embeds nearest.
+allow_type_only_auto_merge = false
+# Populate `SoftMergeReport.review_candidates`.
+emit_review_candidates = true
+# Cap on the size of the per-candidate hit list in a review record
+# (top hit + runners-up).
+review_max_candidates = 5
+# Disambiguating properties. When both incoming and candidate have a value
+# here and they differ, AutoMerge is blocked.
+conflict_properties = ["id", "email", "url", "isbn", "phone", "ssn", "doi", "ein"]
 ```
+
+`IngestSummary.soft_merge` exposes counts (`candidates`, `auto_merges`,
+`needs_review`, `no_merge`, `in_batch_dedup_collapsed`) and the
+`review_candidates` list when `emit_review_candidates = true`. The list is
+serialisable (`serde::Serialize`) so callers can log / persist it through
+whatever audit pipeline they own. Each review record carries the incoming
+key, the top hit + runners-up (with both embedding and lexical scores), and
+every gate reason that rejected the AutoMerge.
 
 Soft-merge is **fail-loud**: a graph that contains soft entities but lacks a
 configured `Embedder` errors out with `SoftMergeBackendUnavailable` instead of
@@ -449,6 +515,25 @@ silently regressing to exact-string MERGE. Soft entities without a value for
 the key field error with `MissingGraphPrimaryKeyValue`. Wire an embedder up via
 `Pipeline::with_embedder` (the CLI does this when `[types.SemanticText]`
 declares an `embedding_model`).
+
+#### Canonical text format
+
+When the JSON ingest path omits `primary_key`, the builder synthesises a
+deterministic `_canonical` property and defaults `primary_key` to
+`Soft("_canonical")`. The format is:
+
+```text
+type: {entity_type}
+{prop_a}: {value_a}
+{prop_b}: {value_b}
+...
+```
+
+Properties are sorted alphabetically by key for byte-identical output across
+runs. `id` is excluded. When the entity has no other properties the output is
+just `type: {entity_type}` — those candidates are *type-only* and are blocked
+from AutoMerge by default (see the `allow_type_only_auto_merge` knob above).
+See `src/graph/canonical.rs` for the implementation.
 
 ### Knowledge-extraction prompt
 
@@ -618,8 +703,20 @@ max_traversal_depth = 6
 default_limit = 100
 
 [ingest.soft_merge]
-similarity_threshold = 0.85   # cosine cutoff for treating a hit as a duplicate
-top_k = 3                     # Qdrant fan-out per soft entity
+# See "Soft-merge: deduplicating entities by similarity" for the full
+# semantics. Defaults bias toward false-split-over-false-merge.
+similarity_threshold      = 0.85   # consideration floor; hits below this are dropped
+top_k                     = 10     # candidates fetched from Qdrant per entity
+auto_merge_threshold      = 0.96   # top-1 score required for an automatic rewrite
+review_threshold          = 0.75   # below this routes silently to NoMerge
+min_margin                = 0.08   # required top1-top2 gap
+min_lexical_similarity    = 0.70   # Jaro-Winkler on the primary-name line
+max_close_candidates      = 1      # tolerated runners-up within close_candidate_delta
+close_candidate_delta     = 0.03
+allow_type_only_auto_merge = false
+emit_review_candidates    = true
+review_max_candidates     = 5
+conflict_properties       = ["id", "email", "url", "isbn", "phone", "ssn", "doi", "ein"]
 
 [graph_specification]
 cache_path = ".linguagraph/graph_specification.json"

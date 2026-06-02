@@ -43,21 +43,80 @@ pub struct IngestConfig {
 /// Configuration for the soft-merge resolver that runs before every
 /// `Pipeline::ingest` and tries to dedupe `PrimaryKey::Soft` entities
 /// against an existing graph by vector similarity.
+///
+/// The resolver runs a staged decision pipeline per candidate:
+///   1. retrieve top-K hits above `similarity_threshold` (consideration floor),
+///   2. score each candidate against the top hit on multiple signals,
+///   3. route to AutoMerge / NeedsReview / NoMerge.
+///
+/// Defaults bias toward false-split-over-false-merge: an entity only
+/// auto-merges when the embedding signal is strong AND consistent with
+/// lexical similarity AND not ambiguous against runners-up AND has no
+/// hard conflict on disambiguating properties.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SoftMergeConfig {
-    /// Minimum cosine score for a Qdrant hit to be treated as a duplicate
-    /// of the incoming entity. A hit at or above this threshold causes
-    /// the incoming entity's primary-key property to be rewritten to the
-    /// canonical value of the existing node, so the downstream `MERGE`
-    /// folds them together.
+    /// Consideration floor: hits below this cosine score are dropped at
+    /// the Cypher layer and never even surface for scoring. Above this
+    /// they enter the decision pipeline.
     #[serde(default = "default_soft_merge_similarity_threshold")]
     pub similarity_threshold: f64,
-    /// How many candidate vectors to fetch per entity. Only the best hit
-    /// is ever used; the wider fan-out exists so Qdrant's pre-filter
-    /// doesn't accidentally hide the top candidate behind a slightly
-    /// noisier near-neighbor.
+    /// How many candidate vectors to fetch per entity from
+    /// `libqlink.search_labeled`. Used in full now — the resolver looks
+    /// at the whole top-K list (margin, ambiguity counts, runners-up)
+    /// instead of just the best hit.
     #[serde(default = "default_soft_merge_top_k")]
     pub top_k: u32,
+    /// Top-1 cosine score required for an automatic rewrite. Above
+    /// `similarity_threshold` but below this, the candidate is routed
+    /// to NeedsReview rather than AutoMerge.
+    #[serde(default = "default_soft_merge_auto_merge_threshold")]
+    pub auto_merge_threshold: f64,
+    /// Top-1 floor for emitting a review record at all. Candidates
+    /// whose top hit falls below this are quietly routed to NoMerge —
+    /// they're obviously distinct and clutter reviews otherwise.
+    #[serde(default = "default_soft_merge_review_threshold")]
+    pub review_threshold: f64,
+    /// Minimum `top1 - top2` gap required for AutoMerge. When there's
+    /// only one hit, margin is treated as +∞ and the gate passes.
+    #[serde(default = "default_soft_merge_min_margin")]
+    pub min_margin: f64,
+    /// Minimum Jaro-Winkler against the top hit's primary-name line
+    /// required for AutoMerge. Pure dense-embedding similarity is too
+    /// permissive — different entities embed close together when their
+    /// canonical text shares prop patterns.
+    #[serde(default = "default_soft_merge_min_lexical_similarity")]
+    pub min_lexical_similarity: f64,
+    /// At most this many runner-up hits may sit within
+    /// `close_candidate_delta` of the top score for an AutoMerge.
+    /// Above this we route to NeedsReview — too many close candidates
+    /// is itself a hint the LLM extraction was ambiguous.
+    #[serde(default = "default_soft_merge_max_close_candidates")]
+    pub max_close_candidates: usize,
+    /// Score-gap window for counting "close" runner-up candidates.
+    #[serde(default = "default_soft_merge_close_candidate_delta")]
+    pub close_candidate_delta: f64,
+    /// When false (default), candidates whose `_canonical` text consists
+    /// only of `type: X` (no other properties) are never auto-merged —
+    /// they'd otherwise collapse onto whichever node of that type
+    /// embeds nearest, which is almost never what users want.
+    #[serde(default = "default_soft_merge_allow_type_only_auto_merge")]
+    pub allow_type_only_auto_merge: bool,
+    /// Populate `SoftMergeReport.review_candidates`. Off by default in
+    /// principle, but practical experience says reviewers want them, so
+    /// the default here is `true`.
+    #[serde(default = "default_soft_merge_emit_review_candidates")]
+    pub emit_review_candidates: bool,
+    /// Cap on the size of the per-candidate hit list in a review record
+    /// (top hit + runners-up combined).
+    #[serde(default = "default_soft_merge_review_max_candidates")]
+    pub review_max_candidates: usize,
+    /// Disambiguating properties whose non-null values must agree before
+    /// AutoMerge can fire. When both incoming and candidate have a
+    /// value here and they differ (case-sensitive string compare),
+    /// AutoMerge is blocked and the candidate is routed to NeedsReview
+    /// with a `HardConflict` reason. Configurable per domain.
+    #[serde(default = "default_soft_merge_conflict_properties")]
+    pub conflict_properties: Vec<String>,
 }
 
 impl Default for SoftMergeConfig {
@@ -65,6 +124,16 @@ impl Default for SoftMergeConfig {
         Self {
             similarity_threshold: default_soft_merge_similarity_threshold(),
             top_k: default_soft_merge_top_k(),
+            auto_merge_threshold: default_soft_merge_auto_merge_threshold(),
+            review_threshold: default_soft_merge_review_threshold(),
+            min_margin: default_soft_merge_min_margin(),
+            min_lexical_similarity: default_soft_merge_min_lexical_similarity(),
+            max_close_candidates: default_soft_merge_max_close_candidates(),
+            close_candidate_delta: default_soft_merge_close_candidate_delta(),
+            allow_type_only_auto_merge: default_soft_merge_allow_type_only_auto_merge(),
+            emit_review_candidates: default_soft_merge_emit_review_candidates(),
+            review_max_candidates: default_soft_merge_review_max_candidates(),
+            conflict_properties: default_soft_merge_conflict_properties(),
         }
     }
 }
@@ -74,7 +143,50 @@ fn default_soft_merge_similarity_threshold() -> f64 {
 }
 
 fn default_soft_merge_top_k() -> u32 {
-    3
+    10
+}
+
+fn default_soft_merge_auto_merge_threshold() -> f64 {
+    0.96
+}
+
+fn default_soft_merge_review_threshold() -> f64 {
+    0.75
+}
+
+fn default_soft_merge_min_margin() -> f64 {
+    0.08
+}
+
+fn default_soft_merge_min_lexical_similarity() -> f64 {
+    0.70
+}
+
+fn default_soft_merge_max_close_candidates() -> usize {
+    1
+}
+
+fn default_soft_merge_close_candidate_delta() -> f64 {
+    0.03
+}
+
+fn default_soft_merge_allow_type_only_auto_merge() -> bool {
+    false
+}
+
+fn default_soft_merge_emit_review_candidates() -> bool {
+    true
+}
+
+fn default_soft_merge_review_max_candidates() -> usize {
+    5
+}
+
+fn default_soft_merge_conflict_properties() -> Vec<String> {
+    ["id", "email", "url", "isbn", "phone", "ssn", "doi", "ein"]
+        .into_iter()
+        .map(String::from)
+        .collect()
 }
 
 /// Prompt-generation configuration block (`[prompt]` in TOML).

@@ -96,6 +96,11 @@ pub struct IngestSummary {
     /// and the embedding-upsert side effects — i.e. everything between
     /// receiving the `Graph` and returning this summary.
     pub elapsed_ms: u64,
+    /// Soft-merge resolver report — counts, decision routing, and any
+    /// review candidates produced during this ingest. Default when the
+    /// graph had no `PrimaryKey::Soft` entities. See
+    /// [`soft_merge::SoftMergeReport`] for the field documentation.
+    pub soft_merge: soft_merge::SoftMergeReport,
 }
 
 /// Summary returned by [`Pipeline::delete_by_source`].
@@ -551,29 +556,30 @@ impl Pipeline {
         // candidates — the common case for graphs built from
         // explicit schemas.
         let owned;
-        let resolved_graph: &Graph = if soft_merge::has_soft_merge_candidates(graph) {
-            let embedder = self.embedder.as_deref().ok_or_else(|| {
-                IngestError::SoftMergeBackendUnavailable(
-                    "Pipeline has no embedder; call .with_embedder() before ingesting graphs \
-                     that contain PrimaryKey::Soft entities"
-                        .into(),
+        let (resolved_graph, soft_merge_report): (&Graph, soft_merge::SoftMergeReport) =
+            if soft_merge::has_soft_merge_candidates(graph) {
+                let embedder = self.embedder.as_deref().ok_or_else(|| {
+                    IngestError::SoftMergeBackendUnavailable(
+                        "Pipeline has no embedder; call .with_embedder() before ingesting graphs \
+                         that contain PrimaryKey::Soft entities"
+                            .into(),
+                    )
+                })?;
+                let mut cloned = graph.clone();
+                let report = soft_merge::resolve_soft_keys(
+                    &mut cloned,
+                    embedder,
+                    self.client.as_ref(),
+                    &self.soft_merge,
+                    &self.semantic_collection,
+                    self.prefix_index.as_deref(),
                 )
-            })?;
-            let mut cloned = graph.clone();
-            soft_merge::resolve_soft_keys(
-                &mut cloned,
-                embedder,
-                self.client.as_ref(),
-                &self.soft_merge,
-                &self.semantic_collection,
-                self.prefix_index.as_deref(),
-            )
-            .await?;
-            owned = cloned;
-            &owned
-        } else {
-            graph
-        };
+                .await?;
+                owned = cloned;
+                (&owned, report)
+            } else {
+                (graph, soft_merge::SoftMergeReport::default())
+            };
 
         let (insert, effects) = self.lower_insert_with_effects(resolved_graph)?;
         let node_rows: usize = insert.node_batches.iter().map(|b| b.rows.len()).sum();
@@ -598,6 +604,7 @@ impl Pipeline {
             side_effect_batches: se_batches,
             side_effect_rows: se_rows,
             elapsed_ms: started.elapsed().as_millis() as u64,
+            soft_merge: soft_merge_report,
         })
     }
 

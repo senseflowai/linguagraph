@@ -237,6 +237,53 @@ pub enum Command {
         #[arg(long = "spec-cache", default_value = DEFAULT_ONTOLOGY_CATALOG_CACHE_PATH)]
         spec_cache: PathBuf,
     },
+    /// Discover which entity types in the graph are semantically
+    /// relevant to a free-form user query. Emits a JSON summary that a
+    /// QA service can use to pick which types to probe with a DSL or
+    /// traversal query.
+    ///
+    /// Backed by [`Pipeline::run_entity_type_search`]: embeds the
+    /// `text` once with BGE-M3, fans the query across every Qdrant
+    /// collection populated by the SemanticText handler, and rolls
+    /// hits up by entity type with their domain and scopes.
+    EntityTypeSearch {
+        /// Free-form user text.
+        text: String,
+        /// `top_k` passed to each `libqlink.search_labeled` call.
+        #[arg(long, default_value_t = crate::core::DEFAULT_TOP_K)]
+        top_k: u32,
+        /// Cosine cutoff for the vector channel. `--no-threshold` keeps
+        /// every result inside `top_k`.
+        #[arg(long, default_value_t = crate::core::DEFAULT_SCORE_THRESHOLD)]
+        score_threshold: f32,
+        /// Drop the cosine cutoff entirely.
+        #[arg(long, conflicts_with = "score_threshold")]
+        no_threshold: bool,
+        /// Roll up 1-hop neighbours of the matched nodes into the
+        /// `neighbors` array. Off by default.
+        #[arg(long)]
+        include_neighbors: bool,
+        /// Skip the `OntologyCatalog::find` channel (catalog-side
+        /// semantic match against type descriptions).
+        #[arg(long)]
+        no_catalog: bool,
+        /// Cosine cutoff for the catalog channel.
+        #[arg(long, default_value_t = crate::core::DEFAULT_CATALOG_THRESHOLD)]
+        catalog_threshold: f32,
+        /// Restrict the search to specific ontology field names (before
+        /// prefixing). Repeatable. Defaults to every known SemanticText
+        /// field plus the `name` / `text` / `_canonical` built-ins.
+        #[arg(long = "field")]
+        fields: Vec<String>,
+        /// Optional Cypher label, must match the ingest-side
+        /// `prefix_label` so only same-tenant nodes hit.
+        #[arg(long)]
+        prefix_label: Option<String>,
+        /// Optional Qdrant collection prefix, must match the
+        /// ingest-side `prefix_index`.
+        #[arg(long)]
+        prefix_index: Option<String>,
+    },
     /// Emit a system prompt instructing an LLM to extract entities and
     /// relations in the JSON shape consumed by `ingest-document`.
     KnowledgePrompt {
@@ -326,6 +373,32 @@ pub async fn run(cli: Cli) -> Result<()> {
             no_examples,
             no_summary,
         } => cmd_generate_prompt(&cli.config, path, hints, prefer, no_examples, no_summary).await,
+        Command::EntityTypeSearch {
+            text,
+            top_k,
+            score_threshold,
+            no_threshold,
+            include_neighbors,
+            no_catalog,
+            catalog_threshold,
+            fields,
+            prefix_label,
+            prefix_index,
+        } => {
+            cmd_entity_type_search(
+                &cli.config,
+                text,
+                top_k,
+                if no_threshold { None } else { Some(score_threshold) },
+                include_neighbors,
+                !no_catalog,
+                catalog_threshold,
+                fields,
+                prefix_label,
+                prefix_index,
+            )
+            .await
+        }
         Command::KnowledgePrompt {
             domain,
             entity_types,
@@ -837,6 +910,50 @@ async fn cmd_delete_by_source(
 
     let summary = pipeline.delete_by_source(source).await?;
     println!("{}", serde_json::to_string_pretty(&summary)?);
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn cmd_entity_type_search(
+    config_path: &std::path::Path,
+    text: String,
+    top_k: u32,
+    score_threshold: Option<f32>,
+    include_neighbors: bool,
+    include_catalog_signal: bool,
+    catalog_threshold: f32,
+    fields: Vec<String>,
+    prefix_label: Option<String>,
+    prefix_index: Option<String>,
+) -> Result<()> {
+    let cfg = config::load(config_path).await?;
+    let client = MemgraphClient::connect(&cfg.database).await?;
+    let (registry, embedder) = build_registry(&cfg)?;
+    let spec_storage: Arc<dyn OntologyCatalogStorage> = Arc::new(
+        JsonFileOntologyCatalogStorage::new(&cfg.ontology_catalog.cache_path),
+    );
+    let mut pipeline = Pipeline::new(Arc::new(client), &cfg)
+        .with_registry(registry)
+        .with_ontology_catalog_storage(spec_storage)
+        .with_prefix_label(prefix_label)
+        .with_prefix_index(prefix_index);
+    if let Some(e) = embedder {
+        pipeline = pipeline.with_embedder(e);
+    }
+    pipeline.load_ontology_catalog().await?;
+
+    let query = crate::core::EntityTypeSearchQuery {
+        text,
+        top_k,
+        score_threshold,
+        include_neighbors,
+        include_catalog_signal,
+        catalog_threshold,
+        fields: if fields.is_empty() { None } else { Some(fields) },
+        collections: None,
+    };
+    let result = pipeline.run_entity_type_search(query).await?;
+    println!("{}", serde_json::to_string_pretty(&result)?);
     Ok(())
 }
 

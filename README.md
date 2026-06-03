@@ -125,6 +125,16 @@ model code.
   name, close-candidate ambiguity, and disambiguating-property conflicts.
   Default thresholds bias toward false-split-over-false-merge. See
   [Soft-merge](#soft-merge-deduplicating-entities-by-similarity).
+- **Entity-type discovery for QA.** Given raw user text,
+  `Pipeline::run_entity_type_search` embeds it once and fans the query
+  across every `SemanticText` collection in the graph, returning the
+  unique entity types that actually carry relevant data, each annotated
+  with its domain and its scopes (`text` / `table` / `structured`).
+  A second channel surfaces the same answer from
+  `OntologyCatalog::find` (catalog-side semantic match against type
+  descriptions). Optional 1-hop neighbour roll-up lets a QA front-end
+  see adjacent types that may carry the answer. See
+  [Entity-type discovery](#entity-type-discovery).
 - **TOML config + env overrides.** `LINGUAGRAPH__DATABASE__URI=...` overrides
   the file without templating.
 
@@ -681,6 +691,101 @@ The trait's `save` method has a default that returns
 `OntologyError::Unsupported`, so read-only backends only need to
 implement `load`.
 
+## Entity-type discovery
+
+A QA service sitting in front of `linguagraph` rarely knows which
+entity types are worth querying for a given user question.
+`Pipeline::run_entity_type_search` answers that question against the
+graph that's actually loaded.
+
+The query has two complementary channels:
+
+- **Vector** — embeds the user text once with BGE-M3, fans the same
+  vector across every Qdrant collection populated by ingest
+  (`…__name`, `…__text`, `…___canonical`, plus one per
+  `OntologyPropertyType::Text` field declared in the ontology),
+  resolves each hit to its node labels, and rolls everything up by
+  unique entity type. `vector_score` is the max cosine across
+  collections; `per_collection` carries the breakdown.
+- **Catalog** — runs the same text through `OntologyCatalog::find`,
+  which ranks every entity type by the cosine similarity of its
+  description embedding. Surfaces as a separate `catalog_score` so the
+  QA service can distinguish "type definitionally matches" from "type
+  has actual data". Enabled by default; opt out with
+  `--no-catalog` / `include_catalog_signal = false`.
+
+Each result carries the entity type's **domain** (from the catalog,
+cross-checked against the Cypher label the planner stamps at ingest)
+and its **scopes** — the subset of `text` / `table` / `structured`
+the ingest pipeline recorded for that node. The QA service can then
+pick a query strategy per type: a structured-scope type is DSL bait,
+a text-scope type is best probed with a `TraversalQuery`.
+
+Optionally (`--include-neighbors` / `include_neighbors = true`) the
+result also lists the unique entity types of the 1-hop graph
+neighbours of the matched nodes, so a follow-up query can hop one
+step over.
+
+### CLI
+
+```bash
+linguagraph entity-type-search "who founded ACME?" \
+    --top-k 32 --score-threshold 0.5 \
+    --include-neighbors \
+    --prefix-label Tenant1 --prefix-index tenant1
+```
+
+The command prints the result as pretty-printed JSON:
+
+```json
+{
+  "matches": [
+    {
+      "entity_type": "Company",
+      "domain": "legal",
+      "scopes": ["structured", "text"],
+      "vector_score": 0.81,
+      "per_collection": {
+        "semantic_text__name": 0.81,
+        "semantic_text___canonical": 0.74
+      },
+      "catalog_score": 0.62,
+      "sample_node_ids": [12, 47]
+    }
+  ],
+  "neighbors": [
+    { "entity_type": "Person", "domain": "legal", "scopes": ["text"], ... }
+  ],
+  "collections_searched": ["semantic_text__name", "semantic_text__text", ...],
+  "elapsed_ms": 18
+}
+```
+
+### Library
+
+```rust
+use linguagraph::core::{EntityTypeSearchQuery, Pipeline};
+
+let mut q = EntityTypeSearchQuery::new("who founded ACME?");
+q.include_neighbors = true;
+let result = pipeline.run_entity_type_search(q).await?;
+for hit in &result.matches {
+    println!(
+        "{} [{}] scopes={:?} score={:?} catalog={:?}",
+        hit.entity_type, hit.domain.as_deref().unwrap_or("-"),
+        hit.scopes, hit.vector_score, hit.catalog_score,
+    );
+}
+```
+
+Defaults: `top_k = 32`, `score_threshold = Some(0.5)` (BGE-M3 cosine
+sits around 0.4–0.9 for relevant hits; the cut-off is intentionally
+lower than the soft-merge default of 0.8 so discovery favours recall),
+`include_neighbors = false`, `include_catalog_signal = true`,
+`catalog_threshold = 0.45`. The constants are exported as
+`linguagraph::core::DEFAULT_TOP_K`, `DEFAULT_SCORE_THRESHOLD`,
+`DEFAULT_CATALOG_THRESHOLD` and `MAX_SAMPLE_NODE_IDS`.
+
 ## Configuration
 
 ```toml
@@ -823,6 +928,7 @@ to the entity types relevant to a specific natural-language query.
 | `linguagraph ingest-graph <graph.json>` | Ingest a compact `{entities, relations}` graph JSON. |
 | `linguagraph generate-prompt <data.json>` | Generate a mapping-authoring prompt for an LLM. |
 | `linguagraph knowledge-prompt [--domain D] [--entity-type X] [--relation-type Y]` | Generate a knowledge-extraction system prompt for a domain ontology. `--entity-type` / `--relation-type` override the catalog for one run. |
+| `linguagraph entity-type-search <text> [--top-k N] [--score-threshold X] [--include-neighbors] [--no-catalog] [--field NAME]...` | Discover which entity types are semantically relevant to a free-text user query. Emits a JSON summary with domains, scopes and per-collection scores. See [Entity-type discovery](#entity-type-discovery). |
 | `linguagraph delete-by-source --source <name>` | Delete a source-rooted subgraph and its vectors. |
 
 Global flag: `--config <path>` (default `config.toml`). The ingest, `run`,

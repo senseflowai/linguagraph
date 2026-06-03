@@ -368,6 +368,119 @@ async fn in_batch_dedup_below_threshold_keeps_both() {
 }
 
 #[tokio::test]
+async fn in_batch_needs_review_when_lexical_fails() {
+    // Two in-batch entities with VERY similar embeddings (>0.96) but
+    // wildly different surface forms. Old code would have collapsed
+    // them on cosine alone; the new staged pipeline blocks AutoMerge
+    // on the lexical gate and emits an in-batch review record.
+    let client = Arc::new(MockClient::new());
+    client.enqueue(QueryResult::default());
+
+    let mut b = GraphBuilder::new();
+    b.add_entity(entity_named("Alice Smith"));
+    b.add_entity(entity_named("Бенедикт Иванович"));
+    let mut graph = b.build();
+
+    // Both vectors essentially identical → cosine 1.0.
+    let embedder = StubEmbedder::new(
+        3,
+        vec![
+            ("Alice Smith", normalised(vec![1.0, 0.0, 0.0])),
+            ("Бенедикт Иванович", normalised(vec![1.0, 0.0, 0.0])),
+        ],
+    );
+
+    let report = resolve_soft_keys(
+        &mut graph,
+        &embedder,
+        client.as_ref(),
+        &SoftMergeConfig::default(),
+        "semantic_text",
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(report.in_batch_dedup_collapsed, 0, "must NOT collapse");
+    assert_eq!(report.needs_review, 1);
+    assert_eq!(report.review_candidates.len(), 1);
+    let r = &report.review_candidates[0];
+    assert_eq!(r.source, ReviewSource::InBatch);
+    assert!(
+        r.rejected_by
+            .iter()
+            .any(|g| matches!(g, GateReason::InsufficientLexical { .. })),
+        "expected InsufficientLexical, got: {:?}",
+        r.rejected_by
+    );
+    // Both entities survive as separate nodes — the standard MERGE
+    // will create one row per representative.
+    let names: Vec<&serde_json::Value> = graph
+        .entities()
+        .iter()
+        .map(|e| &e.properties["name"].value)
+        .collect();
+    assert_eq!(names[0], &json!("Alice Smith"));
+    assert_eq!(names[1], &json!("Бенедикт Иванович"));
+}
+
+#[tokio::test]
+async fn in_batch_hard_conflict_blocks_collapse() {
+    // Two in-batch Persons with the same name and near-identical
+    // embeddings but DIFFERENT emails. Hard-conflict gate must block
+    // the collapse.
+    let client = Arc::new(MockClient::new());
+    client.enqueue(QueryResult::default());
+
+    let mut b = GraphBuilder::new();
+    b.add_entity(
+        EntityGraph::new("Person")
+            .soft_primary_key("name")
+            .property("name", PropertyType::Text, "Alice")
+            .property("email", PropertyType::String, "alice.a@example.com"),
+    );
+    b.add_entity(
+        EntityGraph::new("Person")
+            .soft_primary_key("name")
+            .property("name", PropertyType::Text, "Alice")
+            .property("email", PropertyType::String, "alice.b@example.com"),
+    );
+    let mut graph = b.build();
+
+    let embedder = StubEmbedder::new(
+        3,
+        vec![
+            ("Alice", normalised(vec![1.0, 0.0, 0.0])),
+            // Same text → embedder returns the same vector.
+        ],
+    );
+
+    let report = resolve_soft_keys(
+        &mut graph,
+        &embedder,
+        client.as_ref(),
+        &SoftMergeConfig::default(),
+        "semantic_text",
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(report.in_batch_dedup_collapsed, 0);
+    assert_eq!(report.needs_review, 1);
+    let r = &report.review_candidates[0];
+    assert_eq!(r.source, ReviewSource::InBatch);
+    assert!(
+        r.rejected_by.iter().any(|g| matches!(
+            g,
+            GateReason::HardConflict { property, .. } if property == "email"
+        )),
+        "expected HardConflict on email, got: {:?}",
+        r.rejected_by
+    );
+}
+
+#[tokio::test]
 async fn auto_merge_borderline_match_routes_to_review() {
     // top=0.90 — above review_threshold (0.75) but below
     // auto_merge_threshold (0.96). Expect NeedsReview, NOT a rewrite.

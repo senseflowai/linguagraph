@@ -54,24 +54,49 @@ pub use decision::{GateReason, ReviewHit};
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct SoftMergeReport {
     /// Number of soft-merge candidates considered (entities with
-    /// `PrimaryKey::Soft` and a non-empty key property).
+    /// `PrimaryKey::Soft` and a non-empty key property). Counted
+    /// post-in-batch-dedup, so duplicates collapsed onto an in-batch
+    /// representative are excluded here — see
+    /// `in_batch_dedup_collapsed`.
     pub candidates: usize,
-    /// Number of candidates auto-merged onto an existing node by
-    /// rewriting the primary-key property.
+    /// Number of candidates auto-merged onto an existing graph node
+    /// (via Qdrant) by rewriting the primary-key property.
     pub auto_merges: usize,
-    /// Number of candidates routed to NeedsReview. Each one also has
-    /// an entry in `review_candidates` when
-    /// `cfg.emit_review_candidates` is true.
+    /// Total number of review records emitted (in-batch + against
+    /// existing graph). A single entity can contribute up to two
+    /// records if it triggers reviews in both stages, so this counter
+    /// matches `review_candidates.len()` rather than "unique entities".
     pub needs_review: usize,
-    /// Number of candidates with no hit (or hits all below
-    /// `review_threshold`). The entity passes through unchanged.
+    /// Number of candidates with no Qdrant hit (or hits all below
+    /// `review_threshold`). The entity passes through unchanged and
+    /// the standard MERGE creates a new node.
     pub no_merge: usize,
-    /// Number of candidates collapsed onto an in-batch representative
-    /// before talking to Qdrant.
+    /// Number of in-batch candidates auto-merged onto another
+    /// candidate in the same ingest. The rewritten primary-key
+    /// property still flows through the standard MERGE — these are
+    /// effectively in-flight auto-merges with no Qdrant round-trip.
     pub in_batch_dedup_collapsed: usize,
-    /// One entry per candidate routed to NeedsReview. Empty when
-    /// `cfg.emit_review_candidates == false`.
+    /// Audit records for every NeedsReview decision, both in-batch
+    /// and against the existing graph. Empty when
+    /// `cfg.emit_review_candidates == false`. Each record carries a
+    /// `source` field that distinguishes the two kinds.
     pub review_candidates: Vec<ReviewCandidate>,
+}
+
+/// Where a `ReviewCandidate`'s top hit came from. Lets audit
+/// consumers tell apart "two in-flight LLM extractions look like
+/// duplicates" from "this extraction looks similar to a pre-existing
+/// graph node" — the two cases usually have different remediation
+/// paths.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewSource {
+    /// Match against another in-flight candidate in the same ingest.
+    /// `top.hit_id` is its index in `Graph::entities`.
+    InBatch,
+    /// Match against a pre-existing graph node via Qdrant.
+    /// `top.hit_id` is the Memgraph internal node id of the match.
+    Existing,
 }
 
 /// Audit record for a candidate that passed the consideration floor
@@ -86,6 +111,10 @@ pub struct ReviewCandidate {
     pub field: String,
     /// The canonical (or raw) key text of the incoming entity.
     pub incoming_value: String,
+    /// Whether the match was against another in-flight candidate
+    /// (in-batch) or a pre-existing graph node (existing). See
+    /// `ReviewSource` for the semantics.
+    pub source: ReviewSource,
     /// Top hit by embedding score.
     pub top: ReviewHit,
     /// Runner-up hits, capped at `cfg.review_max_candidates - 1`.
@@ -141,12 +170,16 @@ pub async fn resolve_soft_keys(
 
     let mut report = SoftMergeReport::default();
     for ((label, field), mut group) in groups {
-        // In-batch dedup: collapse near-identical embeddings within
-        // this group onto a single representative before talking to
-        // Qdrant. Duplicates get their property rewritten so the
-        // downstream MERGE folds them.
-        let collapsed = deduplicate_in_batch(graph, &mut group, &field, cfg)?;
-        report.in_batch_dedup_collapsed += collapsed;
+        // In-batch dedup: run the same staged decision pipeline we
+        // run against Qdrant, but with the other in-flight
+        // candidates as the "hits". AutoMerge collapses the
+        // duplicate onto a representative; NeedsReview keeps both
+        // entities and emits an InBatch-flavoured review record;
+        // NoMerge promotes the candidate to a new representative.
+        let in_batch = deduplicate_in_batch(graph, &mut group, &label, &field, cfg)?;
+        report.in_batch_dedup_collapsed += in_batch.collapsed;
+        report.needs_review += in_batch.needs_review;
+        report.review_candidates.extend(in_batch.review_candidates);
         report.candidates += group.len();
 
         let collection = semantic_text::with_prefix_index(
@@ -249,6 +282,7 @@ pub async fn resolve_soft_keys(
                             label: entity_label,
                             field: entity_field,
                             incoming_value: incoming_name(&canonical_text),
+                            source: ReviewSource::Existing,
                             top,
                             runners_up,
                             rejected_by,

@@ -546,8 +546,10 @@ async fn entity_type_search_returns_unique_types_with_domains_and_scopes() {
         .with_embedder(embedder)
         .with_ontology_catalog(StdArc::new(catalog));
 
+    let mut query = EntityTypeSearchQuery::new("who founded ACME?");
+    query.include_neighbors = true;
     let result = pipeline
-        .run_entity_type_search(EntityTypeSearchQuery::new("who founded ACME?"))
+        .run_entity_type_search(query)
         .await
         .expect("entity-type search runs");
 

@@ -49,8 +49,9 @@ pub struct EntityTypeSearchQuery {
     pub score_threshold: Option<f32>,
 
     /// Roll up 1-hop graph neighbours of the matched nodes into the
-    /// `neighbors` result list.
-    #[serde(default = "default_true")]
+    /// `neighbors` result list. Off by default — opt in when the QA
+    /// service wants the adjacent-types context.
+    #[serde(default)]
     pub include_neighbors: bool,
 
     /// Also consult [`OntologyCatalog::find`] and surface the result
@@ -84,7 +85,7 @@ impl EntityTypeSearchQuery {
             text: text.into(),
             top_k: default_top_k(),
             score_threshold: default_score_threshold(),
-            include_neighbors: default_true(),
+            include_neighbors: false,
             include_catalog_signal: default_true(),
             catalog_threshold: default_catalog_threshold(),
             fields: None,
@@ -465,5 +466,17 @@ mod tests {
         // Apple and Banana share 0.6; alphabetical tie-break.
         assert_eq!(hits[1].entity_type, "Apple");
         assert_eq!(hits[2].entity_type, "Banana");
+    }
+
+    #[test]
+    fn query_defaults_neighbours_off_and_catalog_on() {
+        let q = EntityTypeSearchQuery::new("hello");
+        assert!(!q.include_neighbors);
+        assert!(q.include_catalog_signal);
+        // Same for the serde default path.
+        let from_json: EntityTypeSearchQuery =
+            serde_json::from_str(r#"{"text": "hello"}"#).unwrap();
+        assert!(!from_json.include_neighbors);
+        assert!(from_json.include_catalog_signal);
     }
 }

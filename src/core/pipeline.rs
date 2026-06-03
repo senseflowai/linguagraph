@@ -1251,9 +1251,19 @@ fn resolve_collections(
 }
 
 /// Build the multi-collection UNION ALL Cypher used by the vector
-/// channel of [`Pipeline::run_entity_type_search`]. Each collection
-/// gets its own `CALL { ... }` subquery so the score column carries
-/// the collection name alongside the cosine value.
+/// channel of [`Pipeline::run_entity_type_search`].
+///
+/// Each collection becomes a standalone top-level query: a single
+/// `CALL libqlink.search_labeled` + MATCH + RETURN, with the
+/// collection name folded into the projection so downstream
+/// aggregation can attribute the score back to its source. The
+/// branches are stitched together with `UNION ALL`.
+///
+/// We deliberately avoid wrapping each branch in `CALL { ... }`:
+/// Memgraph rejects a top-level query that consists only of CALL
+/// subqueries with an internal RETURN ("Query should either create
+/// or update something, or return results"). UNION ALL between plain
+/// queries — each terminating in RETURN — is the supported shape.
 fn build_entity_type_search_cypher(
     collections: &[String],
     query_vector: &[f32],
@@ -1296,12 +1306,10 @@ fn build_entity_type_search_cypher(
         }
 
         branches.push(format!(
-            "CALL {{\n\
-             \x20\x20CALL libqlink.search_labeled([${coll_param}], $emb, $top_k, NULL) \
+            "CALL libqlink.search_labeled([${coll_param}], $emb, $top_k, NULL) \
              YIELD id AS qid, score AS sc\n\
-             \x20\x20MATCH (n) WHERE {where_clause}\n\
-             \x20\x20RETURN id(n) AS nid, labels(n) AS labs, sc AS score, ${coll_param} AS coll\n\
-             }}",
+             MATCH (n) WHERE {where_clause}\n\
+             RETURN id(n) AS nid, labels(n) AS labs, sc AS score, ${coll_param} AS coll",
             where_clause = where_parts.join(" AND "),
         ));
     }

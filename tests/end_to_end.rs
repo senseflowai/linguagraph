@@ -603,6 +603,23 @@ async fn entity_type_search_returns_unique_types_with_domains_and_scopes() {
         "vector cypher missing qlink call:\n{vector_cypher}"
     );
     assert!(vector_cypher.contains("UNION ALL"));
+    // Each UNION ALL branch must be a plain top-level query (CALL +
+    // MATCH + RETURN), NOT wrapped in `CALL { ... }`. Memgraph rejects
+    // a top-level query that consists solely of CALL subqueries with
+    // an internal RETURN.
+    assert!(
+        !vector_cypher.contains("CALL {"),
+        "vector cypher must not wrap branches in CALL {{ ... }} — \
+         Memgraph rejects that shape:\n{vector_cypher}"
+    );
+    // Every branch ends with its own RETURN so the union has a
+    // consistent column projection.
+    let branches = vector_cypher.split("UNION ALL").count();
+    let returns = vector_cypher.matches("RETURN").count();
+    assert_eq!(
+        branches, returns,
+        "expected one RETURN per UNION ALL branch:\n{vector_cypher}"
+    );
     let neighbour_cypher = &captured[1].text;
     assert!(
         neighbour_cypher.contains("MATCH (n)-[]-(m)"),

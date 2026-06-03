@@ -269,6 +269,7 @@ pub(crate) fn lower_plan(plan: InsertPlan, opts: PlannerOptions) -> InsertQuery 
                 merge_on: n.merge_on.clone(),
                 prefix_label: None,
                 domain_label: None,
+                scope_labels: Vec::new(),
                 rows: chunk
                     .iter()
                     .map(|r| NodeRow {

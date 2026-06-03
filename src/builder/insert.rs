@@ -47,6 +47,7 @@ fn render_node_batch(batch: &NodeBatch) -> Result<CypherQuery, InsertError> {
     check_ident(&batch.merge_on)?;
     let label_suffix =
         build_label_suffix(batch.prefix_label.as_deref(), batch.domain_label.as_deref())?;
+    let scope_suffix = build_scope_suffix(&batch.scope_labels)?;
 
     // Each row becomes `{ id: <pk>, props: { ...other props... } }`. The
     // builder is the single place that knows the row layout — the planner
@@ -70,16 +71,36 @@ fn render_node_batch(batch: &NodeBatch) -> Result<CypherQuery, InsertError> {
     let text = format!(
         "UNWIND $rows AS row\n\
          MERGE (n:{label}{suffix} {{{key}: row.id}})\n\
-         SET n += row.props",
+         SET n += row.props{scopes}",
         label = batch.label,
         suffix = label_suffix,
         key = batch.merge_on,
+        scopes = scope_suffix,
     );
 
     let mut params = BTreeMap::new();
     params.insert("rows".to_string(), Literal::List(rows));
 
     Ok(CypherQuery::new(text, params))
+}
+
+/// Build the `\nSET n:scope_a:scope_b` chunk appended after the
+/// per-row property merge. Empty when the batch carries no scope
+/// labels — that keeps the Cypher byte-identical for callers who
+/// never set a scope. Identifiers are validated here so a forged
+/// label can't smuggle Cypher even though the typed [`Scope`] enum
+/// already gates the planner.
+fn build_scope_suffix(scope_labels: &[String]) -> Result<String, InsertError> {
+    if scope_labels.is_empty() {
+        return Ok(String::new());
+    }
+    let mut out = String::from("\nSET n");
+    for label in scope_labels {
+        check_ident(label)?;
+        out.push(':');
+        out.push_str(label);
+    }
+    Ok(out)
 }
 
 /// Build the trailing `:prefix[:domain]` chunk applied to every MERGE /
@@ -176,6 +197,7 @@ mod tests {
             merge_on: "id".into(),
             prefix_label: None,
             domain_label: None,
+            scope_labels: Vec::new(),
             rows: vec![NodeRow { id: s("c1"), props }],
         };
 
@@ -199,6 +221,7 @@ mod tests {
             merge_on: "id".into(),
             prefix_label: Some("Tenant1".into()),
             domain_label: None,
+            scope_labels: Vec::new(),
             rows: vec![NodeRow { id: s("c1"), props }],
         };
 
@@ -270,6 +293,7 @@ mod tests {
             merge_on: "id".into(),
             prefix_label: None,
             domain_label: None,
+            scope_labels: Vec::new(),
             rows: vec![NodeRow {
                 id: s("x"),
                 props: BTreeMap::new(),
@@ -288,6 +312,7 @@ mod tests {
             merge_on: "id".into(),
             prefix_label: Some("1Bad".into()),
             domain_label: None,
+            scope_labels: Vec::new(),
             rows: vec![NodeRow {
                 id: s("x"),
                 props: BTreeMap::new(),
@@ -306,6 +331,7 @@ mod tests {
             merge_on: "id".into(),
             prefix_label: None,
             domain_label: None,
+            scope_labels: Vec::new(),
             rows: vec![NodeRow {
                 id: s("x"),
                 props: BTreeMap::new(),
@@ -324,6 +350,7 @@ mod tests {
             merge_on: "id".into(),
             prefix_label: None,
             domain_label: None,
+            scope_labels: Vec::new(),
             rows: vec![NodeRow {
                 id: Literal::Null,
                 props: BTreeMap::new(),
@@ -342,5 +369,100 @@ mod tests {
             relation_batches: vec![],
         };
         assert!(build_insert(&q).unwrap().is_empty());
+    }
+
+    #[test]
+    fn renders_node_batch_with_single_scope_label() {
+        let batch = NodeBatch {
+            label: "Person".into(),
+            merge_on: "id".into(),
+            prefix_label: None,
+            domain_label: None,
+            scope_labels: vec!["scope_text".into()],
+            rows: vec![NodeRow {
+                id: s("p1"),
+                props: BTreeMap::new(),
+            }],
+        };
+
+        let out = render_node_batch(&batch).unwrap();
+        assert!(
+            out.text.contains("SET n += row.props\nSET n:scope_text"),
+            "got: {}",
+            out.text
+        );
+    }
+
+    #[test]
+    fn renders_node_batch_with_multiple_scope_labels() {
+        // BTreeSet ordering in the planner sorts by enum-declaration
+        // order; here the test passes labels in the order the planner
+        // would emit them and verifies they all land in the Cypher.
+        let batch = NodeBatch {
+            label: "Person".into(),
+            merge_on: "id".into(),
+            prefix_label: None,
+            domain_label: None,
+            scope_labels: vec!["scope_text".into(), "scope_table".into()],
+            rows: vec![NodeRow {
+                id: s("p1"),
+                props: BTreeMap::new(),
+            }],
+        };
+
+        let out = render_node_batch(&batch).unwrap();
+        assert!(
+            out.text
+                .contains("SET n += row.props\nSET n:scope_text:scope_table"),
+            "got: {}",
+            out.text
+        );
+    }
+
+    #[test]
+    fn empty_scope_labels_emits_no_set_clause() {
+        let batch = NodeBatch {
+            label: "Person".into(),
+            merge_on: "id".into(),
+            prefix_label: None,
+            domain_label: None,
+            scope_labels: Vec::new(),
+            rows: vec![NodeRow {
+                id: s("p1"),
+                props: BTreeMap::new(),
+            }],
+        };
+
+        let out = render_node_batch(&batch).unwrap();
+        // No second SET clause when there are no scope labels —
+        // ensures the Cypher is byte-identical for callers that
+        // never opt in to scopes.
+        assert!(
+            !out.text.contains("SET n:"),
+            "did not expect scope SET clause, got: {}",
+            out.text
+        );
+    }
+
+    #[test]
+    fn rejects_injection_attempt_in_scope_label() {
+        // Defence in depth — the Scope enum gates the planner, but
+        // the renderer still validates labels in case a custom path
+        // bypasses the enum.
+        let batch = NodeBatch {
+            label: "Person".into(),
+            merge_on: "id".into(),
+            prefix_label: None,
+            domain_label: None,
+            scope_labels: vec!["scope_text) DETACH DELETE n //".into()],
+            rows: vec![NodeRow {
+                id: s("p1"),
+                props: BTreeMap::new(),
+            }],
+        };
+        assert!(matches!(
+            render_node_batch(&batch),
+            Err(InsertError::InvalidIdentifier(_))
+        ));
     }
 }

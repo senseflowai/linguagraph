@@ -304,6 +304,15 @@ pub struct NodeBatch {
     /// descriptions for this node from an `OntologyCatalog` later on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub domain_label: Option<String>,
+    /// Origin-scope Cypher labels (e.g. `scope_text`, `scope_structured`)
+    /// stamped on every node in this batch via a trailing `SET n:label`.
+    /// Unlike `prefix_label` / `domain_label`, scope labels are NOT
+    /// folded into the MERGE pattern — that would require an exact
+    /// scope-set match to find existing nodes. Instead, the builder
+    /// emits a separate idempotent `SET n:scope_*` so re-ingestion
+    /// from a new source accumulates scopes by union.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scope_labels: Vec<String>,
     /// Each row contributes one MERGE.
     pub rows: Vec<NodeRow>,
 }

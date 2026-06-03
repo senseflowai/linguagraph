@@ -4,6 +4,7 @@ mod canonical;
 mod ontology;
 mod ontology_storage;
 mod schema;
+mod scope;
 mod types;
 
 pub use builder::{
@@ -23,4 +24,5 @@ pub use ontology_storage::{
     SharedOntologyCatalogStorage, DEFAULT_ONTOLOGY_CATALOG_CACHE_PATH,
 };
 pub use schema::{EntityGraph, PrimaryKey, Property, PropertyType, RelationGraph};
+pub use scope::{Scope, SCOPE_LABELS};
 pub use types::{EntityRef, GraphBuildError, RelationRef};

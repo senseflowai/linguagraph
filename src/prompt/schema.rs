@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::graph::Scope;
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GraphSchema {
     pub nodes: Vec<NodeKind>,
@@ -44,11 +46,20 @@ pub struct NodeKind {
     #[serde(default)]
     pub domain: Option<String>,
     /// All Cypher labels seen on sample nodes of this kind, minus
-    /// `label`. Carries prefix (tenant) labels, domain labels, and any
-    /// other labels stamped at ingestion. Consumed by enrichment;
-    /// callers normally read `domain` instead.
+    /// `label`. Carries prefix (tenant) labels, domain labels, scope
+    /// labels (`scope_text`, …) and any other labels stamped at
+    /// ingestion. Consumed by enrichment; callers normally read
+    /// `domain` / `scopes` instead.
     #[serde(default)]
     pub extra_labels: Vec<String>,
+    /// Origin [`Scope`]s seen on sample nodes of this kind. Filled by
+    /// introspection from the subset of `extra_labels` that decode as
+    /// recognised scope labels. An empty list means the entity type
+    /// was never stamped with a scope — QA consumers should treat
+    /// this as "scope unknown" and consider the type visible to all
+    /// query strategies.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<Scope>,
     /// Description resolved from an `OntologyCatalog`, when one is
     /// attached to the pipeline.
     #[serde(default)]
@@ -105,6 +116,7 @@ mod tests {
             label: label.to_string(),
             domain: None,
             extra_labels: Vec::new(),
+            scopes: Vec::new(),
             description: None,
             properties: Vec::new(),
         }

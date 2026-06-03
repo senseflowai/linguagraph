@@ -1,12 +1,12 @@
 //! Lower an owned [`crate::graph::Graph`] into insert batches.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use serde_json::Value;
 
 use crate::ast::query::{InsertQuery, Literal, NodeBatch, NodeRow, RelationBatch, RelationRow};
 use crate::graph::{
-    EntityGraph, EntityRef, Graph, PrimaryKey, Property, PropertyType, CANONICAL_FIELD,
+    EntityGraph, EntityRef, Graph, PrimaryKey, Property, PropertyType, Scope, CANONICAL_FIELD,
 };
 use crate::types::context::IngestCtx;
 use crate::types::handlers::SemanticTextHandler;
@@ -132,12 +132,21 @@ pub fn plan_graph_with_registry_and_prefixes(
         .into_iter()
         .flat_map(|(shape, mut rows)| {
             rows.sort_by(|a, b| literal_cmp(&a.id, &b.id));
+            // BTreeSet iterates in ascending order, so scope_labels is
+            // already sorted by enum-declaration order — the Cypher
+            // template ends up deterministic without an extra sort.
+            let scope_labels: Vec<String> = shape
+                .scopes
+                .iter()
+                .map(|s| s.cypher_label().to_string())
+                .collect();
             rows.chunks(opts.max_batch_size)
                 .map(|chunk| NodeBatch {
                     label: shape.label.clone(),
                     merge_on: shape.merge_on.clone(),
                     prefix_label: prefix_label.clone(),
                     domain_label: shape.domain.clone(),
+                    scope_labels: scope_labels.clone(),
                     rows: chunk.to_vec(),
                 })
                 .collect::<Vec<_>>()
@@ -184,6 +193,11 @@ struct NodeShape {
     label: String,
     merge_on: String,
     domain: Option<String>,
+    /// Origin scopes that materialise as extra Cypher labels on this
+    /// batch's nodes. Carried in the shape so entities with disjoint
+    /// scope sets land in separate batches — the Cypher render emits
+    /// one `SET n:scope_*` block per batch.
+    scopes: BTreeSet<Scope>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -207,6 +221,7 @@ fn node_shape(entity: &EntityGraph) -> Result<NodeShape, IngestError> {
         label: entity.r#type.clone(),
         merge_on,
         domain: entity.domain.clone(),
+        scopes: entity.scopes.clone(),
     })
 }
 
@@ -797,6 +812,124 @@ mod tests {
         assert_eq!(
             literal_from_json(&json!(["a", 1]), "label", Some(PropertyType::String)).unwrap(),
             Literal::String(r#"["a",1]"#.into())
+        );
+    }
+
+    #[test]
+    fn entities_with_same_scopes_batch_together() {
+        let mut graph = GraphBuilder::new();
+        graph
+            .entity("Person")
+            .scope(Scope::Text)
+            .strict_primary_key("id")
+            .property("id", PropertyType::String, "a")
+            .add();
+        graph
+            .entity("Person")
+            .scope(Scope::Text)
+            .strict_primary_key("id")
+            .property("id", PropertyType::String, "b")
+            .add();
+
+        let insert = plan_graph_with_registry(
+            &graph.build(),
+            PlannerOptions::default(),
+            &registry(),
+            &mut SideEffectQueue::new(),
+        )
+        .unwrap();
+
+        // One batch, two rows, one scope_label.
+        assert_eq!(insert.node_batches.len(), 1);
+        assert_eq!(insert.node_batches[0].rows.len(), 2);
+        assert_eq!(insert.node_batches[0].scope_labels, vec!["scope_text"]);
+    }
+
+    #[test]
+    fn entities_with_disjoint_scopes_go_to_separate_batches() {
+        let mut graph = GraphBuilder::new();
+        graph
+            .entity("Person")
+            .scope(Scope::Text)
+            .strict_primary_key("id")
+            .property("id", PropertyType::String, "a")
+            .add();
+        graph
+            .entity("Person")
+            .scope(Scope::Structured)
+            .strict_primary_key("id")
+            .property("id", PropertyType::String, "b")
+            .add();
+
+        let insert = plan_graph_with_registry(
+            &graph.build(),
+            PlannerOptions::default(),
+            &registry(),
+            &mut SideEffectQueue::new(),
+        )
+        .unwrap();
+
+        // Two shapes → two batches, one per scope.
+        assert_eq!(insert.node_batches.len(), 2);
+        let mut scope_label_sets: Vec<&Vec<String>> = insert
+            .node_batches
+            .iter()
+            .map(|b| &b.scope_labels)
+            .collect();
+        scope_label_sets.sort();
+        assert_eq!(
+            scope_label_sets,
+            vec![
+                &vec!["scope_structured".to_string()],
+                &vec!["scope_text".to_string()],
+            ]
+        );
+    }
+
+    #[test]
+    fn entity_without_scope_emits_empty_scope_labels() {
+        let mut graph = GraphBuilder::new();
+        graph
+            .entity("Person")
+            .strict_primary_key("id")
+            .property("id", PropertyType::String, "a")
+            .add();
+
+        let insert = plan_graph_with_registry(
+            &graph.build(),
+            PlannerOptions::default(),
+            &registry(),
+            &mut SideEffectQueue::new(),
+        )
+        .unwrap();
+
+        assert_eq!(insert.node_batches[0].scope_labels, Vec::<String>::new());
+    }
+
+    #[test]
+    fn multi_scope_entities_emit_sorted_scope_labels() {
+        // BTreeSet ordering is enum-declaration order: Text, Table,
+        // Structured. Verify the Cypher render gets them in a
+        // deterministic, planner-controlled order.
+        let mut graph = GraphBuilder::new();
+        graph
+            .entity("Person")
+            .scopes([Scope::Structured, Scope::Text])
+            .strict_primary_key("id")
+            .property("id", PropertyType::String, "a")
+            .add();
+
+        let insert = plan_graph_with_registry(
+            &graph.build(),
+            PlannerOptions::default(),
+            &registry(),
+            &mut SideEffectQueue::new(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            insert.node_batches[0].scope_labels,
+            vec!["scope_text", "scope_structured"]
         );
     }
 }

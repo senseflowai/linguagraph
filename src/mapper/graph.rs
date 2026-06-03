@@ -7,7 +7,7 @@ use serde_json::Value;
 use crate::ast::query::Literal;
 use crate::graph::{
     DomainOntology, EntityGraph, EntityRef, EntityTypeSpec, Graph, GraphBuilder, OntologyCatalog,
-    OntologyPropertyType, PropertySpec, PropertyType, RelationTypeSpec,
+    OntologyPropertyType, PropertySpec, PropertyType, RelationTypeSpec, Scope,
 };
 
 use super::{extract, Extracted, MapperError, Mapping};
@@ -62,10 +62,17 @@ fn graph_from_extracted(
     extracted: &Extracted,
     domain: &str,
 ) -> Result<Graph, MapperError> {
+    // The mapper pipeline only sees structured input (JSON, DB rows
+    // shaped through a mapping doc). Stamp every user entity it
+    // produces with `Scope::Structured` so the QA service can pick a
+    // DSL/Cypher strategy for these types without further annotation.
+    // Builtin Source/Chunk are exempt via `is_builtin_entity` inside
+    // `GraphBuilder::add_entity`.
     let mut builder = match mapping.source.as_deref() {
         Some(source) if !source.trim().is_empty() => GraphBuilder::with_source(source),
         _ => GraphBuilder::new(),
-    };
+    }
+    .with_default_scope(Scope::Structured);
     let mut refs: HashMap<(String, Literal), EntityRef> = HashMap::new();
 
     for ent in &extracted.entities {
@@ -359,6 +366,19 @@ mod tests {
             "primary key property should be injected when absent from mapping properties"
         );
         assert_eq!(company.properties["name"].property_type, PropertyType::Text);
+
+        // Mapper-emitted user entities inherit Scope::Structured
+        // from the default scope set on the builder.
+        assert!(company.has_scope(Scope::Structured));
+        let employees: Vec<_> = graph
+            .entities()
+            .iter()
+            .filter(|e| e.r#type == "Employee")
+            .collect();
+        assert_eq!(employees.len(), 2);
+        for emp in employees {
+            assert!(emp.has_scope(Scope::Structured));
+        }
     }
 
     #[test]

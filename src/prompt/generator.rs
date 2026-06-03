@@ -459,6 +459,7 @@ mod tests {
                 label: "Person".into(),
                 domain: None,
                 extra_labels: Vec::new(),
+                scopes: Vec::new(),
                 description: None,
                 properties: vec![
                     Property {
@@ -496,6 +497,7 @@ mod tests {
                 label: "Camera".into(),
                 domain: None,
                 extra_labels: Vec::new(),
+                scopes: Vec::new(),
                 description: None,
                 properties: vec![
                     Property {
@@ -577,6 +579,7 @@ mod tests {
                     label: "Camera".into(),
                     domain: None,
                     extra_labels: Vec::new(),
+                    scopes: Vec::new(),
                     description: None,
                     properties: vec![],
                 },
@@ -584,6 +587,7 @@ mod tests {
                     label: "Site".into(),
                     domain: None,
                     extra_labels: Vec::new(),
+                    scopes: Vec::new(),
                     description: None,
                     properties: vec![],
                 },
@@ -591,6 +595,7 @@ mod tests {
                     label: "Company".into(),
                     domain: None,
                     extra_labels: Vec::new(),
+                    scopes: Vec::new(),
                     description: None,
                     properties: vec![],
                 },
@@ -598,6 +603,7 @@ mod tests {
                     label: "User".into(),
                     domain: None,
                     extra_labels: Vec::new(),
+                    scopes: Vec::new(),
                     description: None,
                     properties: vec![],
                 },
@@ -605,6 +611,7 @@ mod tests {
                     label: "Invoice".into(),
                     domain: None,
                     extra_labels: Vec::new(),
+                    scopes: Vec::new(),
                     description: None,
                     properties: vec![],
                 },
@@ -695,6 +702,7 @@ mod tests {
                 label: "Document".into(),
                 domain: None,
                 extra_labels: Vec::new(),
+                scopes: Vec::new(),
                 description: None,
                 properties: vec![
                     Property {

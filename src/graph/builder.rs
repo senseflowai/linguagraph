@@ -1,8 +1,9 @@
 use crate::graph::builtins::{
-    new_chunk, new_source, CHUNK_LABEL, MENTION_REL, PART_OF_REL, SOURCE_LABEL,
+    is_builtin_entity, new_chunk, new_source, CHUNK_LABEL, MENTION_REL, PART_OF_REL, SOURCE_LABEL,
 };
 use crate::graph::canonical::build_canonical_text;
 use crate::graph::schema::{EntityGraph, PrimaryKey, PropertyType, RelationGraph};
+use crate::graph::scope::Scope;
 use crate::graph::types::{EntityRef, GraphBuildError, RelationRef};
 use serde::Deserialize;
 use serde_json::Value;
@@ -69,6 +70,20 @@ pub struct GraphBuilder {
     /// `:part_of` edge instead. Populated by [`with_source`] /
     /// [`add_source`].
     auto_source: Option<EntityRef>,
+    /// When `Some`, every user-added entity whose own [`EntityGraph::scopes`]
+    /// is empty gets this [`Scope`] stamped on it at [`add_entity`] time.
+    /// Built-in [`SOURCE_LABEL`] / [`CHUNK_LABEL`] entities are excluded —
+    /// scoping them is the caller's choice. An entity that already
+    /// carries any scope is left alone; the default fires only as a
+    /// fallback.
+    ///
+    /// Set via [`with_default_scope`]. Typical use is at an ingestion
+    /// boundary: a markdown-text extractor sets [`Scope::Text`], a
+    /// table extractor sets [`Scope::Table`], the JSON mapper sets
+    /// [`Scope::Structured`].
+    ///
+    /// [`with_default_scope`]: Self::with_default_scope
+    default_scope: Option<Scope>,
 }
 
 impl GraphBuilder {
@@ -90,6 +105,24 @@ impl GraphBuilder {
         let mut builder = Self::new();
         builder.add_source(name);
         builder
+    }
+
+    /// Set a default [`Scope`] applied to every subsequently added
+    /// user entity whose own scope set is empty.
+    ///
+    /// Built-in `Source` / `Chunk` entities are exempt — their scoping
+    /// is the caller's call, set explicitly via
+    /// [`EntityBuilder::scope`] / [`ChunkBuilder::scope`] if needed.
+    /// An entity that already carries any scope (set via
+    /// [`EntityGraph::scope`] before [`add_entity`], or via
+    /// [`EntityBuilder::scope`] / [`EntityBuilder::scopes`]) keeps its
+    /// scopes — the default is a fallback only.
+    ///
+    /// [`add_entity`]: Self::add_entity
+    /// [`EntityGraph::scope`]: crate::graph::EntityGraph::scope
+    pub fn with_default_scope(mut self, scope: Scope) -> Self {
+        self.default_scope = Some(scope);
+        self
     }
 
     /// Build a graph from a compact JSON document.
@@ -177,11 +210,26 @@ impl GraphBuilder {
 
     pub fn add_entity(&mut self, entity: EntityGraph) -> EntityRef {
         let entity = ensure_canonical_property(entity);
+        let entity = self.apply_default_scope(entity);
         let label = entity.r#type.clone();
         let entity_ref = EntityRef(self.graph.entities.len());
         self.graph.entities.push(entity);
         self.attach_auto_edge(entity_ref, &label);
         entity_ref
+    }
+
+    /// Stamp the builder's [`default_scope`] on `entity` when it has
+    /// no scopes of its own and isn't a builtin (`Source`/`Chunk`).
+    /// Caller-set scopes always win.
+    ///
+    /// [`default_scope`]: Self::default_scope
+    fn apply_default_scope(&self, mut entity: EntityGraph) -> EntityGraph {
+        if let Some(scope) = self.default_scope {
+            if entity.scopes.is_empty() && !is_builtin_entity(&entity.r#type) {
+                entity.scopes.insert(scope);
+            }
+        }
+        entity
     }
 
     pub fn relationship(
@@ -266,6 +314,7 @@ impl GraphBuilder {
                 entity = entity.label(label);
             }
             entity = entity.labels(entity_input.labels);
+            entity = entity.scopes(entity_input.scopes);
             let explicit_primary_key = entity_input.primary_key.is_some();
             if let Some(primary_key) = entity_input.primary_key {
                 entity = match primary_key {
@@ -381,6 +430,8 @@ struct JsonEntityInput {
     #[serde(default)]
     labels: Vec<String>,
     #[serde(default)]
+    scopes: Vec<Scope>,
+    #[serde(default)]
     primary_key: Option<JsonPrimaryKey>,
     #[serde(default)]
     properties: BTreeMap<String, JsonPropertyInput>,
@@ -446,7 +497,7 @@ fn infer_property_type(value: &Value) -> PropertyType {
 fn is_reserved_entity_json_field(name: &str) -> bool {
     matches!(
         name,
-        "type" | "label" | "labels" | "primary_key" | "properties"
+        "type" | "label" | "labels" | "scopes" | "primary_key" | "properties"
     )
 }
 
@@ -478,6 +529,18 @@ impl EntityBuilder<'_> {
     /// this node from the corresponding [`OntologyCatalog`] entry.
     pub fn domain(mut self, domain: impl Into<String>) -> Self {
         self.entity = self.entity.domain(domain);
+        self
+    }
+
+    /// Tag this entity with a single origin [`Scope`].
+    pub fn scope(mut self, scope: Scope) -> Self {
+        self.entity = self.entity.scope(scope);
+        self
+    }
+
+    /// Tag this entity with multiple origin [`Scope`]s in one call.
+    pub fn scopes(mut self, scopes: impl IntoIterator<Item = Scope>) -> Self {
+        self.entity = self.entity.scopes(scopes);
         self
     }
 
@@ -523,6 +586,23 @@ pub struct ChunkBuilder<'a> {
 impl ChunkBuilder<'_> {
     pub fn label(mut self, label: impl Into<String>) -> Self {
         self.entity = self.entity.label(label);
+        self
+    }
+
+    /// Tag this chunk with a single origin [`Scope`].
+    ///
+    /// Chunks don't inherit the surrounding builder's
+    /// [`default_scope`](GraphBuilder::with_default_scope) — they are
+    /// built-in entities, and the call-site usually knows whether the
+    /// fragment came from prose, a table cell, or a structured field.
+    pub fn scope(mut self, scope: Scope) -> Self {
+        self.entity = self.entity.scope(scope);
+        self
+    }
+
+    /// Tag this chunk with multiple origin [`Scope`]s in one call.
+    pub fn scopes(mut self, scopes: impl IntoIterator<Item = Scope>) -> Self {
+        self.entity = self.entity.scopes(scopes);
         self
     }
 
@@ -576,6 +656,7 @@ mod tests {
 
     use super::*;
     use crate::graph::{EntityGraph, PrimaryKey};
+    use std::collections::BTreeSet;
 
     #[test]
     fn creates_entity_values_conveniently() {
@@ -905,5 +986,145 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(err, GraphBuildError::UnknownEntityId("missing".into()));
+    }
+
+    #[test]
+    fn scope_accumulates_and_deduplicates() {
+        let entity = EntityGraph::new("Person")
+            .scope(Scope::Text)
+            .scope(Scope::Table)
+            .scope(Scope::Text); // duplicate — set semantics drop it
+        assert_eq!(
+            entity.scopes.iter().copied().collect::<Vec<_>>(),
+            vec![Scope::Text, Scope::Table]
+        );
+        assert!(entity.has_scope(Scope::Text));
+        assert!(!entity.has_scope(Scope::Structured));
+    }
+
+    #[test]
+    fn scopes_bulk_setter_combines_with_single() {
+        let entity = EntityGraph::new("Person")
+            .scope(Scope::Text)
+            .scopes([Scope::Table, Scope::Structured]);
+        assert_eq!(entity.scopes.len(), 3);
+        assert!(entity.has_scope(Scope::Text));
+        assert!(entity.has_scope(Scope::Table));
+        assert!(entity.has_scope(Scope::Structured));
+    }
+
+    #[test]
+    fn with_default_scope_applies_to_user_entities() {
+        let mut builder = GraphBuilder::new().with_default_scope(Scope::Text);
+        let alice = builder
+            .entity("Person")
+            .strict_primary_key("id")
+            .property("id", PropertyType::String, "alice")
+            .add();
+        let graph = builder.build();
+
+        assert_eq!(
+            graph.entity(alice).unwrap().scopes,
+            BTreeSet::from([Scope::Text])
+        );
+    }
+
+    #[test]
+    fn with_default_scope_skips_source_and_chunk_builtins() {
+        // Source/Chunk are built-ins — caller is responsible for
+        // their scoping. The default must not bleed onto them.
+        let mut builder =
+            GraphBuilder::with_source("doc").with_default_scope(Scope::Text);
+        let source_ref = builder.source().unwrap();
+        let chunk = builder.chunk("fragment").add().unwrap();
+        let alice = builder
+            .entity("Person")
+            .strict_primary_key("id")
+            .property("id", PropertyType::String, "alice")
+            .add();
+        let graph = builder.build();
+
+        // User entity inherits the default scope.
+        assert!(graph.entity(alice).unwrap().has_scope(Scope::Text));
+        // Source/Chunk do NOT.
+        assert!(graph.entity(source_ref).unwrap().scopes.is_empty());
+        assert!(graph.entity(chunk).unwrap().scopes.is_empty());
+    }
+
+    #[test]
+    fn explicit_scope_overrides_default() {
+        // Default is a fallback — once an entity carries any scope of
+        // its own, the default doesn't add to it.
+        let mut builder = GraphBuilder::new().with_default_scope(Scope::Structured);
+        let quote = builder
+            .entity("Quote")
+            .scope(Scope::Text)
+            .strict_primary_key("id")
+            .property("id", PropertyType::String, "q1")
+            .add();
+        let graph = builder.build();
+
+        let scopes = &graph.entity(quote).unwrap().scopes;
+        assert_eq!(*scopes, BTreeSet::from([Scope::Text]));
+        assert!(!scopes.contains(&Scope::Structured));
+    }
+
+    #[test]
+    fn chunk_builder_supports_explicit_scope() {
+        let mut builder = GraphBuilder::with_source("doc");
+        let chunk = builder
+            .chunk("fragment")
+            .scope(Scope::Table)
+            .add()
+            .unwrap();
+        let graph = builder.build();
+
+        assert!(graph.entity(chunk).unwrap().has_scope(Scope::Table));
+    }
+
+    #[test]
+    fn json_parses_scopes_field() {
+        let graph = GraphBuilder::from_json(
+            r#"{
+                "entities": [{
+                    "id": "alice",
+                    "type": "Person",
+                    "primary_key": "id",
+                    "scopes": ["text", "structured"],
+                    "name": "Alice"
+                }],
+                "relations": []
+            }"#,
+        )
+        .unwrap();
+
+        let entity = &graph.entities()[0];
+        assert_eq!(
+            entity.scopes,
+            BTreeSet::from([Scope::Text, Scope::Structured])
+        );
+    }
+
+    #[test]
+    fn json_scopes_field_does_not_leak_into_properties() {
+        // `scopes` is a reserved top-level field — it must be
+        // consumed by the deserializer, not folded into properties.
+        let graph = GraphBuilder::from_json(
+            r#"{
+                "entities": [{
+                    "id": "alice",
+                    "type": "Person",
+                    "primary_key": "id",
+                    "scopes": ["text"],
+                    "id_value": "alice"
+                }],
+                "relations": []
+            }"#,
+        )
+        .unwrap();
+
+        let entity = &graph.entities()[0];
+        assert!(!entity.properties.contains_key("scopes"));
+        assert_eq!(entity.scopes, BTreeSet::from([Scope::Text]));
     }
 }

@@ -1,5 +1,7 @@
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
+
+use crate::graph::scope::Scope;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum PropertyType {
@@ -46,6 +48,12 @@ pub struct EntityGraph {
     /// planner emits an extra Cypher label so live schema introspection
     /// can later resolve descriptions for this node from the catalog.
     pub domain: Option<String>,
+    /// Origins this entity was extracted from. See [`Scope`]. Multiple
+    /// scopes accumulate naturally when entities from different sources
+    /// merge onto the same Memgraph node — every scope is materialised
+    /// as an extra Cypher label by the planner, and Cypher labels are
+    /// idempotent sets, so the union is automatic.
+    pub scopes: BTreeSet<Scope>,
     pub primary_key: Option<PrimaryKey>,
     pub properties: HashMap<String, Property>,
 }
@@ -56,6 +64,7 @@ impl EntityGraph {
             r#type: r#type.into(),
             labels: Vec::new(),
             domain: None,
+            scopes: BTreeSet::new(),
             primary_key: None,
             properties: HashMap::new(),
         }
@@ -74,6 +83,26 @@ impl EntityGraph {
     pub fn domain(mut self, domain: impl Into<String>) -> Self {
         self.domain = Some(domain.into());
         self
+    }
+
+    /// Tag this entity with a single origin [`Scope`]. Repeated calls
+    /// accumulate (the underlying set deduplicates), so chaining
+    /// `.scope(Text).scope(Table)` is equivalent to `.scopes([Text,
+    /// Table])`.
+    pub fn scope(mut self, scope: Scope) -> Self {
+        self.scopes.insert(scope);
+        self
+    }
+
+    /// Tag this entity with multiple origin [`Scope`]s in one call.
+    pub fn scopes(mut self, scopes: impl IntoIterator<Item = Scope>) -> Self {
+        self.scopes.extend(scopes);
+        self
+    }
+
+    /// Check whether this entity carries a given [`Scope`].
+    pub fn has_scope(&self, scope: Scope) -> bool {
+        self.scopes.contains(&scope)
     }
 
     pub fn primary_key(mut self, primary_key: PrimaryKey) -> Self {

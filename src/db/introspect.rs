@@ -17,6 +17,7 @@ use serde_json::Value as Json;
 
 use crate::ast::query::Literal;
 use crate::builder::CypherQuery;
+use crate::graph::Scope;
 use crate::prompt::{GraphSchema, NodeKind, Property, PropertyType, RelKind};
 
 use super::result::Value;
@@ -69,10 +70,19 @@ pub async fn introspect_schema(
         )
         .await?;
         let extra_labels = fetch_extra_node_labels(client, label).await?;
+        // The full `extra_labels` list is preserved for callers that
+        // need raw strings (e.g. domain-name resolution downstream);
+        // `scopes` is the typed view filtered to recognised scope
+        // labels. Both are kept side by side intentionally.
+        let scopes: Vec<Scope> = extra_labels
+            .iter()
+            .filter_map(|l| Scope::from_cypher_label(l))
+            .collect();
         nodes.push(NodeKind {
             label: label.clone(),
             domain: None,
             extra_labels,
+            scopes,
             description: None,
             properties,
         });
@@ -523,5 +533,57 @@ mod tests {
     #[test]
     fn type_inference_picks_list() {
         assert_eq!(infer_type(&[json!([1, 2]), json!([])]), PropertyType::List);
+    }
+
+    #[tokio::test]
+    async fn introspect_decodes_scope_labels_into_typed_scopes() {
+        // Mock returns a Person node whose extra_labels include two
+        // scope labels and a domain label. The typed `scopes` view on
+        // NodeKind should contain only the recognised scopes; the raw
+        // `extra_labels` should preserve every label including
+        // non-scope ones (downstream consumers may still need them
+        // for domain resolution).
+        let mock = MockClient::new();
+
+        // Calls (LIFO enqueue):
+        //   1. fetch_node_labels
+        //   2. fetch_props for "Person"
+        //   3. fetch_extra_node_labels for "Person"  ← here we inject scope labels
+        //   4. fetch_rel_types
+        mock.enqueue(crate::db::QueryResult::default()); // 4. no rel types
+        mock.enqueue(crate::db::QueryResult {
+            // 3. extra labels: two scopes + one ontology domain
+            columns: vec!["lab".into()],
+            rows: vec![
+                row(&[("lab", Value::String("scope_text".into()))]),
+                row(&[("lab", Value::String("scope_structured".into()))]),
+                row(&[("lab", Value::String("legal".into()))]),
+            ],
+        });
+        mock.enqueue(crate::db::QueryResult::default()); // 2. no props
+        mock.enqueue(crate::db::QueryResult {
+            // 1. one node label
+            columns: vec!["label".into()],
+            rows: vec![row(&[("label", Value::String("Person".into()))])],
+        });
+
+        let schema = introspect_schema(&mock, IntrospectOptions::default())
+            .await
+            .unwrap();
+
+        assert_eq!(schema.nodes.len(), 1);
+        let node = &schema.nodes[0];
+
+        // `fetch_extra_node_labels` sorts alphabetically, so the
+        // typed scopes mirror that order: scope_structured →
+        // Structured, scope_text → Text.
+        assert_eq!(node.scopes, vec![Scope::Structured, Scope::Text]);
+
+        // Raw extra_labels are preserved verbatim (sorted by the
+        // introspect helper) — non-scope labels stay there.
+        assert_eq!(
+            node.extra_labels,
+            vec!["legal", "scope_structured", "scope_text"]
+        );
     }
 }

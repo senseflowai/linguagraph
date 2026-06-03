@@ -3,9 +3,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use linguagraph::config::{
-    Config, DatabaseConfig, GraphSpecificationConfig, LlmConfig, QueryConfig,
-};
+use linguagraph::config::{Config, DatabaseConfig, LlmConfig, OntologyCatalogConfig, QueryConfig};
 use linguagraph::core::Pipeline;
 use linguagraph::db::{MockClient, QueryResult, Row, Value};
 use linguagraph::dsl;
@@ -29,7 +27,7 @@ fn test_config() -> Config {
             max_traversal_depth: 4,
             default_limit: 50,
         },
-        graph_specification: GraphSpecificationConfig::default(),
+        ontology_catalog: OntologyCatalogConfig::default(),
         prompt: Default::default(),
         ingest: Default::default(),
         types: Default::default(),
@@ -68,6 +66,8 @@ async fn run_corrects_relationship_direction_from_live_schema() {
         nodes: Vec::new(),
         relationships: vec![RelKind {
             label: "WORKS_AT".into(),
+            domain: None,
+            description: None,
             from: Some("Company".into()),
             to: Some("Person".into()),
             properties: Vec::new(),
@@ -306,7 +306,7 @@ async fn dsl_prefix_label_overrides_pipeline_default() {
 async fn soft_merge_rewrites_primary_key_to_existing_canonical() {
     // Knowledge-extraction payloads omit `primary_key`; the JSON
     // builder synthesises `_canonical` from the entity's properties
-    // and defaults to `Soft("_canonical")`. `Pipeline::ingest` then
+    // and defaults to `Soft`. `Pipeline::ingest` then
     // runs the soft-merge resolver against the existing graph
     // before issuing the MERGE. We seed the mock client with a
     // hits-list response that pretends Qdrant + Memgraph found a
@@ -396,21 +396,24 @@ async fn soft_merge_rewrites_primary_key_to_existing_canonical() {
         .iter()
         .find(|c| c.text.contains("MERGE (n:LegalConcept"))
         .expect("expected a MERGE batch against LegalConcept");
-    // The MERGE rows must carry the canonical name as their id (the
-    // primary-key value the planner reads off of `name`), not the
-    // original variant.
+    // The MERGE rows must carry the canonical hit as their id. The
+    // original extracted `name` is preserved as a normal property; only
+    // the `_canonical` merge key is rewritten.
     let rows = merge
         .params
         .get("rows")
         .expect("MERGE batch must bind a 'rows' param");
-    let serialised = format!("{rows:?}");
-    assert!(
-        serialised.contains("общественное согласие"),
-        "MERGE rows should reference the canonical name; got {serialised}"
-    );
-    assert!(
-        !serialised.contains("общественное соглас.\""),
-        "MERGE rows should no longer reference the incoming variant; got {serialised}"
+    let linguagraph::ast::query::Literal::List(items) = rows else {
+        panic!("MERGE rows should be a list, got {rows:?}");
+    };
+    let linguagraph::ast::query::Literal::Object(row) = &items[0] else {
+        panic!("MERGE row should be an object, got {:?}", items[0]);
+    };
+    assert_eq!(
+        row.get("id"),
+        Some(&linguagraph::ast::query::Literal::String(
+            "общественное согласие".into()
+        ))
     );
 }
 

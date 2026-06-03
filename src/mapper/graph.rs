@@ -362,7 +362,7 @@ mod tests {
     }
 
     #[test]
-    fn returns_graph_specification_from_mapping() {
+    fn returns_ontology_catalog_from_mapping() {
         let mapping: Mapping = serde_json::from_value(json!({
             "entities": [{
                 "type": "Company",
@@ -387,27 +387,28 @@ mod tests {
 
         assert_eq!(
             mapped
-                .specification
+                .catalog
                 .get_entity("Company")
                 .unwrap()
+                .1
                 .description,
-            "A legal organization."
+            Some("A legal organization.".into())
         );
         assert_eq!(
             mapped
-                .specification
+                .catalog
                 .get_property("Company", "name")
                 .unwrap()
-                .r#type,
-            PropertyType::Text
+                .property_type,
+            OntologyPropertyType::Text
         );
         assert_eq!(
             mapped
-                .specification
+                .catalog
                 .get_property("Company", "id")
                 .unwrap()
-                .r#type,
-            PropertyType::String
+                .property_type,
+            OntologyPropertyType::String
         );
     }
 

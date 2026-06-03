@@ -14,7 +14,7 @@ pub enum PropertyType {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PrimaryKey {
     Strict(String),
-    Soft(String),
+    Soft,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -85,8 +85,8 @@ impl EntityGraph {
         self.primary_key(PrimaryKey::Strict(field.into()))
     }
 
-    pub fn soft_primary_key(self, field: impl Into<String>) -> Self {
-        self.primary_key(PrimaryKey::Soft(field.into()))
+    pub fn soft_primary_key(self) -> Self {
+        self.primary_key(PrimaryKey::Soft)
     }
 
     pub fn property(

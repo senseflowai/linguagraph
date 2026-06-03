@@ -1064,7 +1064,7 @@ pub use crate::embeddings::Embedder as _Embedder;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{DatabaseConfig, GraphSpecificationConfig, LlmConfig, QueryConfig};
+    use crate::config::{DatabaseConfig, LlmConfig, OntologyCatalogConfig, QueryConfig};
     use crate::db::MockClient;
     use crate::graph::{GraphBuilder, PropertyType};
 
@@ -1080,7 +1080,7 @@ mod tests {
             },
             llm: LlmConfig::default(),
             query: QueryConfig::default(),
-            graph_specification: GraphSpecificationConfig::default(),
+            ontology_catalog: OntologyCatalogConfig::default(),
             prompt: Default::default(),
             ingest: Default::default(),
             types: Default::default(),

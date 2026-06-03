@@ -643,6 +643,7 @@ mod tests {
                     required: false,
                 },
             ],
+            embedding: None,
         };
         let raw = serde_json::to_string(&spec).unwrap();
         let back: EntityTypeSpec = serde_json::from_str(&raw).unwrap();

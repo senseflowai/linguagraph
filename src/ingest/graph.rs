@@ -5,7 +5,9 @@ use std::collections::{BTreeMap, HashMap};
 use serde_json::Value;
 
 use crate::ast::query::{InsertQuery, Literal, NodeBatch, NodeRow, RelationBatch, RelationRow};
-use crate::graph::{EntityGraph, EntityRef, Graph, PrimaryKey, Property, PropertyType};
+use crate::graph::{
+    EntityGraph, EntityRef, Graph, PrimaryKey, Property, PropertyType, CANONICAL_FIELD,
+};
 use crate::types::context::IngestCtx;
 use crate::types::handlers::SemanticTextHandler;
 use crate::types::{SideEffectQueue, TypeId, TypeRegistry};
@@ -196,7 +198,8 @@ struct RelationShape {
 
 fn node_shape(entity: &EntityGraph) -> Result<NodeShape, IngestError> {
     let merge_on = match &entity.primary_key {
-        Some(PrimaryKey::Strict(field)) | Some(PrimaryKey::Soft(field)) => field.clone(),
+        Some(PrimaryKey::Strict(field)) => field.clone(),
+        Some(PrimaryKey::Soft) => CANONICAL_FIELD.to_string(),
         None => return Err(IngestError::MissingGraphPrimaryKey(entity.r#type.clone())),
     };
 
@@ -231,7 +234,7 @@ fn entity_id(entity: &EntityGraph, key_field: &str, _index: usize) -> Result<Lit
         // same way as Strict so callers get a clean, typed error
         // instead of a silent placeholder id that would never merge
         // with anything.
-        Some(PrimaryKey::Soft(_)) => {
+        Some(PrimaryKey::Soft) => {
             let property = entity.properties.get(key_field).ok_or_else(|| {
                 IngestError::MissingGraphPrimaryKeyValue {
                     label: entity.r#type.clone(),

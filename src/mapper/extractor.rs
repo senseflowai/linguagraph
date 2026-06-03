@@ -435,6 +435,7 @@ mod tests {
     fn extracts_one_row_per_array_element() {
         let mapping = Mapping {
             source: None,
+            domain: None,
             entities: vec![ent(
                 "Camera",
                 "$.cameras[*]",
@@ -468,6 +469,7 @@ mod tests {
         // example mapping.
         let mapping = Mapping {
             source: None,
+            domain: None,
             entities: vec![ent(
                 "Source",
                 "$.cameras[*].source",
@@ -493,6 +495,7 @@ mod tests {
     fn numeric_primary_key_is_converted_to_string() {
         let mapping = Mapping {
             source: None,
+            domain: None,
             entities: vec![ent("Camera", "$.cameras[*]", "$.cameras[*].id", &[])],
             relationships: vec![],
         };
@@ -506,6 +509,7 @@ mod tests {
     fn nested_wildcards_carry_full_context() {
         let mapping = Mapping {
             source: None,
+            domain: None,
             entities: vec![ent(
                 "Module",
                 "$.cameras[*].modules[*]",
@@ -531,6 +535,7 @@ mod tests {
     fn composite_primary_key_formats_multiple_contextual_paths() {
         let mapping = Mapping {
             source: None,
+            domain: None,
             entities: vec![ent(
                 "WorkItem",
                 "$[*].stationWorks[*]",
@@ -567,6 +572,7 @@ mod tests {
     fn malformed_composite_primary_key_is_rejected() {
         let mapping = Mapping {
             source: None,
+            domain: None,
             entities: vec![ent(
                 "WorkItem",
                 "$[*].stationWorks[*]",
@@ -585,6 +591,7 @@ mod tests {
     fn missing_primary_key_is_fatal() {
         let mapping = Mapping {
             source: None,
+            domain: None,
             entities: vec![ent("Camera", "$.cameras[*]", "$.cameras[*].id", &[])],
             relationships: vec![],
         };
@@ -597,6 +604,7 @@ mod tests {
     fn missing_property_is_tolerated() {
         let mapping = Mapping {
             source: None,
+            domain: None,
             entities: vec![ent(
                 "Camera",
                 "$.cameras[*]",
@@ -614,6 +622,7 @@ mod tests {
     fn string_typed_array_property_is_joined_with_commas() {
         let mapping = Mapping {
             source: None,
+            domain: None,
             entities: vec![typed_ent(
                 "Item",
                 "$.items[*]",
@@ -644,6 +653,7 @@ mod tests {
     fn semantic_text_multiple_matches_are_joined_with_commas() {
         let mapping = Mapping {
             source: None,
+            domain: None,
             entities: vec![typed_ent(
                 "Item",
                 "$.items[*]",

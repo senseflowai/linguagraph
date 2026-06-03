@@ -2,7 +2,7 @@ use crate::graph::builtins::{
     new_chunk, new_source, CHUNK_LABEL, MENTION_REL, PART_OF_REL, SOURCE_LABEL,
 };
 use crate::graph::canonical::build_canonical_text;
-use crate::graph::schema::{EntityGraph, PropertyType, RelationGraph};
+use crate::graph::schema::{EntityGraph, PrimaryKey, PropertyType, RelationGraph};
 use crate::graph::types::{EntityRef, GraphBuildError, RelationRef};
 use serde::Deserialize;
 use serde_json::Value;
@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, HashMap};
 /// every non-strict entity at JSON ingest, and embedded by the
 /// `SemanticText` handler so soft-merge resolves duplicates via cosine
 /// similarity.
-const CANONICAL_FIELD: &str = "_canonical";
+pub const CANONICAL_FIELD: &str = "_canonical";
 
 /// Owned graph assembled by [`GraphBuilder`].
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -139,8 +139,7 @@ impl GraphBuilder {
     /// — every subsequent entity gets attached to the latest one.
     /// Earlier entities keep the edges they were created with.
     pub fn add_source(&mut self, name: impl Into<String>) -> EntityRef {
-        let entity_ref = EntityRef(self.graph.entities.len());
-        self.graph.entities.push(new_source(name));
+        let entity_ref = self.add_entity(new_source(name));
         self.auto_source = Some(entity_ref);
         entity_ref
     }
@@ -177,6 +176,7 @@ impl GraphBuilder {
     }
 
     pub fn add_entity(&mut self, entity: EntityGraph) -> EntityRef {
+        let entity = ensure_canonical_property(entity);
         let label = entity.r#type.clone();
         let entity_ref = EntityRef(self.graph.entities.len());
         self.graph.entities.push(entity);
@@ -271,7 +271,10 @@ impl GraphBuilder {
                 entity = match primary_key {
                     JsonPrimaryKey::Field(field) => entity.strict_primary_key(field),
                     JsonPrimaryKey::Strict { strict } => entity.strict_primary_key(strict),
-                    JsonPrimaryKey::Soft { soft } => entity.soft_primary_key(soft),
+                    JsonPrimaryKey::Soft { soft } => {
+                        let _ = soft;
+                        entity.soft_primary_key()
+                    }
                 };
             }
 
@@ -293,24 +296,12 @@ impl GraphBuilder {
             }
 
             // Knowledge-extraction payloads typically come without an
-            // explicit primary_key — auto-synthesise `_canonical` and
-            // default to `Soft("_canonical")` so the soft-merge
-            // resolver dedupes by cosine similarity over the canonical
-            // text. Built-in Source/Chunk bypass this path because they
-            // come through `new_source`/`new_chunk`, not JSON ingest.
+            // explicit primary_key — default to `Soft`
+            // so the soft-merge resolver dedupes by cosine similarity
+            // over the canonical text. `add_entity` guarantees the
+            // `_canonical` property exists before insertion.
             if !explicit_primary_key {
-                if !entity.properties.contains_key(CANONICAL_FIELD) {
-                    let raw_props: HashMap<String, Value> = entity
-                        .properties
-                        .iter()
-                        .filter(|(k, _)| k.as_str() != "id")
-                        .map(|(k, p)| (k.clone(), p.value.clone()))
-                        .collect();
-                    let canonical = build_canonical_text(&entity.r#type, &raw_props);
-                    entity =
-                        entity.property(CANONICAL_FIELD, PropertyType::Text, canonical);
-                }
-                entity = entity.soft_primary_key(CANONICAL_FIELD);
+                entity = entity.soft_primary_key();
             }
 
             let entity_ref = builder.add_entity(entity);
@@ -342,6 +333,25 @@ impl GraphBuilder {
 
         Ok(builder.build())
     }
+}
+
+fn ensure_canonical_property(entity: EntityGraph) -> EntityGraph {
+    if entity.properties.contains_key(CANONICAL_FIELD) {
+        return entity;
+    }
+
+    let raw_props: HashMap<String, Value> = entity
+        .properties
+        .iter()
+        .filter(|(k, _)| k.as_str() != "id" && k.as_str() != CANONICAL_FIELD)
+        .map(|(k, p)| (k.clone(), p.value.clone()))
+        .collect();
+    let canonical = build_canonical_text(&entity.r#type, &raw_props);
+    let property_type = match &entity.primary_key {
+        Some(PrimaryKey::Soft) => PropertyType::Text,
+        _ => PropertyType::String,
+    };
+    entity.property(CANONICAL_FIELD, property_type, canonical)
 }
 
 #[derive(Debug, Deserialize)]
@@ -476,8 +486,8 @@ impl EntityBuilder<'_> {
         self
     }
 
-    pub fn soft_primary_key(mut self, field: impl Into<String>) -> Self {
-        self.entity = self.entity.soft_primary_key(field);
+    pub fn soft_primary_key(mut self) -> Self {
+        self.entity = self.entity.soft_primary_key();
         self
     }
 
@@ -619,6 +629,11 @@ mod tests {
             graph.entity(alice).unwrap().properties["name"].value,
             json!("Alice")
         );
+        let alice_canonical = graph.entity(alice).unwrap().properties[CANONICAL_FIELD]
+            .value
+            .as_str()
+            .unwrap();
+        assert_eq!(alice_canonical, "type: Person\nname: Alice");
         assert_eq!(graph.relation(knows).unwrap().r#type, "KNOWS");
         assert_eq!(graph.relation(knows).unwrap().from, alice);
         assert_eq!(graph.relation(knows).unwrap().to, bob);
@@ -638,6 +653,8 @@ mod tests {
         let relation_ref = builder.add_relationship(relation).unwrap();
         let graph = builder.build();
 
+        assert!(graph.entities()[0].properties.contains_key(CANONICAL_FIELD));
+        assert!(graph.entities()[1].properties.contains_key(CANONICAL_FIELD));
         assert_eq!(graph.relation(relation_ref).unwrap().r#type, "WRITTEN_BY");
         assert_eq!(
             graph.relation(relation_ref).unwrap().properties["confidence"].value,
@@ -679,6 +696,11 @@ mod tests {
         // Source + Alice + Bob = 3 entities.
         assert_eq!(graph.entities().len(), 3);
         assert_eq!(graph.entity(source).unwrap().r#type, SOURCE_LABEL);
+        assert!(graph
+            .entity(source)
+            .unwrap()
+            .properties
+            .contains_key(CANONICAL_FIELD));
 
         // Each user entity has exactly one :mention edge to the source.
         let mentions: Vec<_> = graph
@@ -703,6 +725,7 @@ mod tests {
 
         let chunk_entity = graph.entity(chunk).unwrap();
         assert_eq!(chunk_entity.r#type, CHUNK_LABEL);
+        assert!(chunk_entity.properties.contains_key(CANONICAL_FIELD));
 
         // Exactly one part_of edge from chunk → source, no :mention.
         let edges: Vec<_> = graph
@@ -837,7 +860,7 @@ mod tests {
         let entity = &graph.entities()[0];
         assert_eq!(
             entity.primary_key,
-            Some(PrimaryKey::Soft(CANONICAL_FIELD.into()))
+            Some(PrimaryKey::Soft)
         );
         let canonical = &entity.properties[CANONICAL_FIELD];
         assert_eq!(canonical.property_type, PropertyType::Text);
@@ -848,7 +871,7 @@ mod tests {
     }
 
     #[test]
-    fn json_entity_with_explicit_primary_key_skips_canonical() {
+    fn json_entity_with_explicit_primary_key_keeps_key_and_gets_canonical() {
         let graph = GraphBuilder::from_json(
             r#"{
                 "entities": [{
@@ -864,7 +887,11 @@ mod tests {
 
         let entity = &graph.entities()[0];
         assert_eq!(entity.primary_key, Some(PrimaryKey::Strict("id".into())));
-        assert!(!entity.properties.contains_key(CANONICAL_FIELD));
+        let canonical = entity.properties[CANONICAL_FIELD]
+            .value
+            .as_str()
+            .expect("canonical is a string");
+        assert_eq!(canonical, "type: Person\nname: Alice");
     }
 
     #[test]

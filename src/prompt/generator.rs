@@ -457,6 +457,9 @@ mod tests {
         let schema = GraphSchema {
             nodes: vec![NodeKind {
                 label: "Person".into(),
+                domain: None,
+                extra_labels: Vec::new(),
+                description: None,
                 properties: vec![
                     Property {
                         name: "name".into(),
@@ -491,6 +494,9 @@ mod tests {
         let schema = GraphSchema {
             nodes: vec![NodeKind {
                 label: "Camera".into(),
+                domain: None,
+                extra_labels: Vec::new(),
+                description: None,
                 properties: vec![
                     Property {
                         name: "id".into(),
@@ -506,18 +512,28 @@ mod tests {
             }],
             relationships: vec![],
         };
-        let spec = crate::graph::GraphSpecification::new()
-            .with_entity("Camera", "An IP surveillance camera")
-            .with_property(
-                "Camera",
-                "state",
-                crate::graph::PropertyType::String,
-                "active or inactive",
-            );
+        let mut catalog = crate::graph::OntologyCatalog::default();
+        catalog.insert(
+            "test",
+            crate::graph::DomainOntology {
+                entity_types: vec![crate::graph::EntityTypeSpec {
+                    name: "Camera".into(),
+                    description: Some("An IP surveillance camera".into()),
+                    properties: vec![crate::graph::PropertySpec {
+                        name: "state".into(),
+                        description: Some("active or inactive".into()),
+                        property_type: crate::graph::OntologyPropertyType::String,
+                        required: false,
+                    }],
+                    embedding: None,
+                }],
+                relation_types: vec![],
+            },
+        );
         let prompt = generate_system_prompt(
             &schema,
             &PromptOptions {
-                graph_specification: Some(spec),
+                ontology_catalog: Some(catalog),
                 include_examples: false,
                 ..PromptOptions::default()
             },
@@ -629,16 +645,27 @@ mod tests {
             ],
         };
         let embedder = Arc::new(KeywordEmbedder);
-        let mut spec = crate::graph::GraphSpecification::new()
-            .with_entity("Camera", "A surveillance camera")
-            .with_entity("Invoice", "A billing invoice");
-        spec.compute(embedder.as_ref()).unwrap();
+        let mut catalog = crate::graph::OntologyCatalog::default();
+        catalog.insert(
+            "test",
+            crate::graph::DomainOntology {
+                entity_types: vec![
+                    crate::graph::EntityTypeSpec::with_description(
+                        "Camera",
+                        "A surveillance camera",
+                    ),
+                    crate::graph::EntityTypeSpec::with_description("Invoice", "A billing invoice"),
+                ],
+                relation_types: vec![],
+            },
+        );
+        catalog.compute(embedder.as_ref()).unwrap();
 
         let prompt = generate_query_prompt(
             "camera status",
             &schema,
             &PromptOptions {
-                graph_specification: Some(spec),
+                ontology_catalog: Some(catalog),
                 embedding_model: Some(embedder),
                 schema_selection: PromptSchemaSelection {
                     entity_match_threshold: 0.9,
@@ -666,6 +693,9 @@ mod tests {
         let schema = GraphSchema {
             nodes: vec![NodeKind {
                 label: "Document".into(),
+                domain: None,
+                extra_labels: Vec::new(),
+                description: None,
                 properties: vec![
                     Property {
                         name: "entity_id".into(),

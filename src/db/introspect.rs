@@ -427,13 +427,14 @@ mod tests {
         // Call order:
         //   1. fetch_node_labels
         //   2. fetch_props for "Person"
-        //   3. fetch_rel_types
-        //   4. fetch_rel_endpoints for "KNOWS"
-        //   5. fetch_props for "KNOWS"
+        //   3. fetch_extra_node_labels for "Person"
+        //   4. fetch_rel_types
+        //   5. fetch_rel_endpoints for "KNOWS"
+        //   6. fetch_props for "KNOWS"
 
-        // 5. KNOWS rel props (empty)
+        // 6. KNOWS rel props (empty)
         mock.enqueue(crate::db::QueryResult::default());
-        // 4. KNOWS endpoints
+        // 5. KNOWS endpoints
         mock.enqueue(crate::db::QueryResult {
             columns: vec!["from".into(), "to".into()],
             rows: vec![row(&[
@@ -441,11 +442,13 @@ mod tests {
                 ("to", Value::String("Person".into())),
             ])],
         });
-        // 3. rel types
+        // 4. rel types
         mock.enqueue(crate::db::QueryResult {
             columns: vec!["type".into()],
             rows: vec![row(&[("type", Value::String("KNOWS".into()))])],
         });
+        // 3. Person extra labels (empty)
+        mock.enqueue(crate::db::QueryResult::default());
         // 2. Person props
         mock.enqueue(crate::db::QueryResult {
             columns: vec!["key".into(), "samples".into()],

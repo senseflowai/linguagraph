@@ -19,15 +19,15 @@ use std::sync::Arc;
 
 use linguagraph::ast::query::Literal;
 use linguagraph::config::{
-    Config, DatabaseConfig, GraphSpecificationConfig, LlmConfig, QueryConfig, TypeConfig,
+    Config, DatabaseConfig, LlmConfig, OntologyCatalogConfig, QueryConfig, TypeConfig,
 };
 use linguagraph::core::Pipeline;
 use linguagraph::db::MockClient;
 use linguagraph::dsl;
 use linguagraph::embeddings::{MockEmbedder, SharedEmbedder};
 use linguagraph::graph::{
-    FileGraphSpecificationStorage, GraphBuilder, GraphSpecification, GraphSpecificationStorage,
-    PropertyType as GraphPropertyType,
+    DomainOntology, EntityTypeSpec, GraphBuilder, JsonFileOntologyCatalogStorage, OntologyCatalog,
+    OntologyCatalogStorage, OntologyPropertyType, PropertySpec, PropertyType as GraphPropertyType,
 };
 use linguagraph::types::{
     handlers::{self, SemanticTextConfig, SemanticTextHandler},
@@ -62,7 +62,7 @@ fn cfg_with_semantic_text() -> Config {
         },
         llm: LlmConfig::default(),
         query: QueryConfig::default(),
-        graph_specification: GraphSpecificationConfig::default(),
+        ontology_catalog: OntologyCatalogConfig::default(),
         prompt: Default::default(),
         ingest: Default::default(),
         types,
@@ -527,51 +527,70 @@ fn plain_filters_remain_untyped_and_compile_without_registry() {
     assert!(!cypher.text.contains("qlink"));
 }
 
-// ─── Auto-resolution from GraphSpecification ────────────────────────────
+// ─── Auto-resolution from OntologyCatalog ───────────────────────────────
 //
-// When the DSL omits `"type"` but the graph specification declares one,
-// the lowering step should pick up the type from the specification snapshot
+// When the DSL omits `"type"` but the ontology catalog declares one,
+// the lowering step should pick up the type from the catalog snapshot
 // and route the filter through the matching handler.
 
-fn semantic_specification() -> GraphSpecification {
-    GraphSpecification::new()
-        .with_entity("Company", "")
-        .with_property("Company", "id", GraphPropertyType::String, "")
-        .with_property(
-            "Company",
-            "name",
-            GraphPropertyType::Text,
-            "the company name",
-        )
-        .with_property("Company", "industry", GraphPropertyType::String, "")
+fn prop(name: &str, property_type: OntologyPropertyType, description: Option<&str>) -> PropertySpec {
+    PropertySpec {
+        name: name.into(),
+        description: description.map(str::to_string),
+        property_type,
+        required: false,
+    }
 }
 
 #[test]
-fn graph_specification_round_trips_field_types() {
-    let spec = semantic_specification();
-    assert_eq!(spec.get_type("Company", "name"), Some("SemanticText"));
-    assert_eq!(spec.get_query_type("Company", "name"), Some("SemanticText"));
+fn ontology_catalog_round_trips_field_types() {
+    let catalog = semantic_catalog();
     assert_eq!(
-        spec.get_property("Company", "name")
-            .map(|p| p.description.as_str()),
+        catalog.get_query_type("Company", "name"),
+        Some("SemanticText")
+    );
+    assert_eq!(
+        catalog
+            .get_property("Company", "name")
+            .and_then(|p| p.description.as_deref()),
         Some("the company name")
     );
-    assert_eq!(spec.get_type("Company", "industry"), Some("Text"));
-    assert_eq!(spec.get_query_type("Company", "industry"), Some("Text"));
+    assert_eq!(catalog.get_query_type("Company", "industry"), Some("Text"));
+}
+
+fn semantic_catalog() -> OntologyCatalog {
+    let mut catalog = OntologyCatalog::default();
+    catalog.insert(
+        "test",
+        DomainOntology {
+            entity_types: vec![EntityTypeSpec {
+                name: "Company".into(),
+                description: None,
+                properties: vec![
+                    prop("id", OntologyPropertyType::String, None),
+                    prop("name", OntologyPropertyType::Text, Some("the company name")),
+                    prop("industry", OntologyPropertyType::String, None),
+                ],
+                embedding: None,
+            }],
+            relation_types: vec![],
+        },
+    );
+    catalog
 }
 
 #[test]
-fn untyped_dsl_filter_auto_resolves_to_semantic_text_via_graph_specification() {
+fn untyped_dsl_filter_auto_resolves_to_semantic_text_via_ontology_catalog() {
     let cfg = cfg_with_semantic_text();
     let (registry, embedder) = registry_and_embedder();
-    let specification = Arc::new(semantic_specification());
+    let catalog = Arc::new(semantic_catalog());
     let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg)
         .with_registry(registry)
         .with_embedder(embedder)
-        .with_graph_specification(specification);
+        .with_ontology_catalog(catalog);
 
     // Notice the DSL has NO `"type"` field — the handler is selected
-    // from GraphSpecification.
+    // from OntologyCatalog.
     let dsl_query = dsl::parse_str(
         r#"{
             "action": "find",
@@ -598,22 +617,33 @@ fn untyped_datetime_filter_auto_resolves_and_expands_eq_to_a_day_range() {
     // so rows recorded at any time on that day still match.
     let cfg = cfg_with_semantic_text();
     let (registry, embedder) = registry_and_embedder();
-    let specification = GraphSpecification::new()
-        .with_entity("ServiceVisit", "")
-        .with_property("ServiceVisit", "id", GraphPropertyType::String, "")
-        .with_property(
-            "ServiceVisit",
-            "work_start",
-            GraphPropertyType::Timestamp,
-            "when the visit started",
-        );
+    let mut catalog = OntologyCatalog::default();
+    catalog.insert(
+        "test",
+        DomainOntology {
+            entity_types: vec![EntityTypeSpec {
+                name: "ServiceVisit".into(),
+                description: None,
+                properties: vec![
+                    prop("id", OntologyPropertyType::String, None),
+                    prop(
+                        "work_start",
+                        OntologyPropertyType::Datetime,
+                        Some("when the visit started"),
+                    ),
+                ],
+                embedding: None,
+            }],
+            relation_types: vec![],
+        },
+    );
     let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg)
         .with_registry(registry)
         .with_embedder(embedder)
-        .with_graph_specification(Arc::new(specification));
+        .with_ontology_catalog(Arc::new(catalog));
 
     // No `"type"` field — the Timestamp handler is selected from the
-    // graph specification.
+    // ontology catalog.
     let dsl_query = dsl::parse_str(
         r#"{
             "action": "find",
@@ -640,18 +670,18 @@ fn untyped_datetime_filter_auto_resolves_and_expands_eq_to_a_day_range() {
 }
 
 #[test]
-fn explicit_dsl_type_overrides_graph_specification() {
+fn explicit_dsl_type_overrides_ontology_catalog() {
     // The mapping doesn't tag `c.industry` with any type, but the DSL
     // does — explicit always wins over the inferred specification value.
     // Conversely, when an explicit type *is* set we must not silently
-    // fall back to the specification's type for the same field.
+    // fall back to the catalog's type for the same field.
     let cfg = cfg_with_semantic_text();
     let (registry, embedder) = registry_and_embedder();
-    let specification = semantic_specification();
+    let catalog = semantic_catalog();
     let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg)
         .with_registry(registry)
         .with_embedder(embedder)
-        .with_graph_specification(Arc::new(specification));
+        .with_ontology_catalog(Arc::new(catalog));
 
     let dsl_query = dsl::parse_str(
         r#"{
@@ -679,14 +709,14 @@ fn explicit_dsl_type_overrides_graph_specification() {
 }
 
 #[test]
-fn untyped_field_without_graph_specification_stays_plain() {
+fn untyped_field_without_ontology_catalog_stays_plain() {
     let cfg = cfg_with_semantic_text();
     let (registry, embedder) = registry_and_embedder();
     let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg)
         .with_registry(registry)
         .with_embedder(embedder);
 
-    // Without a loaded graph specification, industry should compile as a
+    // Without a loaded ontology catalog, industry should compile as a
     // plain WHERE clause, never touch qlink.
     let dsl_query = dsl::parse_str(
         r#"{
@@ -705,14 +735,14 @@ fn untyped_field_without_graph_specification_stays_plain() {
 }
 
 #[test]
-fn string_property_from_graph_specification_auto_resolves_to_text_handler() {
+fn string_property_from_ontology_catalog_auto_resolves_to_text_handler() {
     let cfg = cfg_with_semantic_text();
     let (registry, embedder) = registry_and_embedder();
-    let specification = Arc::new(semantic_specification());
+    let catalog = Arc::new(semantic_catalog());
     let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg)
         .with_registry(registry)
         .with_embedder(embedder)
-        .with_graph_specification(specification);
+        .with_ontology_catalog(catalog);
 
     let dsl_query = dsl::parse_str(
         r#"{
@@ -735,23 +765,34 @@ fn string_property_from_graph_specification_auto_resolves_to_text_handler() {
 }
 
 #[test]
-fn graph_specification_lookup_keys_off_label_not_alias() {
+fn ontology_catalog_lookup_keys_off_label_not_alias() {
     // Same property name on different labels must resolve independently.
     // Here `c` is bound to `Company` and `p` to `Person`. Only
     // `Company.name` is SemanticText.
     let cfg = cfg_with_semantic_text();
     let (registry, embedder) = registry_and_embedder();
-    let specification = GraphSpecification::new().with_property(
-        "Company",
-        "name",
-        GraphPropertyType::Text,
-        "the company name",
+    let mut catalog = OntologyCatalog::default();
+    catalog.insert(
+        "test",
+        DomainOntology {
+            entity_types: vec![EntityTypeSpec {
+                name: "Company".into(),
+                description: None,
+                properties: vec![prop(
+                    "name",
+                    OntologyPropertyType::Text,
+                    Some("the company name"),
+                )],
+                embedding: None,
+            }],
+            relation_types: vec![],
+        },
     );
     // Person.name is left plain.
     let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg)
         .with_registry(registry)
         .with_embedder(embedder)
-        .with_graph_specification(Arc::new(specification));
+        .with_ontology_catalog(Arc::new(catalog));
 
     // Filter on Company.name -> auto SemanticText.
     let q = dsl::parse_str(
@@ -791,23 +832,23 @@ fn graph_specification_lookup_keys_off_label_not_alias() {
 }
 
 #[tokio::test]
-async fn loaded_graph_specification_auto_resolves_semantic_text_filters() {
+async fn loaded_ontology_catalog_auto_resolves_semantic_text_filters() {
     let cfg = cfg_with_semantic_text();
     let (registry, embedder) = registry_and_embedder();
     let path =
-        std::env::temp_dir().join(format!("linguagraph-spec-test-{}.json", std::process::id()));
-    let storage = FileGraphSpecificationStorage::new(&path);
-    storage.save(&semantic_specification()).await.unwrap();
-    let storage: Arc<dyn GraphSpecificationStorage> = Arc::new(storage);
+        std::env::temp_dir().join(format!("linguagraph-catalog-test-{}.json", std::process::id()));
+    let storage = JsonFileOntologyCatalogStorage::new(&path);
+    storage.save(&semantic_catalog()).await.unwrap();
+    let storage: Arc<dyn OntologyCatalogStorage> = Arc::new(storage);
     let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg)
         .with_registry(registry)
         .with_embedder(embedder)
-        .with_graph_specification_storage(storage);
-    pipeline.load_graph_specification().await.unwrap();
+        .with_ontology_catalog_storage(storage);
+    pipeline.load_ontology_catalog().await.unwrap();
 
-    let specification = pipeline.graph_specification().expect("snapshot loaded");
+    let catalog = pipeline.ontology_catalog().expect("snapshot loaded");
     assert_eq!(
-        specification.get_type("Company", "name"),
+        catalog.get_query_type("Company", "name"),
         Some("SemanticText")
     );
 
@@ -832,36 +873,35 @@ async fn loaded_graph_specification_auto_resolves_semantic_text_filters() {
 
 #[test]
 fn prompt_surfaces_field_type_marker() {
-    use linguagraph::graph::{GraphSpecification, PropertyType as GraphPropertyType};
     use linguagraph::prompt::{
         generate_system_prompt, GraphSchema, NodeKind, PromptOptions, Property, PropertyType,
     };
     let schema = GraphSchema {
         nodes: vec![NodeKind {
             label: "Company".into(),
+            domain: None,
+            extra_labels: Vec::new(),
+            description: None,
             properties: vec![
                 Property {
                     name: "id".into(),
                     ty: PropertyType::String,
+                    description: None,
                 },
                 Property {
                     name: "name".into(),
                     ty: PropertyType::String,
+                    description: None,
                 },
             ],
         }],
         relationships: vec![],
     };
-    let spec = GraphSpecification::new().with_property(
-        "Company",
-        "name",
-        GraphPropertyType::Text,
-        "the company name",
-    );
+    let catalog = semantic_catalog();
     let prompt = generate_system_prompt(
         &schema,
         &PromptOptions {
-            graph_specification: Some(spec),
+            ontology_catalog: Some(catalog),
             include_examples: false,
             ..Default::default()
         },

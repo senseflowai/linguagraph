@@ -263,7 +263,9 @@ fn is_valid_ident(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::{GraphSpecification, PropertyType};
+    use crate::graph::{
+        DomainOntology, EntityTypeSpec, OntologyCatalog, OntologyPropertyType, PropertySpec,
+    };
 
     fn plan(source: &str) -> DeletePlan {
         DeletePlan::new(source, "semantic_text").unwrap()
@@ -340,12 +342,34 @@ mod tests {
 
     #[test]
     fn qlink_collections_unions_spec_props_with_builtins() {
-        let spec = GraphSpecification::new()
-            .with_entity("Person", "a human")
-            .with_property("Person", "bio", PropertyType::Text, "biography")
-            .with_property("Person", "age", PropertyType::Number, "age");
-        let cols = plan("src").qlink_collections(Some(&spec));
-        // bio (from spec), name + text (builtins). age is Number — skipped.
+        let mut catalog = OntologyCatalog::default();
+        catalog.insert(
+            "test",
+            DomainOntology {
+                entity_types: vec![EntityTypeSpec {
+                    name: "Person".into(),
+                    description: Some("a human".into()),
+                    properties: vec![
+                        PropertySpec {
+                            name: "bio".into(),
+                            description: Some("biography".into()),
+                            property_type: OntologyPropertyType::Text,
+                            required: false,
+                        },
+                        PropertySpec {
+                            name: "age".into(),
+                            description: Some("age".into()),
+                            property_type: OntologyPropertyType::Int,
+                            required: false,
+                        },
+                    ],
+                    embedding: None,
+                }],
+                relation_types: vec![],
+            },
+        );
+        let cols = plan("src").qlink_collections(Some(&catalog));
+        // bio (from catalog), name + text (builtins). age is Int — skipped.
         assert!(cols.contains(&"semantic_text__bio".into()));
         assert!(cols.contains(&"semantic_text__name".into()));
         assert!(cols.contains(&"semantic_text__text".into()));

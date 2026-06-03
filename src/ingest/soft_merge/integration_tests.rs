@@ -10,7 +10,7 @@ use serde_json::json;
 use super::*;
 use crate::db::{result::Row, MockClient, QueryResult, Value as DbValue};
 use crate::embeddings::{EmbedError, MockEmbedder};
-use crate::graph::{EntityGraph, GraphBuilder, PropertyType};
+use crate::graph::{EntityGraph, GraphBuilder, PropertyType, CANONICAL_FIELD};
 
 /// Lax config used by happy-path tests that pre-date the staged
 /// pipeline. Effectively all gates disabled so a single hit at or
@@ -35,7 +35,7 @@ fn lax_cfg() -> SoftMergeConfig {
 
 fn entity_named(name: &str) -> EntityGraph {
     EntityGraph::new("LegalConcept")
-        .soft_primary_key("name")
+        .soft_primary_key()
         .property("name", PropertyType::Text, name)
 }
 
@@ -82,7 +82,7 @@ async fn resolver_rewrites_property_to_canonical_when_hit_above_threshold() {
     assert_eq!(report.needs_review, 0);
     assert_eq!(report.no_merge, 0);
     assert_eq!(
-        graph.entities()[0].properties["name"].value,
+        graph.entities()[0].properties[CANONICAL_FIELD].value,
         json!("общественное согласие")
     );
 }
@@ -189,7 +189,7 @@ async fn resolver_parses_memgraph_style_json_wrapped_cells() {
 
     assert_eq!(report.auto_merges, 1);
     assert_eq!(
-        graph.entities()[0].properties["name"].value,
+        graph.entities()[0].properties[CANONICAL_FIELD].value,
         json!("общественное согласие")
     );
 }
@@ -223,7 +223,7 @@ async fn resolver_threads_prefix_index_through_collection_name() {
         .expect("coll param must be bound");
     assert_eq!(
         coll,
-        &crate::ast::query::Literal::String("Tenant1__semantic_text__name".into()),
+        &crate::ast::query::Literal::String("Tenant1__semantic_text___canonical".into()),
         "soft-merge collection must fold in the prefix_index"
     );
 }
@@ -284,8 +284,14 @@ async fn in_batch_dedup_collapses_above_threshold() {
     let embedder = StubEmbedder::new(
         3,
         vec![
-            ("Microsoft", normalised(vec![1.0, 0.0, 0.0])),
-            ("Microsoft Corp.", normalised(vec![0.99, 0.01, 0.0])),
+            (
+                "type: LegalConcept\nname: Microsoft",
+                normalised(vec![1.0, 0.0, 0.0]),
+            ),
+            (
+                "type: LegalConcept\nname: Microsoft Corp.",
+                normalised(vec![0.99, 0.01, 0.0]),
+            ),
         ],
     );
 
@@ -301,13 +307,13 @@ async fn in_batch_dedup_collapses_above_threshold() {
     .unwrap();
 
     assert_eq!(report.in_batch_dedup_collapsed, 1);
-    let names: Vec<&serde_json::Value> = graph
+    let canonical_values: Vec<&serde_json::Value> = graph
         .entities()
         .iter()
-        .map(|e| &e.properties["name"].value)
+        .map(|e| &e.properties[CANONICAL_FIELD].value)
         .collect();
-    assert_eq!(names[0], &json!("Microsoft"));
-    assert_eq!(names[1], &json!("Microsoft"));
+    assert_eq!(canonical_values[0], &json!("type: LegalConcept\nname: Microsoft"));
+    assert_eq!(canonical_values[1], &json!("type: LegalConcept\nname: Microsoft"));
     let captured = client.captured.lock().unwrap();
     assert_eq!(captured.len(), 1);
     let rows = captured[0]
@@ -334,8 +340,14 @@ async fn in_batch_dedup_below_threshold_keeps_both() {
     let embedder = StubEmbedder::new(
         3,
         vec![
-            ("apple", normalised(vec![1.0, 0.0, 0.0])),
-            ("car", normalised(vec![0.0, 1.0, 0.0])),
+            (
+                "type: LegalConcept\nname: apple",
+                normalised(vec![1.0, 0.0, 0.0]),
+            ),
+            (
+                "type: LegalConcept\nname: car",
+                normalised(vec![0.0, 1.0, 0.0]),
+            ),
         ],
     );
 
@@ -508,13 +520,13 @@ async fn auto_merge_borderline_match_routes_to_review() {
     assert_eq!(report.needs_review, 1);
     // Entity untouched — the standard MERGE will create a new node.
     assert_eq!(
-        graph.entities()[0].properties["name"].value,
-        json!("общественное соглас.")
+        graph.entities()[0].properties[CANONICAL_FIELD].value,
+        json!("type: LegalConcept\nname: общественное соглас.")
     );
     assert_eq!(report.review_candidates.len(), 1);
     let r = &report.review_candidates[0];
     assert_eq!(r.label, "LegalConcept");
-    assert_eq!(r.field, "name");
+    assert_eq!(r.field, CANONICAL_FIELD);
     assert!(
         r.rejected_by
             .iter()
@@ -587,7 +599,7 @@ async fn hard_conflict_on_email_blocks_automerge() {
     let mut b = GraphBuilder::new();
     b.add_entity(
         EntityGraph::new("Person")
-            .soft_primary_key("name")
+            .soft_primary_key()
             .property("name", PropertyType::Text, "Alice Smith")
             .property("email", PropertyType::String, "alice.a@example.com"),
     );

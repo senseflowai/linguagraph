@@ -1306,7 +1306,7 @@ fn build_entity_type_search_cypher(
         }
 
         branches.push(format!(
-            "CALL libqlink.search_labeled([${coll_param}], $emb, $top_k, NULL) \
+            "CALL libqlink.search([${coll_param}], $emb, $top_k) \
              YIELD id AS qid, score AS sc\n\
              MATCH (n) WHERE {where_clause}\n\
              RETURN id(n) AS nid, labels(n) AS labs, sc AS score, ${coll_param} AS coll",

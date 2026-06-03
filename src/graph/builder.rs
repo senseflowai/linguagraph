@@ -396,11 +396,7 @@ fn ensure_canonical_property(entity: EntityGraph) -> EntityGraph {
         .map(|(k, p)| (k.clone(), p.value.clone()))
         .collect();
     let canonical = build_canonical_text(&entity.r#type, &raw_props);
-    let property_type = match &entity.primary_key {
-        Some(PrimaryKey::Soft) => PropertyType::Text,
-        _ => PropertyType::String,
-    };
-    entity.property(CANONICAL_FIELD, property_type, canonical)
+    entity.property(CANONICAL_FIELD, PropertyType::Text, canonical)
 }
 
 #[derive(Debug, Deserialize)]

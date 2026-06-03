@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use crate::ast::query::Literal;
 use crate::ast::{from_dsl, query::InsertQuery, query::ReadQuery};
 use crate::builder::{self, CypherQuery};
 use crate::config::{Config, SoftMergeConfig};
@@ -10,9 +11,13 @@ use crate::db::{GraphClient, QueryResult, Row, Value as DbValue};
 use crate::dsl::{Direction as DslDirection, DslQuery, TraversalQuery};
 use crate::embeddings::SharedEmbedder;
 use crate::error::Result;
-use crate::graph::{Graph, OntologyCatalog, OntologyCatalogStorage};
+use crate::graph::{EntityTypeMatch, Graph, OntologyCatalog, OntologyCatalogStorage};
 use crate::ingest::{self, soft_merge, DeletePlan, DiscoveredNodes, IngestError, PlannerOptions};
 use crate::types::{handlers, SharedRegistry, SideEffect, SideEffectQueue};
+
+use crate::core::entity_type_search::{
+    self, EntityTypeHit, EntityTypeSearchQuery, EntityTypeSearchResult, HitRow,
+};
 
 use std::sync::RwLock;
 
@@ -479,6 +484,167 @@ impl Pipeline {
         merged.extend(result);
 
         Ok(merged.finish(limit))
+    }
+
+    // ── Entity-type discovery ───────────────────────────────────────────────
+
+    /// Discover which entity types in the graph are semantically
+    /// relevant to a free-text user query.
+    ///
+    /// See [`crate::core::entity_type_search`] for the result shape and
+    /// the two-channel design (vector search + ontology catalog).
+    ///
+    /// Returns an empty result when:
+    ///
+    /// * the user text is empty,
+    /// * no Qdrant collections survive after the `fields` /
+    ///   `collections` filter (nothing to search).
+    ///
+    /// Errors when no embedder is configured on the pipeline.
+    pub async fn run_entity_type_search(
+        &self,
+        q: EntityTypeSearchQuery,
+    ) -> Result<EntityTypeSearchResult> {
+        let started = std::time::Instant::now();
+
+        if q.text.trim().is_empty() {
+            return Ok(EntityTypeSearchResult {
+                elapsed_ms: started.elapsed().as_millis() as u64,
+                ..EntityTypeSearchResult::default()
+            });
+        }
+
+        let embedder = self.embedder.as_ref().ok_or_else(|| {
+            crate::error::Error::Ingest(IngestError::Type(
+                "Pipeline has no embedder; run_entity_type_search needs one to embed the user \
+                 query — call Pipeline::with_embedder before invoking this method"
+                    .into(),
+            ))
+        })?;
+        let mut embedded = embedder.embed_batch(&[q.text.as_str()]).map_err(|e| {
+            crate::error::Error::Ingest(IngestError::Type(format!(
+                "embed_batch failed for entity-type search: {e}"
+            )))
+        })?;
+        let query_vector = embedded.pop().ok_or_else(|| {
+            crate::error::Error::Ingest(IngestError::Type(
+                "embedder produced no vectors for entity-type search".into(),
+            ))
+        })?;
+
+        let catalog_snapshot = self.ontology_catalog();
+        let catalog = catalog_snapshot.as_deref();
+
+        let collections = resolve_collections(
+            &q,
+            catalog,
+            self.prefix_index.as_deref(),
+            &self.semantic_collection,
+        );
+        if collections.is_empty() {
+            return Ok(EntityTypeSearchResult {
+                elapsed_ms: started.elapsed().as_millis() as u64,
+                ..EntityTypeSearchResult::default()
+            });
+        }
+
+        let prefix_label = self.prefix_label.as_deref();
+        if let Some(p) = prefix_label {
+            if !crate::ingest::delete::is_valid_ident(p) {
+                return Err(crate::error::Error::Ingest(IngestError::InvalidLabel(
+                    p.to_string(),
+                )));
+            }
+        }
+
+        // ── Vector channel ──────────────────────────────────────────
+        let cypher = build_entity_type_search_cypher(
+            &collections,
+            &query_vector,
+            q.top_k,
+            q.score_threshold,
+            prefix_label,
+        );
+        tracing::debug!(
+            target: "linguagraph::entity_type_search",
+            cypher = %cypher.text,
+            collections = collections.len(),
+            "vector channel"
+        );
+        let vector_result = self.client.execute(&cypher).await?;
+        let hit_rows = decode_hit_rows(&vector_result)?;
+        tracing::trace!(
+            target: "linguagraph::entity_type_search",
+            rows = hit_rows.len(),
+            "vector channel result"
+        );
+        let mut matches = entity_type_search::aggregate_hits(hit_rows, catalog, prefix_label);
+
+        // ── Catalog channel ─────────────────────────────────────────
+        if q.include_catalog_signal {
+            if let Some(catalog) = catalog {
+                match catalog.find(
+                    &q.text,
+                    q.catalog_threshold,
+                    embedder.as_ref(),
+                    None,
+                    0.0,
+                ) {
+                    Ok(catalog_hits) => merge_catalog_signal(&mut matches, catalog_hits),
+                    Err(err) => {
+                        tracing::debug!(
+                            target: "linguagraph::entity_type_search",
+                            error = %err,
+                            "catalog signal unavailable"
+                        );
+                    }
+                }
+            }
+        }
+
+        // ── Neighbour roll-up ──────────────────────────────────────
+        let neighbors = if q.include_neighbors && !matches.is_empty() {
+            let hit_ids: Vec<i64> = matches
+                .iter()
+                .flat_map(|m| m.sample_node_ids.iter().copied())
+                .collect();
+            if hit_ids.is_empty() {
+                Vec::new()
+            } else {
+                let neighbor_cypher = build_neighbor_cypher(&hit_ids);
+                tracing::debug!(
+                    target: "linguagraph::entity_type_search",
+                    cypher = %neighbor_cypher.text,
+                    hit_ids = hit_ids.len(),
+                    "neighbour leg"
+                );
+                let result = self.client.execute(&neighbor_cypher).await?;
+                let rows = decode_neighbor_rows(&result)?;
+                let mut hits = entity_type_search::aggregate_hits(rows, catalog, prefix_label);
+                // Neighbour scores are synthetic; clear them so callers
+                // never confuse them with a real cosine signal.
+                let matched_types: std::collections::HashSet<&str> =
+                    matches.iter().map(|m| m.entity_type.as_str()).collect();
+                hits.retain(|h| !matched_types.contains(h.entity_type.as_str()));
+                for h in &mut hits {
+                    h.vector_score = None;
+                    h.per_collection.clear();
+                }
+                hits.sort_by(|a, b| a.entity_type.cmp(&b.entity_type));
+                hits
+            }
+        } else {
+            Vec::new()
+        };
+
+        entity_type_search::sort_matches(&mut matches);
+
+        Ok(EntityTypeSearchResult {
+            matches,
+            neighbors,
+            collections_searched: collections,
+            elapsed_ms: started.elapsed().as_millis() as u64,
+        })
     }
 
     // ── Insert path ─────────────────────────────────────────────────────────
@@ -1061,6 +1227,197 @@ fn collect_typed_predicates_mut<'a>(
 /// `embeddings` path.
 pub use crate::embeddings::Embedder as _Embedder;
 
+// ── Entity-type search helpers ──────────────────────────────────────────────
+
+/// Resolve the list of Qdrant collections to search.
+fn resolve_collections(
+    q: &EntityTypeSearchQuery,
+    catalog: Option<&OntologyCatalog>,
+    prefix_index: Option<&str>,
+    semantic_collection: &str,
+) -> Vec<String> {
+    if let Some(explicit) = &q.collections {
+        return explicit.clone();
+    }
+    let mut field_names = crate::ingest::delete::text_field_names(catalog);
+    if let Some(filter) = &q.fields {
+        let allowed: BTreeSet<&str> = filter.iter().map(String::as_str).collect();
+        field_names.retain(|name| allowed.contains(name.as_str()));
+    }
+    field_names
+        .into_iter()
+        .map(|p| crate::ingest::delete::with_prefix_index(prefix_index, semantic_collection, &p))
+        .collect()
+}
+
+/// Build the multi-collection UNION ALL Cypher used by the vector
+/// channel of [`Pipeline::run_entity_type_search`]. Each collection
+/// gets its own `CALL { ... }` subquery so the score column carries
+/// the collection name alongside the cosine value.
+fn build_entity_type_search_cypher(
+    collections: &[String],
+    query_vector: &[f32],
+    top_k: u32,
+    score_threshold: Option<f32>,
+    prefix_label: Option<&str>,
+) -> CypherQuery {
+    let mut params: BTreeMap<String, Literal> = BTreeMap::new();
+    params.insert(
+        "emb".into(),
+        Literal::List(
+            query_vector
+                .iter()
+                .map(|f| Literal::Float(*f as f64))
+                .collect(),
+        ),
+    );
+    params.insert("top_k".into(), Literal::Int(top_k as i64));
+    let has_threshold = score_threshold.is_some();
+    if let Some(thr) = score_threshold {
+        params.insert("score_thr".into(), Literal::Float(thr as f64));
+    }
+    let has_prefix = prefix_label.is_some();
+    if let Some(p) = prefix_label {
+        params.insert("prefix_label".into(), Literal::String(p.to_string()));
+    }
+
+    let mut branches: Vec<String> = Vec::with_capacity(collections.len());
+    for (idx, collection) in collections.iter().enumerate() {
+        let coll_param = format!("coll_{idx}");
+        params.insert(coll_param.clone(), Literal::String(collection.clone()));
+
+        let mut where_parts: Vec<String> = Vec::new();
+        where_parts.push("id(n) = qid".into());
+        if has_threshold {
+            where_parts.push("sc >= $score_thr".into());
+        }
+        if has_prefix {
+            where_parts.push("$prefix_label IN labels(n)".into());
+        }
+
+        branches.push(format!(
+            "CALL {{\n\
+             \x20\x20CALL libqlink.search_labeled([${coll_param}], $emb, $top_k, NULL) \
+             YIELD id AS qid, score AS sc\n\
+             \x20\x20MATCH (n) WHERE {where_clause}\n\
+             \x20\x20RETURN id(n) AS nid, labels(n) AS labs, sc AS score, ${coll_param} AS coll\n\
+             }}",
+            where_clause = where_parts.join(" AND "),
+        ));
+    }
+
+    let text = branches.join("\nUNION ALL\n");
+    CypherQuery::new(text, params)
+}
+
+/// Build the 1-hop neighbour Cypher.
+fn build_neighbor_cypher(hit_ids: &[i64]) -> CypherQuery {
+    let mut params: BTreeMap<String, Literal> = BTreeMap::new();
+    params.insert(
+        "hit_ids".into(),
+        Literal::List(hit_ids.iter().map(|i| Literal::Int(*i)).collect()),
+    );
+    let text = "UNWIND $hit_ids AS h\n\
+                MATCH (n)-[]-(m) WHERE id(n) = h\n\
+                RETURN DISTINCT id(m) AS nid, labels(m) AS labs"
+        .to_string();
+    CypherQuery::new(text, params)
+}
+
+/// Decode rows from the vector channel into [`HitRow`]s.
+fn decode_hit_rows(result: &QueryResult) -> Result<Vec<HitRow>> {
+    let mut out = Vec::with_capacity(result.rows.len());
+    for row in &result.rows {
+        let Some(nid) = row.fields.get("nid").and_then(db_value_as_i64) else {
+            continue;
+        };
+        let Some(labels) = row.fields.get("labs").and_then(db_value_as_string_list) else {
+            continue;
+        };
+        let score = row
+            .fields
+            .get("score")
+            .and_then(db_value_as_f64)
+            .unwrap_or(0.0) as f32;
+        let collection = row
+            .fields
+            .get("coll")
+            .and_then(db_value_as_string)
+            .unwrap_or_default();
+        out.push(HitRow {
+            nid,
+            labels,
+            score,
+            collection,
+        });
+    }
+    Ok(out)
+}
+
+/// Decode neighbour-leg rows into [`HitRow`]s with a synthetic score
+/// and empty collection — `aggregate_hits` zeroes both out downstream.
+fn decode_neighbor_rows(result: &QueryResult) -> Result<Vec<HitRow>> {
+    let mut out = Vec::with_capacity(result.rows.len());
+    for row in &result.rows {
+        let Some(nid) = row.fields.get("nid").and_then(db_value_as_i64) else {
+            continue;
+        };
+        let Some(labels) = row.fields.get("labs").and_then(db_value_as_string_list) else {
+            continue;
+        };
+        out.push(HitRow {
+            nid,
+            labels,
+            score: 0.0,
+            collection: String::new(),
+        });
+    }
+    Ok(out)
+}
+
+/// Merge the catalog signal into existing matches. Adds a new hit when
+/// the type is not yet present, otherwise fills in the catalog score
+/// (and the domain, when the vector channel could not infer one).
+fn merge_catalog_signal(matches: &mut Vec<EntityTypeHit>, catalog_hits: Vec<EntityTypeMatch<'_>>) {
+    for cat_hit in catalog_hits {
+        let name = cat_hit.entity_type.name.clone();
+        if let Some(existing) = matches.iter_mut().find(|h| h.entity_type == name) {
+            existing.catalog_score = Some(cat_hit.score);
+            if existing.domain.is_none() {
+                existing.domain = Some(cat_hit.domain.to_string());
+            }
+        } else {
+            matches.push(EntityTypeHit {
+                entity_type: name,
+                domain: Some(cat_hit.domain.to_string()),
+                catalog_score: Some(cat_hit.score),
+                ..EntityTypeHit::default()
+            });
+        }
+    }
+}
+
+fn db_value_as_string(value: &DbValue) -> Option<String> {
+    match value {
+        DbValue::String(s) => Some(s.clone()),
+        DbValue::Json(serde_json::Value::String(s)) => Some(s.clone()),
+        _ => None,
+    }
+}
+
+fn db_value_as_string_list(value: &DbValue) -> Option<Vec<String>> {
+    match value {
+        DbValue::Json(serde_json::Value::Array(items)) => items
+            .iter()
+            .map(|v| match v {
+                serde_json::Value::String(s) => Some(s.clone()),
+                _ => None,
+            })
+            .collect(),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1531,8 +1888,9 @@ mod tests {
         // qlink + detach calls return empty results — fine.
         mock.enqueue(QueryResult::empty()); // detach delete
                                             // qlink deletes — we don't know how many collections, just
-                                            // enqueue enough empty results. With no spec set there are 2
-                                            // collections (name, text).
+                                            // enqueue enough empty results. With no spec set there are
+                                            // 3 collections (name, text, _canonical).
+        mock.enqueue(QueryResult::empty());
         mock.enqueue(QueryResult::empty());
         mock.enqueue(QueryResult::empty());
         // discover query — returns one row with the source's id and
@@ -1563,18 +1921,19 @@ mod tests {
         assert_eq!(summary.orphan_entities, 3);
         assert_eq!(summary.chunks, 2);
         assert_eq!(summary.sources, 1);
-        // Two built-in collections: semantic_text__name + semantic_text__text.
-        assert_eq!(summary.qlink_collections, 2);
+        // Three built-in collections: semantic_text__name + semantic_text__text
+        // + semantic_text___canonical (the soft-merge canonical slot).
+        assert_eq!(summary.qlink_collections, 3);
 
         let captured = mock.captured.lock().unwrap();
-        // 1 discover + 2 qlink + 1 detach.
-        assert_eq!(captured.len(), 4);
+        // 1 discover + 3 qlink + 1 detach.
+        assert_eq!(captured.len(), 5);
         assert!(captured[0].text.contains("MATCH (s:Source"));
         assert!(captured[0].text.contains("{name: $source_name}"));
         assert!(captured[1].text.contains("libqlink.delete_batch"));
-        assert!(captured[3].text.contains("DETACH DELETE"));
+        assert!(captured[4].text.contains("DETACH DELETE"));
         // The detach call must receive every doomed id: 3 orphans + 2 chunks + 1 source = 6.
-        match captured[3].params.get("ids").unwrap() {
+        match captured[4].params.get("ids").unwrap() {
             Literal::List(items) => assert_eq!(items.len(), 6),
             other => panic!("expected list, got {other:?}"),
         }

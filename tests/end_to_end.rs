@@ -466,3 +466,187 @@ async fn default_limit_is_applied_when_omitted() {
     let captured = mock.captured.lock().unwrap();
     assert!(captured[0].text.contains("LIMIT 50"));
 }
+
+#[tokio::test]
+async fn entity_type_search_returns_unique_types_with_domains_and_scopes() {
+    use linguagraph::core::EntityTypeSearchQuery;
+    use linguagraph::embeddings::{MockEmbedder, SharedEmbedder};
+    use linguagraph::graph::{
+        DomainOntology, EntityTypeSpec, OntologyCatalog, OntologyPropertyType, PropertySpec,
+    };
+    use std::sync::Arc as StdArc;
+
+    let mut catalog = OntologyCatalog::default();
+    catalog.insert(
+        "legal",
+        DomainOntology {
+            entity_types: vec![
+                EntityTypeSpec {
+                    name: "Person".into(),
+                    description: Some("a legal person".into()),
+                    properties: vec![PropertySpec {
+                        name: "bio".into(),
+                        description: None,
+                        property_type: OntologyPropertyType::Text,
+                        required: false,
+                    }],
+                    embedding: None,
+                },
+                EntityTypeSpec::with_description("Company", "a legal entity"),
+            ],
+            relation_types: vec![],
+        },
+    );
+
+    let mock = Arc::new(MockClient::new());
+    // Mock returns LIFO. Enqueue the neighbour leg first (popped last),
+    // then the multi-collection vector leg (popped first).
+    //
+    // Neighbour leg returns one Company node tagged scope_structured.
+    mock.enqueue(QueryResult {
+        columns: vec!["nid".into(), "labs".into()],
+        rows: vec![Row {
+            fields: BTreeMap::from([
+                ("nid".to_string(), Value::Json(serde_json::json!(99))),
+                (
+                    "labs".to_string(),
+                    Value::Json(serde_json::json!(["Company", "legal", "scope_structured"])),
+                ),
+            ]),
+        }],
+    });
+    // Vector leg: one Person hit from semantic_text__name with a high
+    // score and scope_text.
+    mock.enqueue(QueryResult {
+        columns: vec![
+            "nid".into(),
+            "labs".into(),
+            "score".into(),
+            "coll".into(),
+        ],
+        rows: vec![Row {
+            fields: BTreeMap::from([
+                ("nid".to_string(), Value::Json(serde_json::json!(7))),
+                (
+                    "labs".to_string(),
+                    Value::Json(serde_json::json!(["Person", "legal", "scope_text"])),
+                ),
+                ("score".to_string(), Value::Json(serde_json::json!(0.82))),
+                (
+                    "coll".to_string(),
+                    Value::Json(serde_json::json!("semantic_text__name")),
+                ),
+            ]),
+        }],
+    });
+
+    let cfg = test_config();
+    let embedder: SharedEmbedder = StdArc::new(MockEmbedder::new(8));
+    let pipeline = Pipeline::new(mock.clone(), &cfg)
+        .with_embedder(embedder)
+        .with_ontology_catalog(StdArc::new(catalog));
+
+    let mut query = EntityTypeSearchQuery::new("who founded ACME?");
+    query.include_neighbors = true;
+    let result = pipeline
+        .run_entity_type_search(query)
+        .await
+        .expect("entity-type search runs");
+
+    assert_eq!(result.matches.len(), 1, "{:?}", result.matches);
+    let person = &result.matches[0];
+    assert_eq!(person.entity_type, "Person");
+    assert_eq!(person.domain.as_deref(), Some("legal"));
+    assert!(person.scopes.iter().any(|s| {
+        matches!(s, linguagraph::graph::Scope::Text)
+    }));
+    assert_eq!(
+        person.per_collection.get("semantic_text__name"),
+        Some(&0.82_f32)
+    );
+    assert_eq!(person.sample_node_ids, vec![7]);
+
+    assert_eq!(result.neighbors.len(), 1);
+    let company = &result.neighbors[0];
+    assert_eq!(company.entity_type, "Company");
+    assert_eq!(company.domain.as_deref(), Some("legal"));
+    assert!(company.scopes.iter().any(|s| {
+        matches!(s, linguagraph::graph::Scope::Structured)
+    }));
+    // Neighbours carry no vector signal.
+    assert!(company.vector_score.is_none());
+    assert!(company.per_collection.is_empty());
+
+    // The vector leg fans out over every known SemanticText field
+    // (name, text, _canonical, bio) → 4 collections.
+    assert!(result.collections_searched.len() >= 4);
+    assert!(result
+        .collections_searched
+        .iter()
+        .any(|c| c == "semantic_text__name"));
+    assert!(result
+        .collections_searched
+        .iter()
+        .any(|c| c == "semantic_text___canonical"));
+    assert!(result
+        .collections_searched
+        .iter()
+        .any(|c| c == "semantic_text__bio"));
+
+    // Cypher inspection: the vector leg should be one UNION ALL'd
+    // batch of libqlink.search_labeled calls plus the neighbour leg.
+    let captured = mock.captured.lock().unwrap();
+    assert_eq!(captured.len(), 2);
+    let vector_cypher = &captured[0].text;
+    assert!(
+        vector_cypher.contains("libqlink.search_labeled"),
+        "vector cypher missing qlink call:\n{vector_cypher}"
+    );
+    assert!(vector_cypher.contains("UNION ALL"));
+    let neighbour_cypher = &captured[1].text;
+    assert!(
+        neighbour_cypher.contains("MATCH (n)-[]-(m)"),
+        "neighbour cypher missing pattern:\n{neighbour_cypher}"
+    );
+}
+
+#[tokio::test]
+async fn entity_type_search_requires_an_embedder() {
+    use linguagraph::core::EntityTypeSearchQuery;
+
+    let mock = Arc::new(MockClient::new());
+    let cfg = test_config();
+    let pipeline = Pipeline::new(mock.clone(), &cfg);
+
+    let err = pipeline
+        .run_entity_type_search(EntityTypeSearchQuery::new("anything"))
+        .await
+        .expect_err("missing embedder must fail");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("embedder"),
+        "expected embedder-missing error, got {msg}"
+    );
+}
+
+#[tokio::test]
+async fn entity_type_search_empty_text_short_circuits() {
+    use linguagraph::core::EntityTypeSearchQuery;
+    use linguagraph::embeddings::{MockEmbedder, SharedEmbedder};
+    use std::sync::Arc as StdArc;
+
+    let mock = Arc::new(MockClient::new());
+    let cfg = test_config();
+    let embedder: SharedEmbedder = StdArc::new(MockEmbedder::new(8));
+    let pipeline = Pipeline::new(mock.clone(), &cfg).with_embedder(embedder);
+
+    let result = pipeline
+        .run_entity_type_search(EntityTypeSearchQuery::new("   "))
+        .await
+        .expect("empty text is not an error");
+    assert!(result.matches.is_empty());
+    assert!(result.neighbors.is_empty());
+    assert!(result.collections_searched.is_empty());
+    let captured = mock.captured.lock().unwrap();
+    assert!(captured.is_empty(), "no DB call should have been made");
+}

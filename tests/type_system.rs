@@ -881,6 +881,7 @@ fn prompt_surfaces_field_type_marker() {
             label: "Company".into(),
             domain: None,
             extra_labels: Vec::new(),
+            scopes: Vec::new(),
             description: None,
             properties: vec![
                 Property {

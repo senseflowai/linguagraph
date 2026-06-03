@@ -205,34 +205,12 @@ impl DeletePlan {
     }
 
     /// Enumerate the Qdrant collections that may hold vectors for the
-    /// doomed nodes.
-    ///
-    /// The `SemanticText` handler stores one collection per property
-    /// name (`{prefix_index}__{base}__{property}`). We pull every
-    /// known semantic-text property name from the [`OntologyCatalog`]
-    /// and union it with the two built-in property names — `name`
-    /// (Source) and `text` (Chunk) — so the deletion is correct even
-    /// when the catalog snapshot is missing or stale for built-ins.
+    /// doomed nodes. Delegates to [`text_field_names`] for the field
+    /// enumeration so the same source of truth drives both deletion and
+    /// the entity-type discovery query in
+    /// [`crate::core::Pipeline::run_entity_type_search`].
     pub fn qlink_collections(&self, catalog: Option<&OntologyCatalog>) -> Vec<String> {
-        let mut props: BTreeSet<String> = BTreeSet::new();
-        // Built-ins. Source.name and Chunk.text are always embedded
-        // when a SemanticText handler is registered.
-        props.insert("name".into());
-        props.insert("text".into());
-
-        if let Some(catalog) = catalog {
-            for ontology in catalog.domains_view().values() {
-                for entity in &ontology.entity_types {
-                    for prop in &entity.properties {
-                        if prop.property_type == OntologyPropertyType::Text {
-                            props.insert(prop.name.clone());
-                        }
-                    }
-                }
-            }
-        }
-
-        props
+        text_field_names(catalog)
             .into_iter()
             .map(|p| with_prefix_index(self.prefix_index.as_deref(), &self.semantic_collection, &p))
             .collect()
@@ -246,14 +224,60 @@ impl DeletePlan {
     }
 }
 
-fn with_prefix_index(prefix_index: Option<&str>, base: &str, property: &str) -> String {
+/// Names of every entity field that the SemanticText handler may have
+/// embedded into a Qdrant collection. Combines the two built-ins —
+/// `name` (Source) and `text` (Chunk) — with the soft-merge
+/// `_canonical` slot and every `OntologyPropertyType::Text` property
+/// declared in `catalog`. The set is used by [`DeletePlan`] to clean up
+/// vectors and by entity-type discovery to enumerate which collections
+/// to search.
+///
+/// The `_canonical` entry deliberately keeps the literal leading
+/// underscore; combined with the `__` separator that
+/// [`with_prefix_index`] uses, the resulting collection name carries a
+/// triple underscore (e.g. `semantic_text___canonical`). This is the
+/// soft-merge resolver's existing naming convention — see
+/// `src/ingest/soft_merge/mod.rs` and `tests/integration_tests.rs:226`.
+pub fn text_field_names(catalog: Option<&OntologyCatalog>) -> BTreeSet<String> {
+    let mut props: BTreeSet<String> = BTreeSet::new();
+    // Built-ins. Source.name and Chunk.text are always embedded
+    // when a SemanticText handler is registered.
+    props.insert("name".into());
+    props.insert("text".into());
+    // Soft-merge canonical embeddings. The handler writes whenever
+    // PrimaryKey::Soft is in play; cheap to include unconditionally.
+    props.insert("_canonical".into());
+
+    if let Some(catalog) = catalog {
+        for ontology in catalog.domains_view().values() {
+            for entity in &ontology.entity_types {
+                for prop in &entity.properties {
+                    if prop.property_type == OntologyPropertyType::Text {
+                        props.insert(prop.name.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    props
+}
+
+/// Render the fully-qualified Qdrant collection name for a field, the
+/// same way the SemanticText handler does at ingest time. Public so
+/// that entity-type discovery can share the convention with
+/// [`DeletePlan::qlink_collections`].
+pub fn with_prefix_index(prefix_index: Option<&str>, base: &str, property: &str) -> String {
     match prefix_index {
         Some(p) if !p.is_empty() => format!("{p}__{base}__{property}"),
         _ => format!("{base}__{property}"),
     }
 }
 
-fn is_valid_ident(s: &str) -> bool {
+/// Validate that `s` is a Cypher-safe identifier so callers can splice
+/// it into queries as a literal label without exposing parameter-binding
+/// limitations to injection.
+pub fn is_valid_ident(s: &str) -> bool {
     let mut chars = s.chars();
     let first = chars.next();
     matches!(first, Some(c) if c.is_ascii_alphabetic() || c == '_')

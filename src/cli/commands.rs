@@ -82,7 +82,26 @@ pub enum Command {
         #[arg(long)]
         prefix_index: Option<String>,
     },
-    /// Compile and execute a traversal-query JSON file against the configured database.
+    /// Execute a doc-graph traversal-query JSON file against the configured database.
+    ///
+    /// The JSON shape is:
+    ///
+    /// ```json
+    /// {
+    ///   "entities": ["Article 365", "Code"],
+    ///   "goal":     "Article 365",
+    ///   "query":    "Article 365",
+    ///   "prefix_label": "Entity_ws_1",
+    ///   "prefix_index": "ws_1",
+    ///   "limit": 30,
+    ///   "entity_types": ["Person"]
+    /// }
+    /// ```
+    ///
+    /// Runs a two-channel vector search (entities in `_canonical`,
+    /// chunks in `text`), follows `MENTIONS` from matched entities
+    /// to their chunks, deduplicates, aggregates per-chunk
+    /// `total_score`, sorts, and optionally reranks.
     Traversal {
         /// Path to the traversal-query JSON file.
         path: PathBuf,
@@ -608,6 +627,12 @@ async fn cmd_traversal(
     if let Some(e) = embedder {
         pipeline = pipeline.with_embedder(e);
     }
+    // Only attach a reranker when one is explicitly configured —
+    // otherwise the traversal pipeline skips the rerank step.
+    if cfg.ontology_catalog.reranking_model.is_some() {
+        let reranker = build_ontology_catalog_reranker(&cfg)?;
+        pipeline = pipeline.with_reranker(reranker);
+    }
     pipeline.load_ontology_catalog().await?;
 
     let raw = fs::read_to_string(&path).await?;
@@ -627,8 +652,75 @@ async fn cmd_traversal(
         }
     }
     let result = pipeline.run_traversal(traversal).await?;
-    print_query_result_table(&result);
+    print_traversal_result(&result);
     Ok(())
+}
+
+/// Render a traversal result as readable text blocks instead of a
+/// table: each chunk is printed as its score (and rerank score when
+/// present), an optional source label, and the full chunk text on its
+/// own lines. Long chunk text in a table is unreadable; this keeps the
+/// newlines intact and surfaces only what callers care about.
+fn print_traversal_result(result: &QueryResult) {
+    if result.rows.is_empty() {
+        println!("(no matching chunks)");
+        return;
+    }
+
+    for (idx, row) in result.rows.iter().enumerate() {
+        if idx > 0 {
+            println!();
+            println!("{}", "─".repeat(60));
+        }
+
+        let score = row.fields.get("score").map(traversal_score_string);
+        let rerank = row.fields.get("rerank_score").map(traversal_score_string);
+
+        let mut header = format!("#{}", idx + 1);
+        if let Some(score) = score {
+            header.push_str(&format!("  score={score}"));
+        }
+        if let Some(rerank) = rerank {
+            header.push_str(&format!("  rerank={rerank}"));
+        }
+        if let Some(name) = row.fields.get("source_name").and_then(traversal_text_value) {
+            if !name.is_empty() {
+                header.push_str(&format!("  source={name}"));
+            }
+        }
+        println!("{header}");
+
+        let text = row
+            .fields
+            .get("chunk_text")
+            .and_then(traversal_text_value)
+            .unwrap_or_default();
+        println!("{text}");
+    }
+    println!();
+    println!("{} chunk(s)", result.rows.len());
+}
+
+/// Format a score cell with a stable 4-decimal precision; falls back to
+/// the raw cell rendering for non-numeric values.
+fn traversal_score_string(value: &Value) -> String {
+    match value {
+        Value::Float(v) => format!("{v:.4}"),
+        Value::Int(v) => format!("{v}"),
+        Value::Null => "—".into(),
+        other => value_cell(other),
+    }
+}
+
+/// Extract a plain string from a result cell, preserving newlines
+/// (unlike [`value_cell`], which escapes them for table layout).
+fn traversal_text_value(value: &Value) -> Option<String> {
+    match value {
+        Value::Null => None,
+        Value::String(v) => Some(v.clone()),
+        Value::Json(serde_json::Value::String(v)) => Some(v.clone()),
+        other => Some(value_cell(other)),
+    }
 }
 
 fn print_query_result_table(result: &QueryResult) {

@@ -1,15 +1,6 @@
 {
-  "entities": [
-    "Elon Musk",
-    "SpaceX"
-  ],
+  "entities": ["Elon Musk", "SpaceX"],
   "goal": "Find text about companies founded by Elon Musk",
   "query": "What companies did Elon Musk found?",
-  "chunk_label": "Chunk",
-  "chunk_text_field": "text",
-  "mentions_rel": "MENTIONS",
-  "part_of_rel": "part_of",
-  "source_label": "Source",
-  "entity_field": "name",
-  "limit": 20
+  "limit": 30
 }

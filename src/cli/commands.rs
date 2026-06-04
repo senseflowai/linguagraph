@@ -82,7 +82,26 @@ pub enum Command {
         #[arg(long)]
         prefix_index: Option<String>,
     },
-    /// Compile and execute a traversal-query JSON file against the configured database.
+    /// Execute a doc-graph traversal-query JSON file against the configured database.
+    ///
+    /// The JSON shape is:
+    ///
+    /// ```json
+    /// {
+    ///   "entities": ["Article 365", "Code"],
+    ///   "goal":     "Article 365",
+    ///   "query":    "Article 365",
+    ///   "prefix_label": "Entity_ws_1",
+    ///   "prefix_index": "ws_1",
+    ///   "limit": 30,
+    ///   "entity_types": ["Person"]
+    /// }
+    /// ```
+    ///
+    /// Runs a two-channel vector search (entities in `_canonical`,
+    /// chunks in `text`), follows `MENTIONS` from matched entities
+    /// to their chunks, deduplicates, aggregates per-chunk
+    /// `total_score`, sorts, and optionally reranks.
     Traversal {
         /// Path to the traversal-query JSON file.
         path: PathBuf,
@@ -607,6 +626,12 @@ async fn cmd_traversal(
         .with_prefix_index(prefix_index.clone());
     if let Some(e) = embedder {
         pipeline = pipeline.with_embedder(e);
+    }
+    // Only attach a reranker when one is explicitly configured —
+    // otherwise the traversal pipeline skips the rerank step.
+    if cfg.ontology_catalog.reranking_model.is_some() {
+        let reranker = build_ontology_catalog_reranker(&cfg)?;
+        pipeline = pipeline.with_reranker(reranker);
     }
     pipeline.load_ontology_catalog().await?;
 

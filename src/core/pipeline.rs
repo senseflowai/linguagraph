@@ -9,10 +9,11 @@ use crate::builder::{self, CypherQuery};
 use crate::config::{Config, SoftMergeConfig};
 use crate::db::{GraphClient, QueryResult, Row, Value as DbValue};
 use crate::dsl::{Direction as DslDirection, DslQuery, TraversalQuery};
-use crate::embeddings::SharedEmbedder;
+use crate::embeddings::{SharedEmbedder, SharedReranker};
 use crate::error::Result;
 use crate::graph::{EntityTypeMatch, Graph, OntologyCatalog, OntologyCatalogStorage};
 use crate::ingest::{self, soft_merge, DeletePlan, DiscoveredNodes, IngestError, PlannerOptions};
+use crate::types::handlers::semantic_text::with_prefix_index;
 use crate::types::{handlers, SharedRegistry, SideEffect, SideEffectQueue};
 
 use crate::core::entity_type_search::{
@@ -41,6 +42,10 @@ pub struct Pipeline {
     /// pipeline). Optional: when not configured, queries that reference
     /// types requiring an embedder fail at lowering time, not at ingest.
     embedder: Option<SharedEmbedder>,
+    /// Optional cross-encoder reranker. When set, the final step of
+    /// [`Self::run_traversal`] re-scores the top-N chunks with this
+    /// reranker; when unset, the rerank step is skipped silently.
+    reranker: Option<SharedReranker>,
     /// In-memory snapshot of [`OntologyCatalog`] consulted by
     /// [`Self::lower`] to auto-resolve filter types when the DSL omits
     /// `"type"`, and by [`Self::live_schema`] to enrich introspection
@@ -150,6 +155,7 @@ impl Pipeline {
             // handler via [`Self::with_registry`].
             registry: Arc::new(handlers::core_registry()),
             embedder: None,
+            reranker: None,
             ontology_catalog: Arc::new(RwLock::new(None)),
             prefix_label: None,
             prefix_index: None,
@@ -235,6 +241,19 @@ impl Pipeline {
 
     pub fn embedder(&self) -> Option<SharedEmbedder> {
         self.embedder.clone()
+    }
+
+    /// Attach a cross-encoder reranker. When set, [`Self::run_traversal`]
+    /// reranks the top-N chunks by `Reranker::rerank(query, texts)`
+    /// after the score-aggregation step. Without one, the rerank step
+    /// is silently skipped.
+    pub fn with_reranker(mut self, reranker: SharedReranker) -> Self {
+        self.reranker = Some(reranker);
+        self
+    }
+
+    pub fn reranker(&self) -> Option<SharedReranker> {
+        self.reranker.clone()
     }
 
     /// Pre-load the ontology-catalog snapshot used to auto-resolve
@@ -441,49 +460,259 @@ impl Pipeline {
 
     // ── Traversal path ──────────────────────────────────────────────────────
     //
-    // [`TraversalQuery`] is a higher-level, traversal-oriented shape
-    // for text retrieval. Compilation still exposes the goal-based
-    // chunk-search leg as a normal DSL query; execution runs the full
-    // retrieval pipeline: entity-name lookups, goal chunk search, then
-    // chunk-level deduplication.
+    // [`TraversalQuery`] is a high-level, doc-graph–oriented retrieval
+    // request. The pipeline runs an explicit two-channel vector search
+    // (entities via `_canonical`, chunks via `text`) plus a Cypher
+    // traversal that walks `MENTIONS` from matched entities to their
+    // chunks. Results are deduplicated by chunk, per-chunk scores are
+    // summed, sorted, truncated to `limit`, and (optionally) reranked.
+    //
+    // The graph schema is fixed: `Chunk` / `Source` / `MENTIONS` /
+    // `part_of`, chunk text on `Chunk.text`, entity merge-key on
+    // `<Entity>._canonical`. Graphs ingested with custom labels can't
+    // use this entry point.
 
-    /// Lower a [`TraversalQuery`] goal-search leg into the typed AST by
-    /// first converting it to a [`DslQuery`].
-    pub fn lower_traversal(&self, traversal: TraversalQuery) -> Result<ReadQuery> {
-        self.lower(traversal.into_dsl())
-    }
-
-    /// Compile a [`TraversalQuery`] goal-search leg all the way to a
-    /// parameterized Cypher query.
-    pub fn compile_traversal(&self, traversal: TraversalQuery) -> Result<CypherQuery> {
-        self.compile(traversal.into_dsl())
-    }
-
-    /// Execute the traversal retrieval pipeline:
+    /// Execute the traversal retrieval pipeline.
     ///
-    /// 1. Search every supplied entity name and collect chunks that
-    ///    mention matching entities.
-    /// 2. Search chunks by the goal text.
-    /// 3. Return unique chunks with the union of associated entities.
+    /// Steps:
+    ///
+    /// 1. Embed `goal_search_text()` and each entity name.
+    /// 2. Issue one Cypher query that calls `libqlink.search_labeled`
+    ///    against the `_canonical` collection (one branch per entity
+    ///    name) and against the `text` collection (one branch). Each
+    ///    branch is filtered by `prefix_label` and, for the entity
+    ///    channel, optionally by `entity_types`.
+    /// 3. Run a graph-traversal Cypher that maps entity hits back to
+    ///    the chunks they're mentioned in (and joins each chunk to
+    ///    its source) and that also expands chunk hits to their
+    ///    mentioned entities + source. Each row carries the vector
+    ///    score from step 2 via a parameter map.
+    /// 4. Deduplicate rows by chunk, sum per-channel contributions
+    ///    into `total_score`.
+    /// 5. Sort by `total_score`, truncate to `limit`.
+    /// 6. Optionally rerank the survivors with the pipeline's
+    ///    cross-encoder reranker (controlled by `traversal.rerank`
+    ///    and `Pipeline::with_reranker`).
     pub async fn run_traversal(&self, traversal: TraversalQuery) -> Result<QueryResult> {
-        let limit = traversal.limit.or(Some(self.default_limit));
-        let mut merged = TraversalMerge::default();
+        let limit = traversal.limit.unwrap_or(self.default_limit) as usize;
+        let entity_names = traversal.entity_names();
+        let goal_text = traversal.goal_search_text();
 
-        for dsl in traversal.entity_dsls() {
-            let cypher = self.compile(dsl)?;
-            tracing::debug!(target: "linguagraph::traversal", cypher = %cypher.text, "entity leg");
-            let result = self.client.execute(&cypher).await?;
-            tracing::trace!(target: "linguagraph::traversal", rows = result.rows.len(), "entity leg result");
-            merged.extend(result);
+        let prefix_label = traversal.prefix_label.as_deref().or(self.prefix_label.as_deref());
+        if let Some(p) = prefix_label {
+            if !crate::ingest::delete::is_valid_ident(p) {
+                return Err(crate::error::Error::Ingest(IngestError::InvalidLabel(
+                    p.to_string(),
+                )));
+            }
+        }
+        if let Some(types) = traversal.entity_types.as_ref() {
+            for t in types {
+                if !crate::ingest::delete::is_valid_ident(t) {
+                    return Err(crate::error::Error::Ingest(IngestError::InvalidLabel(
+                        t.to_string(),
+                    )));
+                }
+            }
         }
 
-        let cypher = self.compile_traversal(traversal)?;
-        tracing::debug!(target: "linguagraph::traversal", cypher = %cypher.text, "goal leg");
+        let prefix_index = traversal.prefix_index.as_deref().or(self.prefix_index.as_deref());
+
+        // ── 1. Embed all query texts in a single batch. ──────────────
+        let embedder = self.embedder.as_ref().ok_or_else(|| {
+            crate::error::Error::Ingest(IngestError::Type(
+                "Pipeline has no embedder; run_traversal needs one to embed the \
+                 query — call Pipeline::with_embedder before invoking this method"
+                    .into(),
+            ))
+        })?;
+
+        let mut batch_inputs: Vec<&str> = Vec::with_capacity(entity_names.len() + 1);
+        let have_goal = !goal_text.is_empty();
+        if have_goal {
+            batch_inputs.push(goal_text.as_str());
+        }
+        for n in &entity_names {
+            batch_inputs.push(n.as_str());
+        }
+        let vectors = if batch_inputs.is_empty() {
+            Vec::new()
+        } else {
+            embedder.embed_batch(&batch_inputs).map_err(|e| {
+                crate::error::Error::Ingest(IngestError::Type(format!(
+                    "embed_batch failed for traversal: {e}"
+                )))
+            })?
+        };
+
+        let mut vectors = vectors.into_iter();
+        let goal_vec = if have_goal { vectors.next() } else { None };
+        let entity_vecs: Vec<Vec<f32>> = vectors.collect();
+
+        // Both retrieval channels share the same top_k policy: at least
+        // 50, and at least twice the limit so dedup has slack.
+        let retrieval_top_k = std::cmp::max(50, limit.saturating_mul(2)) as u32;
+
+        // ── 2. Vector retrieval (entity + chunk channels). ──────────
+        let entity_collection = with_prefix_index(
+            prefix_index,
+            &format!("{}__{}", self.semantic_collection, "_canonical"),
+        );
+        let chunk_collection = with_prefix_index(
+            prefix_index,
+            &format!("{}__{}", self.semantic_collection, "text"),
+        );
+
+        let mut entity_hits: BTreeMap<i64, f64> = BTreeMap::new();
+        let mut chunk_hits: BTreeMap<i64, f64> = BTreeMap::new();
+
+        if !entity_vecs.is_empty() || goal_vec.is_some() {
+            let cypher = build_traversal_search_cypher(
+                &entity_collection,
+                &entity_vecs,
+                &chunk_collection,
+                goal_vec.as_deref(),
+                retrieval_top_k,
+                prefix_label,
+                traversal.entity_types.as_deref(),
+            );
+            tracing::debug!(
+                target: "linguagraph::traversal",
+                cypher = %cypher.text,
+                entity_terms = entity_vecs.len(),
+                has_goal = goal_vec.is_some(),
+                "vector retrieval"
+            );
+            let result = self.client.execute(&cypher).await?;
+            tracing::trace!(
+                target: "linguagraph::traversal",
+                rows = result.rows.len(),
+                "vector retrieval rows"
+            );
+            for row in &result.rows {
+                let Some(nid) = row.fields.get("nid").and_then(db_value_as_i64) else {
+                    continue;
+                };
+                let score = row
+                    .fields
+                    .get("score")
+                    .and_then(db_value_as_f64)
+                    .unwrap_or(0.0);
+                let leg = row
+                    .fields
+                    .get("leg")
+                    .and_then(db_value_as_string)
+                    .unwrap_or_default();
+                let bucket = match leg.as_str() {
+                    "entity" => &mut entity_hits,
+                    "chunk" => &mut chunk_hits,
+                    _ => continue,
+                };
+                // Keep the best score we've seen for a node id.
+                let slot = bucket.entry(nid).or_insert(score);
+                if score > *slot {
+                    *slot = score;
+                }
+            }
+        }
+
+        if entity_hits.is_empty() && chunk_hits.is_empty() {
+            return Ok(QueryResult {
+                columns: traversal_result_columns(false),
+                rows: Vec::new(),
+            });
+        }
+
+        // ── 3. Graph traversal: map hits → chunks (+ source + entities). ──
+        let cypher = build_traversal_graph_cypher(
+            &entity_hits,
+            &chunk_hits,
+            prefix_label,
+        );
+        tracing::debug!(
+            target: "linguagraph::traversal",
+            cypher = %cypher.text,
+            entity_hits = entity_hits.len(),
+            chunk_hits = chunk_hits.len(),
+            "graph traversal"
+        );
         let result = self.client.execute(&cypher).await?;
-        tracing::trace!(target: "linguagraph::traversal", rows = result.rows.len(), "goal leg result");
+        tracing::trace!(
+            target: "linguagraph::traversal",
+            rows = result.rows.len(),
+            "graph traversal rows"
+        );
+
+        // ── 4. Dedup + total_score aggregation. ──────────────────────
+        let mut merged = TraversalMerge::default();
         merged.extend(result);
 
-        Ok(merged.finish(limit))
+        // ── 5. Sort + top-N. ─────────────────────────────────────────
+        let mut top = merged.take_top(limit);
+
+        // ── 6. Optional rerank. ──────────────────────────────────────
+        let want_rerank = match traversal.rerank {
+            Some(v) => v,
+            None => self.reranker.is_some(),
+        };
+        let mut reranked = false;
+        if want_rerank {
+            let reranker = self.reranker.as_ref().ok_or_else(|| {
+                crate::error::Error::Ingest(IngestError::Type(
+                    "TraversalQuery.rerank = true but Pipeline has no reranker \
+                     — call Pipeline::with_reranker first"
+                        .into(),
+                ))
+            })?;
+            if !top.is_empty() {
+                let texts: Vec<String> = top
+                    .iter()
+                    .map(|hit| match &hit.chunk_text {
+                        Some(DbValue::String(s)) => s.clone(),
+                        Some(v) => db_value_to_json(v).to_string(),
+                        None => String::new(),
+                    })
+                    .collect();
+                let query_str = if traversal.query.trim().is_empty() {
+                    goal_text.as_str()
+                } else {
+                    traversal.query.as_str()
+                };
+                let scores = reranker.rerank(query_str, &texts).map_err(|e| {
+                    crate::error::Error::Ingest(IngestError::Type(format!(
+                        "reranker failed: {e}"
+                    )))
+                })?;
+                if scores.len() != top.len() {
+                    return Err(crate::error::Error::Ingest(IngestError::Type(format!(
+                        "reranker returned {} scores for {} docs",
+                        scores.len(),
+                        top.len()
+                    ))));
+                }
+                for (hit, score) in top.iter_mut().zip(scores.into_iter()) {
+                    hit.rerank_score = Some(score);
+                }
+                // Sort by rerank_score desc, tie-break with total_score.
+                top.sort_by(|a, b| {
+                    b.rerank_score
+                        .unwrap_or(f64::NEG_INFINITY)
+                        .total_cmp(&a.rerank_score.unwrap_or(f64::NEG_INFINITY))
+                        .then_with(|| b.score.total_cmp(&a.score))
+                });
+                reranked = true;
+            }
+        }
+
+        // ── 7. Build QueryResult. ────────────────────────────────────
+        let rows: Vec<Row> = top
+            .into_iter()
+            .map(|hit| hit.into_row(reranked))
+            .collect();
+        Ok(QueryResult {
+            columns: traversal_result_columns(reranked),
+            rows,
+        })
     }
 
     // ── Entity-type discovery ───────────────────────────────────────────────
@@ -947,6 +1176,12 @@ impl Pipeline {
     }
 }
 
+/// Accumulator for the chunk-leg of [`Pipeline::run_traversal`].
+///
+/// Rows arrive tagged with a `leg` (`"entity"` or `"chunk"`) and a
+/// `contrib_score` already pre-bound from the vector-retrieval map.
+/// Each chunk's `total_score` is `Σ entity_contrib(unique_entity_id) +
+/// chunk_contrib (once)`.
 #[derive(Default)]
 struct TraversalMerge {
     order: Vec<String>,
@@ -960,8 +1195,15 @@ struct ChunkHit {
     source_id: Option<DbValue>,
     source_name: Option<DbValue>,
     score: f64,
+    rerank_score: Option<f64>,
     entities: Vec<serde_json::Value>,
     entity_keys: BTreeSet<String>,
+    /// Per-channel accounting so a chunk hit by the same entity in
+    /// multiple rows only contributes once for that entity, and the
+    /// chunk-channel direct hit contributes at most once.
+    accounted_entity_ids: BTreeSet<i64>,
+    chunk_leg_accounted: bool,
+    first_seen: usize,
 }
 
 impl TraversalMerge {
@@ -970,16 +1212,54 @@ impl TraversalMerge {
             let Some(key) = chunk_key(&row) else {
                 continue;
             };
+            let next_index = self.order.len();
             let hit = self.chunks.entry(key.clone()).or_insert_with(|| {
                 self.order.push(key);
-                ChunkHit::default()
+                ChunkHit {
+                    first_seen: next_index,
+                    ..ChunkHit::default()
+                }
             });
 
             fill_if_missing(&mut hit.chunk_id, row.fields.get("chunk_id"));
             fill_if_missing(&mut hit.chunk_text, row.fields.get("chunk_text"));
             fill_if_missing(&mut hit.source_id, row.fields.get("source_id"));
             fill_if_missing(&mut hit.source_name, row.fields.get("source_name"));
-            hit.score += score_from_row(&row);
+
+            let leg = row
+                .fields
+                .get("leg")
+                .and_then(db_value_as_string)
+                .unwrap_or_default();
+            let contrib = row
+                .fields
+                .get("contrib_score")
+                .and_then(db_value_as_f64)
+                .unwrap_or(0.0);
+
+            match leg.as_str() {
+                "entity" => {
+                    if let Some(eid) = row.fields.get("entity_nid").and_then(db_value_as_i64) {
+                        if hit.accounted_entity_ids.insert(eid) {
+                            hit.score += contrib;
+                        }
+                    } else {
+                        // Fallback: no internal id, count once.
+                        hit.score += contrib;
+                    }
+                }
+                "chunk" => {
+                    if !hit.chunk_leg_accounted {
+                        hit.score += contrib;
+                        hit.chunk_leg_accounted = true;
+                    }
+                }
+                _ => {
+                    // Legacy / test rows without explicit leg — fall
+                    // back to summing every score-like field.
+                    hit.score += score_from_row(&row);
+                }
+            }
 
             if let Some((entity_key, entity)) = entity_from_row(&row) {
                 if hit.entity_keys.insert(entity_key) {
@@ -989,61 +1269,241 @@ impl TraversalMerge {
         }
     }
 
-    fn finish(self, limit: Option<u32>) -> QueryResult {
-        let take = limit.map(|n| n as usize).unwrap_or(usize::MAX);
-        let mut ordered = self
-            .order
-            .into_iter()
-            .enumerate()
-            .filter_map(|(idx, key)| self.chunks.get(&key).map(|hit| (idx, key, hit.score)))
-            .collect::<Vec<_>>();
-        ordered.sort_by(|a, b| b.2.total_cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
+    /// Sort all collected chunks by `total_score` desc (tie-break by
+    /// insertion order) and return the top-N as owned [`ChunkHit`]s.
+    fn take_top(mut self, limit: usize) -> Vec<ChunkHit> {
+        let mut keys: Vec<String> = self.order.drain(..).collect();
+        // Keep only keys that still have an entry (defensive).
+        keys.retain(|k| self.chunks.contains_key(k));
+        keys.sort_by(|a, b| {
+            let ha = self.chunks.get(a).unwrap();
+            let hb = self.chunks.get(b).unwrap();
+            hb.score
+                .total_cmp(&ha.score)
+                .then_with(|| ha.first_seen.cmp(&hb.first_seen))
+        });
+        keys.truncate(limit);
+        keys.into_iter()
+            .filter_map(|k| self.chunks.remove(&k))
+            .collect()
+    }
+}
 
-        let rows = ordered
-            .into_iter()
-            .take(take)
-            .filter_map(|(_, key, _)| self.chunks.get(&key))
-            .map(|hit| {
-                let mut fields = BTreeMap::new();
-                fields.insert(
-                    "chunk_id".into(),
-                    hit.chunk_id
-                        .clone()
-                        .unwrap_or(DbValue::String(String::new())),
-                );
-                fields.insert(
-                    "chunk_text".into(),
-                    hit.chunk_text.clone().unwrap_or(DbValue::Null),
-                );
-                fields.insert(
-                    "source_id".into(),
-                    hit.source_id.clone().unwrap_or(DbValue::Null),
-                );
-                fields.insert(
-                    "source_name".into(),
-                    hit.source_name.clone().unwrap_or(DbValue::Null),
-                );
-                fields.insert("score".into(), DbValue::Float(hit.score));
-                fields.insert(
-                    "entities".into(),
-                    DbValue::Json(serde_json::Value::Array(hit.entities.clone())),
-                );
-                Row { fields }
-            })
-            .collect();
+impl ChunkHit {
+    fn into_row(self, include_rerank: bool) -> Row {
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "chunk_id".into(),
+            self.chunk_id.unwrap_or(DbValue::String(String::new())),
+        );
+        fields.insert(
+            "chunk_text".into(),
+            self.chunk_text.unwrap_or(DbValue::Null),
+        );
+        fields.insert("source_id".into(), self.source_id.unwrap_or(DbValue::Null));
+        fields.insert(
+            "source_name".into(),
+            self.source_name.unwrap_or(DbValue::Null),
+        );
+        fields.insert("score".into(), DbValue::Float(self.score));
+        if include_rerank {
+            fields.insert(
+                "rerank_score".into(),
+                self.rerank_score
+                    .map(DbValue::Float)
+                    .unwrap_or(DbValue::Null),
+            );
+        }
+        fields.insert(
+            "entities".into(),
+            DbValue::Json(serde_json::Value::Array(self.entities)),
+        );
+        Row { fields }
+    }
+}
 
-        QueryResult {
-            columns: vec![
-                "chunk_id".into(),
-                "chunk_text".into(),
-                "source_id".into(),
-                "source_name".into(),
-                "score".into(),
-                "entities".into(),
-            ],
-            rows,
+fn traversal_result_columns(include_rerank: bool) -> Vec<crate::db::Column> {
+    let mut cols = vec![
+        crate::db::Column::new("chunk_id"),
+        crate::db::Column::new("chunk_text"),
+        crate::db::Column::new("source_id"),
+        crate::db::Column::new("source_name"),
+        crate::db::Column::new("score"),
+    ];
+    if include_rerank {
+        cols.push(crate::db::Column::new("rerank_score"));
+    }
+    cols.push(crate::db::Column::new("entities"));
+    cols
+}
+
+/// Build the vector-retrieval Cypher: one UNION ALL branch per entity
+/// name (against the `_canonical` collection) plus one branch for the
+/// goal vector (against the `text` collection). Each branch yields
+/// `(nid, score, leg)` rows.
+fn build_traversal_search_cypher(
+    entity_collection: &str,
+    entity_vecs: &[Vec<f32>],
+    chunk_collection: &str,
+    goal_vec: Option<&[f32]>,
+    top_k: u32,
+    prefix_label: Option<&str>,
+    entity_types: Option<&[String]>,
+) -> CypherQuery {
+    let mut params: BTreeMap<String, Literal> = BTreeMap::new();
+    params.insert("top_k".into(), Literal::Int(top_k as i64));
+
+    let has_prefix = prefix_label.is_some();
+    if let Some(p) = prefix_label {
+        params.insert("prefix_label".into(), Literal::String(p.to_string()));
+    }
+    let has_types = entity_types
+        .map(|t| !t.is_empty())
+        .unwrap_or(false);
+    if let Some(types) = entity_types {
+        if !types.is_empty() {
+            params.insert(
+                "entity_types".into(),
+                Literal::List(
+                    types
+                        .iter()
+                        .map(|s| Literal::String(s.clone()))
+                        .collect(),
+                ),
+            );
         }
     }
+
+    let mut branches: Vec<String> = Vec::new();
+
+    if !entity_vecs.is_empty() {
+        params.insert(
+            "entity_collection".into(),
+            Literal::String(entity_collection.to_string()),
+        );
+        for (idx, vec) in entity_vecs.iter().enumerate() {
+            let emb_name = format!("emb_e_{idx}");
+            params.insert(
+                emb_name.clone(),
+                Literal::List(vec.iter().map(|f| Literal::Float(*f as f64)).collect()),
+            );
+            let mut where_parts: Vec<String> = vec!["id(e) = qid".into()];
+            if has_prefix {
+                where_parts.push("$prefix_label IN labels(e)".into());
+            }
+            if has_types {
+                where_parts
+                    .push("any(t IN $entity_types WHERE t IN labels(e))".into());
+            }
+            branches.push(format!(
+                "CALL libqlink.search([$entity_collection], $\
+                 {emb_name}, $top_k) YIELD id AS qid, score AS sc\n\
+                 MATCH (e) WHERE {where_clause}\n\
+                 RETURN id(e) AS nid, sc AS score, \"entity\" AS leg",
+                where_clause = where_parts.join(" AND ")
+            ));
+        }
+    }
+
+    if let Some(vec) = goal_vec {
+        params.insert(
+            "chunk_collection".into(),
+            Literal::String(chunk_collection.to_string()),
+        );
+        params.insert(
+            "emb_goal".into(),
+            Literal::List(vec.iter().map(|f| Literal::Float(*f as f64)).collect()),
+        );
+        let mut where_parts: Vec<String> = vec!["id(c) = qid".into(), "\"Chunk\" IN labels(c)".into()];
+        if has_prefix {
+            where_parts.push("$prefix_label IN labels(c)".into());
+        }
+        branches.push(format!(
+            "CALL libqlink.search([$chunk_collection], $emb_goal, $top_k) \
+             YIELD id AS qid, score AS sc\n\
+             MATCH (c) WHERE {where_clause}\n\
+             RETURN id(c) AS nid, sc AS score, \"chunk\" AS leg",
+            where_clause = where_parts.join(" AND ")
+        ));
+    }
+
+    let text = branches.join("\nUNION ALL\n");
+    CypherQuery::new(text, params)
+}
+
+/// Build the graph-traversal Cypher. Entity hits → walk back through
+/// `MENTIONS` to chunks; chunk hits → fan out to mentioned entities.
+/// Each row carries the originating contribution score so the merge
+/// step can sum them per chunk.
+fn build_traversal_graph_cypher(
+    entity_hits: &BTreeMap<i64, f64>,
+    chunk_hits: &BTreeMap<i64, f64>,
+    prefix_label: Option<&str>,
+) -> CypherQuery {
+    let mut params: BTreeMap<String, Literal> = BTreeMap::new();
+
+    params.insert(
+        "entity_hit_ids".into(),
+        Literal::List(
+            entity_hits
+                .keys()
+                .copied()
+                .map(Literal::Int)
+                .collect(),
+        ),
+    );
+    params.insert(
+        "chunk_hit_ids".into(),
+        Literal::List(chunk_hits.keys().copied().map(Literal::Int).collect()),
+    );
+
+    let entity_score_map: BTreeMap<String, Literal> = entity_hits
+        .iter()
+        .map(|(id, score)| (id.to_string(), Literal::Float(*score)))
+        .collect();
+    let chunk_score_map: BTreeMap<String, Literal> = chunk_hits
+        .iter()
+        .map(|(id, score)| (id.to_string(), Literal::Float(*score)))
+        .collect();
+    params.insert("entity_scores".into(), Literal::Object(entity_score_map));
+    params.insert("chunk_scores".into(), Literal::Object(chunk_score_map));
+
+    let plabel = prefix_label
+        .map(|p| format!(":{p}"))
+        .unwrap_or_default();
+
+    let mut branches: Vec<String> = Vec::new();
+
+    if !entity_hits.is_empty() {
+        branches.push(format!(
+            "MATCH (e) WHERE id(e) IN $entity_hit_ids\n\
+             MATCH (c:Chunk{plabel})-[:MENTIONS]->(e)\n\
+             OPTIONAL MATCH (c)-[:part_of]->(s:Source{plabel})\n\
+             RETURN id(c) AS chunk_id, c.id AS chunk_pk, c.text AS chunk_text, \
+                    s.id AS source_id, s.name AS source_name, \
+                    id(e) AS entity_nid, e AS entity, \
+                    coalesce($entity_scores[toString(id(e))], 0.0) AS contrib_score, \
+                    \"entity\" AS leg",
+            plabel = plabel,
+        ));
+    }
+
+    if !chunk_hits.is_empty() {
+        branches.push(format!(
+            "MATCH (c:Chunk{plabel}) WHERE id(c) IN $chunk_hit_ids\n\
+             OPTIONAL MATCH (c)-[:MENTIONS]->(e)\n\
+             OPTIONAL MATCH (c)-[:part_of]->(s:Source{plabel})\n\
+             RETURN id(c) AS chunk_id, c.id AS chunk_pk, c.text AS chunk_text, \
+                    s.id AS source_id, s.name AS source_name, \
+                    id(e) AS entity_nid, e AS entity, \
+                    coalesce($chunk_scores[toString(id(c))], 0.0) AS contrib_score, \
+                    \"chunk\" AS leg",
+            plabel = plabel,
+        ));
+    }
+
+    let text = branches.join("\nUNION ALL\n");
+    CypherQuery::new(text, params)
 }
 
 /// Decode the single-row result of [`DeletePlan::discover_query`] into
@@ -1606,270 +2066,235 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_traversal_compiles_through_semantic_text_handler() {
+    async fn run_traversal_emits_search_calls_against_canonical_and_text_collections() {
         use crate::embeddings::MockEmbedder;
-        use crate::types::handlers::{SemanticTextConfig, SemanticTextHandler};
-        use crate::types::RegistryBuilder;
         use std::sync::Arc as StdArc;
 
-        // A registry with a SemanticText handler so the typed
-        // filter the TraversalQuery emits actually lowers cleanly.
-        let registry: SharedRegistry = StdArc::new(
-            crate::types::handlers::register_core(RegistryBuilder::new())
-                .register(SemanticTextHandler::new(
-                    SemanticTextConfig {
-                        embedding_model: None,
-                        collection: "test".into(),
-                        top_k: 10,
-                        search_threshold: 0.8,
-                        reranker_threshold: 0.3,
-                    },
-                    StdArc::new(MockEmbedder::new(8)),
-                ))
-                .build(),
-        );
-        let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg()).with_registry(registry);
+        let mock = Arc::new(MockClient::new());
+        // MockClient pops from the back. Two calls happen: vector
+        // retrieval (entity + chunk) then the graph traversal.
+        // Enqueue in reverse: traversal result first (= popped last),
+        // retrieval result last (= popped first).
+        mock.enqueue(QueryResult {
+            columns: vec![],
+            rows: vec![],
+        });
+        // Retrieval: yield one entity hit (id=1, score=0.6) and one
+        // chunk hit (id=10, score=0.5).
+        mock.enqueue(QueryResult {
+            columns: vec![],
+            rows: vec![
+                retrieval_row(1, 0.6, "entity"),
+                retrieval_row(10, 0.5, "chunk"),
+            ],
+        });
 
-        let cypher = pipeline
-            .compile_traversal(crate::dsl::TraversalQuery::new(
-                ["Elon Musk", "Company"],
-                "Find companies founded by Elon Musk",
-                "What companies did Elon Musk found?",
-            ))
-            .expect("traversal compiles to cypher");
+        let pipeline = Pipeline::new(mock.clone(), &cfg())
+            .with_embedder(StdArc::new(MockEmbedder::new(8)));
 
-        // Chunk is the start node and gets a label; the entity
-        // target is label-less (any node).
+        let _ = pipeline
+            .run_traversal(crate::dsl::TraversalQuery {
+                entities: vec!["Elon Musk".into()],
+                goal: "find companies".into(),
+                query: "query".into(),
+                prefix_label: Some("Tenant1".into()),
+                prefix_index: Some("tenant1".into()),
+                limit: Some(10),
+                entity_types: None,
+                rerank: Some(false),
+            })
+            .await
+            .expect("traversal runs");
+
+        let captured = mock.captured.lock().unwrap();
+        assert_eq!(captured.len(), 2, "expected two cypher calls");
+        let retrieval = &captured[0];
+
+        // Collection names are bound as parameters; assert by checking
+        // the parameter literal so the test isn't coupled to the
+        // surface Cypher syntax.
+        let entity_collection = match retrieval.params.get("entity_collection") {
+            Some(Literal::String(s)) => s.clone(),
+            other => panic!("entity_collection param missing or wrong type: {other:?}"),
+        };
+        assert_eq!(entity_collection, "tenant1__semantic_text___canonical");
+        let chunk_collection = match retrieval.params.get("chunk_collection") {
+            Some(Literal::String(s)) => s.clone(),
+            other => panic!("chunk_collection param missing or wrong type: {other:?}"),
+        };
+        assert_eq!(chunk_collection, "tenant1__semantic_text__text");
+
         assert!(
-            cypher.text.contains("MATCH (c:Chunk)"),
-            "expected (c:Chunk) start; got: {}",
-            cypher.text
+            retrieval.text.contains("$prefix_label IN labels(e)")
+                && retrieval.text.contains("$prefix_label IN labels(c)"),
+            "prefix-label filter should appear in both branches: {}",
+            retrieval.text
         );
-        // part_of is the required hop (rendered as MATCH).
+        assert!(retrieval.text.contains("\"Chunk\" IN labels(c)"));
+        assert!(retrieval.text.contains("\"entity\" AS leg"));
+        assert!(retrieval.text.contains("\"chunk\" AS leg"));
+        assert!(retrieval.text.contains("libqlink.search"));
+
+        let traversal_cypher = &captured[1];
         assert!(
-            cypher.text.contains("[po:part_of]->(s:Source)"),
-            "expected (s:Source) part_of hop; got: {}",
-            cypher.text
-        );
-        // MENTIONS is optional (rendered as OPTIONAL MATCH) and
-        // outgoing from the chunk to the mentioned entity. The
-        // entity target is label-less.
-        assert!(
-            cypher.text.contains("OPTIONAL MATCH (c)-[m:MENTIONS]->(e)"),
-            "expected optional MENTIONS hop with label-less entity; got: {}",
-            cypher.text
-        );
-        // Semantic search routes through the labeled qlink search.
-        assert!(
-            cypher.text.contains("libqlink.search_labeled"),
-            "expected libqlink.search_labeled; got: {}",
-            cypher.text
-        );
-        // The carry order on the sources WITH chain follows the
-        // bound-alias order: c (start), then part_of's target s,
-        // then mentions' target e.
-        assert!(
-            cypher
+            traversal_cypher
                 .text
-                .contains("WITH c, s, e, c__score_0\nOPTIONAL MATCH"),
-            "expected source projection to carry semantic score; got: {}",
-            cypher.text
+                .contains("(c:Chunk:Tenant1)-[:MENTIONS]->(e)"),
+            "expected prefix-stamped chunk traversal: {}",
+            traversal_cypher.text
         );
+        assert!(traversal_cypher.text.contains("$entity_scores"));
+        assert!(traversal_cypher.text.contains("$chunk_scores"));
+    }
+
+    #[tokio::test]
+    async fn run_traversal_entity_types_filter_threads_into_cypher() {
+        use crate::embeddings::MockEmbedder;
+        use std::sync::Arc as StdArc;
+
+        let mock = Arc::new(MockClient::new());
+        mock.enqueue(QueryResult {
+            columns: vec![],
+            rows: vec![],
+        });
+        mock.enqueue(QueryResult {
+            columns: vec![],
+            rows: vec![],
+        });
+
+        let pipeline = Pipeline::new(mock.clone(), &cfg())
+            .with_embedder(StdArc::new(MockEmbedder::new(8)));
+
+        let _ = pipeline
+            .run_traversal(crate::dsl::TraversalQuery {
+                entities: vec!["Acme".into()],
+                goal: "g".into(),
+                query: "q".into(),
+                prefix_label: None,
+                prefix_index: None,
+                limit: Some(10),
+                entity_types: Some(vec!["Person".into(), "Company".into()]),
+                rerank: Some(false),
+            })
+            .await
+            .expect("traversal runs");
+
+        let captured = mock.captured.lock().unwrap();
+        let retrieval = &captured[0];
         assert!(
-            cypher.text.contains("c__score_0 AS score"),
-            "expected RETURN projection to expose semantic score; got: {}",
-            cypher.text
+            retrieval
+                .text
+                .contains("any(t IN $entity_types WHERE t IN labels(e))"),
+            "expected entity_types filter clause in entity branch: {}",
+            retrieval.text
         );
     }
 
     #[tokio::test]
-    async fn run_traversal_merges_unique_chunks_and_entities() {
+    async fn run_traversal_sums_scores_and_deduplicates_chunks() {
         use crate::embeddings::MockEmbedder;
-        use crate::types::handlers::{SemanticTextConfig, SemanticTextHandler};
-        use crate::types::RegistryBuilder;
         use std::sync::Arc as StdArc;
 
-        let registry: SharedRegistry = StdArc::new(
-            crate::types::handlers::register_core(RegistryBuilder::new())
-                .register(SemanticTextHandler::new(
-                    SemanticTextConfig {
-                        embedding_model: None,
-                        collection: "test".into(),
-                        top_k: 10,
-                        search_threshold: 0.8,
-                        reranker_threshold: 0.3,
-                    },
-                    StdArc::new(MockEmbedder::new(8)),
-                ))
-                .build(),
-        );
-
         let mock = Arc::new(MockClient::new());
-        // MockClient pops from the back. run_traversal executes entity
-        // lookups first, then the goal-search query.
+        // Graph traversal result (popped second): two entity-leg rows
+        // for chunk c2 (entities e1 + e2) and one chunk-leg row for c1.
+        let mut rows = Vec::new();
+        rows.push(traversal_aggregated_row("c2", 1, "e1", "entity", 0.6));
+        rows.push(traversal_aggregated_row("c2", 2, "e2", "entity", 0.4));
+        rows.push(traversal_aggregated_row("c1", 0, "", "chunk", 0.5));
         mock.enqueue(QueryResult {
             columns: vec![],
-            rows: vec![traversal_row("c1", "chunk one", "e2", "SpaceX", "Company")],
+            rows,
         });
+        // Retrieval result (popped first): scores are already baked
+        // into the traversal rows above, so the retrieval payload is
+        // empty here — but the call still has to return *something*.
         mock.enqueue(QueryResult {
             columns: vec![],
             rows: vec![
-                traversal_row("c1", "chunk one", "e1", "Elon Musk", "Person"),
-                traversal_row("c2", "chunk two", "e1", "Elon Musk", "Person"),
+                retrieval_row(1, 0.6, "entity"),
+                retrieval_row(2, 0.4, "entity"),
+                retrieval_row(20, 0.5, "chunk"),
             ],
         });
 
-        let pipeline = Pipeline::new(mock, &cfg()).with_registry(registry);
+        let pipeline = Pipeline::new(mock, &cfg())
+            .with_embedder(StdArc::new(MockEmbedder::new(8)));
         let result = pipeline
-            .run_traversal(crate::dsl::TraversalQuery::new(
-                ["Elon Musk"],
-                "find companies",
-                "query",
-            ))
+            .run_traversal(crate::dsl::TraversalQuery {
+                entities: vec!["E1".into(), "E2".into()],
+                goal: "find".into(),
+                query: "q".into(),
+                prefix_label: None,
+                prefix_index: None,
+                limit: Some(10),
+                entity_types: None,
+                rerank: Some(false),
+            })
             .await
             .expect("traversal runs");
 
+        let cols: Vec<&str> = result.columns.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(
-            result
-                .columns
-                .iter()
-                .map(|c| c.name.as_str())
-                .collect::<Vec<_>>(),
+            cols,
             vec![
                 "chunk_id",
                 "chunk_text",
                 "source_id",
                 "source_name",
                 "score",
-                "entities"
+                "entities",
             ]
         );
         assert_eq!(result.rows.len(), 2);
-        assert_eq!(
-            result.rows[0].fields.get("chunk_id"),
-            Some(&DbValue::String("c1".into()))
-        );
-        let DbValue::Json(serde_json::Value::Array(entities)) =
-            result.rows[0].fields.get("entities").unwrap()
-        else {
-            panic!("entities should be a JSON array");
-        };
-        assert_eq!(entities.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn run_traversal_sums_scores_and_orders_chunks() {
-        use crate::embeddings::MockEmbedder;
-        use crate::types::handlers::{SemanticTextConfig, SemanticTextHandler};
-        use crate::types::RegistryBuilder;
-        use std::sync::Arc as StdArc;
-
-        let registry: SharedRegistry = StdArc::new(
-            crate::types::handlers::register_core(RegistryBuilder::new())
-                .register(SemanticTextHandler::new(
-                    SemanticTextConfig {
-                        embedding_model: None,
-                        collection: "test".into(),
-                        top_k: 10,
-                        search_threshold: 0.8,
-                        reranker_threshold: 0.3,
-                    },
-                    StdArc::new(MockEmbedder::new(8)),
-                ))
-                .build(),
-        );
-
-        let mock = Arc::new(MockClient::new());
-        mock.enqueue(QueryResult {
-            columns: vec![],
-            rows: vec![traversal_row_with_score(
-                "c2",
-                "chunk two",
-                "e2",
-                "SpaceX",
-                "Company",
-                "c__score_0",
-                0.7,
-            )],
-        });
-        mock.enqueue(QueryResult {
-            columns: vec![],
-            rows: vec![
-                traversal_row_with_score(
-                    "c1",
-                    "chunk one",
-                    "e1",
-                    "Elon Musk",
-                    "Person",
-                    "seed__score_0",
-                    0.4,
-                ),
-                traversal_row_with_score(
-                    "c2",
-                    "chunk two",
-                    "e1",
-                    "Elon Musk",
-                    "Person",
-                    "seed__score_0",
-                    0.2,
-                ),
-            ],
-        });
-
-        let pipeline = Pipeline::new(mock, &cfg()).with_registry(registry);
-        let result = pipeline
-            .run_traversal(crate::dsl::TraversalQuery::new(
-                ["Elon Musk"],
-                "find companies",
-                "query",
-            ))
-            .await
-            .expect("traversal runs");
-
+        // c2 wins (0.6 + 0.4 = 1.0 > 0.5).
         assert_eq!(
             result.rows[0].fields.get("chunk_id"),
             Some(&DbValue::String("c2".into()))
         );
-        assert_eq!(
-            result.rows[0].fields.get("score"),
-            Some(&DbValue::Float(0.8999999999999999))
-        );
-        assert_eq!(
-            result.rows[1].fields.get("chunk_id"),
-            Some(&DbValue::String("c1".into()))
-        );
+        match result.rows[0].fields.get("score") {
+            Some(DbValue::Float(f)) => assert!((*f - 1.0).abs() < 1e-9, "got {f}"),
+            other => panic!("expected float score; got {other:?}"),
+        }
+        let DbValue::Json(serde_json::Value::Array(entities)) =
+            result.rows[0].fields.get("entities").unwrap()
+        else {
+            panic!("entities must be a JSON array");
+        };
+        assert_eq!(entities.len(), 2);
     }
 
-    fn traversal_row(
-        chunk_id: &str,
-        chunk_text: &str,
-        entity_id: &str,
-        entity_name: &str,
-        entity_type: &str,
-    ) -> Row {
+    fn retrieval_row(nid: i64, score: f64, leg: &str) -> Row {
         let mut fields = BTreeMap::new();
-        fields.insert("chunk_id".into(), DbValue::String(chunk_id.into()));
-        fields.insert("chunk_text".into(), DbValue::String(chunk_text.into()));
-        fields.insert("source_id".into(), DbValue::String("s1".into()));
-        fields.insert("source_name".into(), DbValue::String("source".into()));
-        fields.insert("entity_id".into(), DbValue::String(entity_id.into()));
-        fields.insert("entity_name".into(), DbValue::String(entity_name.into()));
-        fields.insert("entity_type".into(), DbValue::String(entity_type.into()));
+        fields.insert("nid".into(), DbValue::Int(nid));
+        fields.insert("score".into(), DbValue::Float(score));
+        fields.insert("leg".into(), DbValue::String(leg.into()));
         Row { fields }
     }
 
-    fn traversal_row_with_score(
+    fn traversal_aggregated_row(
         chunk_id: &str,
-        chunk_text: &str,
-        entity_id: &str,
+        entity_nid: i64,
         entity_name: &str,
-        entity_type: &str,
-        score_field: &str,
-        score: f64,
+        leg: &str,
+        contrib: f64,
     ) -> Row {
-        let mut row = traversal_row(chunk_id, chunk_text, entity_id, entity_name, entity_type);
-        row.fields.insert(score_field.into(), DbValue::Float(score));
-        row
+        let mut fields = BTreeMap::new();
+        fields.insert("chunk_id".into(), DbValue::String(chunk_id.into()));
+        fields.insert(
+            "chunk_text".into(),
+            DbValue::String(format!("text for {chunk_id}")),
+        );
+        fields.insert("source_id".into(), DbValue::String("s1".into()));
+        fields.insert("source_name".into(), DbValue::String("source".into()));
+        fields.insert("contrib_score".into(), DbValue::Float(contrib));
+        fields.insert("leg".into(), DbValue::String(leg.into()));
+        if !entity_name.is_empty() {
+            fields.insert("entity_nid".into(), DbValue::Int(entity_nid));
+            fields.insert("entity_id".into(), DbValue::String(entity_name.into()));
+            fields.insert("entity_name".into(), DbValue::String(entity_name.into()));
+        }
+        Row { fields }
     }
 
     #[tokio::test]

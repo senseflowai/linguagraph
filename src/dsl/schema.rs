@@ -417,7 +417,7 @@ impl TraversalQuery {
             edge: EdgePattern {
                 label: self.mentions_rel.clone(),
                 alias: "m".into(),
-                direction: Direction::In,
+                direction: Direction::Out,
             },
             target: NodePattern {
                 label: self.entity_label.clone().unwrap_or_default(),
@@ -467,7 +467,7 @@ impl TraversalQuery {
                     edge: EdgePattern {
                         label: self.mentions_rel.clone(),
                         alias: "seed_m".into(),
-                        direction: Direction::Out,
+                        direction: Direction::In,
                     },
                     target: NodePattern {
                         label: self.chunk_label.clone(),
@@ -582,8 +582,7 @@ mod traversal_tests {
         let mentions = &dsl.traversals[1];
         assert_eq!(mentions.from.as_deref(), Some("c"));
         assert_eq!(mentions.edge.label, "MENTIONS");
-        // Incoming MENTIONS: entities point at chunks they mention.
-        assert_eq!(mentions.edge.direction, Direction::In);
+        assert_eq!(mentions.edge.direction, Direction::Out);
         assert_eq!(mentions.target.label, "");
         assert_eq!(mentions.target.alias, "e");
         assert!(mentions.depth.is_none());
@@ -680,7 +679,7 @@ mod traversal_tests {
         assert_eq!(dsl.filters[0].field, "e.name");
         assert_eq!(dsl.filters[0].op, "search_reranked");
         assert_eq!(dsl.traversals[0].from.as_deref(), Some("e"));
-        assert_eq!(dsl.traversals[0].edge.direction, Direction::Out);
+        assert_eq!(dsl.traversals[0].edge.direction, Direction::In);
         assert_eq!(dsl.traversals[0].target.label, "Chunk");
         assert_eq!(dsl.traversals[1].from.as_deref(), Some("c"));
         assert_eq!(dsl.traversals[1].edge.direction, Direction::Out);

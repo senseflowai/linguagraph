@@ -1652,11 +1652,10 @@ mod tests {
             cypher.text
         );
         // MENTIONS is optional (rendered as OPTIONAL MATCH) and
-        // incoming: entities point at the chunks they mention, so
-        // the arrow reverses to <-[m:MENTIONS]-(e). The entity
-        // target is label-less.
+        // outgoing from the chunk to the mentioned entity. The
+        // entity target is label-less.
         assert!(
-            cypher.text.contains("OPTIONAL MATCH (c)<-[m:MENTIONS]-(e)"),
+            cypher.text.contains("OPTIONAL MATCH (c)-[m:MENTIONS]->(e)"),
             "expected optional MENTIONS hop with label-less entity; got: {}",
             cypher.text
         );

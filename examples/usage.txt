@@ -10,9 +10,12 @@ linguagraph cypher examples/aggregate_orders.json
 # 3. Execute the DSL against Memgraph:
 linguagraph run examples/find_people.json --config config.toml
 
-# 4. Print the schema-aware system prompt for an LLM:
+# 4. Execute traversal retrieval against Memgraph:
+linguagraph traversal examples/traversal.json --config config.toml
+
+# 5. Print the schema-aware system prompt for an LLM:
 linguagraph prompt --schema schema.json
 
-# 5. Override config via environment:
+# 6. Override config via environment:
 LINGUAGRAPH__DATABASE__URI=bolt://memgraph:7687 \
   linguagraph run examples/find_people.json

@@ -1,0 +1,63 @@
+{
+  "action": "find",
+  "start": {
+    "label": "Camera",
+    "alias": "c"
+  },
+  "traversals": [
+    {
+      "from": "c",
+      "edge": {
+        "label": "LOCATED_IN",
+        "alias": "camera_place",
+        "direction": "out"
+      },
+      "target": {
+        "label": "Place",
+        "alias": "p"
+      }
+    },
+    {
+      "from": "p",
+      "edge": {
+        "label": "LOCATED_IN",
+        "alias": "place_location",
+        "direction": "out"
+      },
+      "target": {
+        "label": "Location",
+        "alias": "l"
+      }
+    }
+  ],
+  "filters": [
+    {
+      "field": "c.state",
+      "op": "eq",
+      "value": "active"
+    }
+  ],
+  "return": [
+    {
+      "field": "c.id",
+      "alias": "camera_id"
+    },
+    {
+      "field": "c.name",
+      "alias": "camera_name"
+    },
+    {
+      "field": "p.name",
+      "alias": "place_name"
+    },
+    {
+      "field": "l.latitude",
+      "alias": "latitude"
+    },
+    {
+      "field": "l.longitude",
+      "alias": "longitude"
+    }
+  ],
+  "limit": 20
+}

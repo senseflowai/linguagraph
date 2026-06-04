@@ -1,9 +1,8 @@
 {
-  "entities": ["статья",  "пенсия"],
-  "goal": "Найти статью в которой написано про пенсию",
-  "query": "Статья 94",
-  "mentions_rel": "mention",
-  "entity_label": "heading",
-  "entity_field": "name",
+  "entities": ["Статья 365", "KоАП"],
+  "goal": "Статья 365",
+  "query": "Статья 365",
+  "prefix_label": "Entity_ws_1",
+  "prefix_index": "ws_1",
   "limit": 30
 }

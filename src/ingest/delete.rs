@@ -9,9 +9,13 @@
 //!   (i.e. "orphans" — entities that survive in some other source's
 //!   subgraph are left alone),
 //! * the source node itself,
-//! * the Qdrant points associated with every doomed Memgraph node
-//!   across the configured vector collections (one
-//!   `libqlink.delete_batch` call per collection).
+//! * the Qdrant points associated with every doomed Memgraph node,
+//!   removed from *every* vector collection in one collection-agnostic
+//!   `libqlink.delete_batch_all` call. Sweeping all collections (rather
+//!   than fanning a per-collection `libqlink.delete_batch` across a
+//!   catalog-derived name list) is what guarantees orphan-entity
+//!   embeddings are cleaned up even when their per-field collection
+//!   isn't enumerable from the ontology catalog.
 //!
 //! The planner stays pure: it renders [`CypherQuery`] values and does
 //! not talk to Memgraph or qlink itself. [`crate::core::Pipeline`]
@@ -187,6 +191,31 @@ impl DeletePlan {
         CypherQuery::new(text, params)
     }
 
+    /// Phase 2 (collection-agnostic): render a single
+    /// `CALL libqlink.delete_batch_all` that wipes the doomed point ids
+    /// from *every* Qdrant collection.
+    ///
+    /// This is the robust counterpart to [`Self::qlink_delete_batch_query`].
+    /// The per-collection fan-out only cleans collections it can name, and
+    /// it derives those names from the ontology catalog
+    /// ([`Self::qlink_collections`]). When the catalog is missing or out of
+    /// sync with what was actually embedded at ingest — which is the common
+    /// case for user-entity text properties — those collections are never
+    /// enumerated and their vectors leak. Sweeping every collection avoids
+    /// that: Memgraph node ids are globally unique and qlink no-ops on ids a
+    /// collection doesn't hold, so only the doomed points are ever removed.
+    pub fn qlink_delete_all_query(&self, ids: &[i64]) -> CypherQuery {
+        let text = "CALL libqlink.delete_batch_all($ids) YIELD success, collections\n\
+                    RETURN success, collections"
+            .to_string();
+        let mut params = BTreeMap::new();
+        params.insert(
+            "ids".into(),
+            Literal::List(ids.iter().map(|i| Literal::Int(*i)).collect()),
+        );
+        CypherQuery::new(text, params)
+    }
+
     /// Phase 3: `DETACH DELETE` every doomed node by Memgraph id. The
     /// `DETACH` keyword takes care of every adjacent edge, including
     /// `:RELATION` edges between user entities that the planner did not
@@ -351,6 +380,22 @@ mod tests {
             Literal::List(items) => {
                 assert_eq!(items.len(), 3);
                 assert_eq!(items[0], Literal::Int(1));
+            }
+            other => panic!("expected list, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn qlink_delete_all_query_binds_ids_only() {
+        let q = plan("src").qlink_delete_all_query(&[7, 8, 9]);
+        assert!(q.text.contains("libqlink.delete_batch_all($ids)"));
+        assert!(q.text.contains("YIELD success, collections"));
+        // Collection-agnostic: no per-collection name is bound.
+        assert!(!q.params.contains_key("coll"));
+        match q.params.get("ids").unwrap() {
+            Literal::List(items) => {
+                assert_eq!(items.len(), 3);
+                assert_eq!(items[0], Literal::Int(7));
             }
             other => panic!("expected list, got {other:?}"),
         }

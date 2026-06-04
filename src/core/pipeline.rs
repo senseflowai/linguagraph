@@ -125,9 +125,10 @@ pub struct DeleteBySourceSummary {
     pub chunks: usize,
     /// 1 when the source node itself was deleted, 0 otherwise.
     pub sources: usize,
-    /// Number of Qdrant collections we issued `delete_batch` calls
-    /// against. Each call is a no-op for ids the collection doesn't
-    /// know, so this is an upper bound on the work qlink actually did.
+    /// Number of Qdrant collections the `libqlink.delete_batch_all`
+    /// sweep touched. The sweep visits every existing collection and is
+    /// a no-op for ids a collection doesn't hold, so this is an upper
+    /// bound on the work qlink actually did.
     pub qlink_collections: usize,
 }
 
@@ -785,11 +786,13 @@ impl Pipeline {
     /// have no remaining `:mention` edges to a different source, so
     /// shared entities survive when a single source is deleted.
     ///
-    /// The matching Qdrant vectors are cleaned up via
-    /// `libqlink.delete_batch` (no-op for ids the collection doesn't
-    /// know, so we can safely fan a single id list across every
-    /// collection enumerated from the cached graph specification + the
-    /// two built-ins, `name` and `text`).
+    /// The matching Qdrant vectors are cleaned up via a single
+    /// collection-agnostic `libqlink.delete_batch_all` call, which
+    /// sweeps the doomed id list across *every* Qdrant collection. This
+    /// is a no-op for ids a collection doesn't hold, and — unlike the
+    /// older per-collection fan-out keyed off the ontology catalog — it
+    /// reaches entity-property collections the catalog can't enumerate,
+    /// which is what used to leave orphan-entity embeddings behind.
     ///
     /// The three phases — discover, qlink cleanup, `DETACH DELETE` —
     /// each run as a separate Cypher statement so a failure mid-flight
@@ -820,12 +823,18 @@ impl Pipeline {
 
         let all_ids = discovered.all_ids();
 
-        // ── qlink cleanup: one call per collection, full id list. ────
-        let collections = plan.qlink_collections(self.ontology_catalog().as_deref());
-        for coll in &collections {
-            let q = plan.qlink_delete_batch_query(coll, &all_ids);
-            let _ = self.client.execute(&q).await?;
-        }
+        // ── qlink cleanup: one collection-agnostic sweep. ────────────
+        // Deleting the doomed node ids from *every* Qdrant collection
+        // means entity vectors are removed even when their per-field
+        // collection isn't enumerable from the ontology catalog — the
+        // failure mode that left orphan-entity embeddings behind. Node
+        // ids are globally unique and qlink no-ops on ids a collection
+        // doesn't hold, so only the doomed points are touched.
+        let qlink_result = self
+            .client
+            .execute(&plan.qlink_delete_all_query(&all_ids))
+            .await?;
+        let qlink_collections = parse_collections_swept(&qlink_result);
 
         // ── DETACH DELETE everything. ────────────────────────────────
         let _ = self
@@ -838,7 +847,7 @@ impl Pipeline {
             orphan_entities: discovered.orphan_ids.len(),
             chunks: discovered.chunk_ids.len(),
             sources: usize::from(discovered.source_id.is_some()),
-            qlink_collections: collections.len(),
+            qlink_collections,
         })
     }
 
@@ -1069,6 +1078,21 @@ fn parse_discovered_nodes(
         orphan_ids,
         chunk_ids,
     })
+}
+
+/// Read the `collections` count from a `libqlink.delete_batch_all` result
+/// row. Used only to populate [`DeleteBySourceSummary::qlink_collections`];
+/// a missing or malformed value degrades to `0` rather than failing the
+/// delete, since the sweep itself already succeeded by the time we parse.
+fn parse_collections_swept(result: &QueryResult) -> usize {
+    result
+        .rows
+        .first()
+        .and_then(|row| row.fields.get("collections"))
+        .and_then(db_value_as_i64)
+        .filter(|n| *n >= 0)
+        .map(|n| n as usize)
+        .unwrap_or(0)
 }
 
 fn id_list(value: Option<&DbValue>) -> Option<Vec<i64>> {
@@ -1893,14 +1917,21 @@ mod tests {
         // is returned by the FIRST `execute` call. That first call is
         // the discover query, so its row goes in last.
         let mock = Arc::new(MockClient::new());
-        // qlink + detach calls return empty results — fine.
+        // MockClient pops from the back, so enqueue in reverse call order:
+        // detach (last) first, then the qlink sweep, then discover (last in,
+        // first out).
         mock.enqueue(QueryResult::empty()); // detach delete
-                                            // qlink deletes — we don't know how many collections, just
-                                            // enqueue enough empty results. With no spec set there are
-                                            // 3 collections (name, text, _canonical).
-        mock.enqueue(QueryResult::empty());
-        mock.enqueue(QueryResult::empty());
-        mock.enqueue(QueryResult::empty());
+                                            // qlink sweep — one collection-agnostic call. It reports how
+                                            // many collections were swept via the `collections` column.
+        let mut qlink_fields = BTreeMap::new();
+        qlink_fields.insert("success".into(), DbValue::Bool(true));
+        qlink_fields.insert("collections".into(), DbValue::Json(serde_json::json!(7)));
+        mock.enqueue(QueryResult {
+            columns: vec!["success".into(), "collections".into()],
+            rows: vec![Row {
+                fields: qlink_fields,
+            }],
+        });
         // discover query — returns one row with the source's id and
         // some orphan/chunk ids. Mock client builds Value::Json cells
         // by hand to mirror the production decode path.
@@ -1929,19 +1960,24 @@ mod tests {
         assert_eq!(summary.orphan_entities, 3);
         assert_eq!(summary.chunks, 2);
         assert_eq!(summary.sources, 1);
-        // Three built-in collections: semantic_text__name + semantic_text__text
-        // + semantic_text___canonical (the soft-merge canonical slot).
-        assert_eq!(summary.qlink_collections, 3);
+        // The sweep reports the number of collections it cleaned, surfaced
+        // verbatim in the summary.
+        assert_eq!(summary.qlink_collections, 7);
 
         let captured = mock.captured.lock().unwrap();
-        // 1 discover + 3 qlink + 1 detach.
-        assert_eq!(captured.len(), 5);
+        // 1 discover + 1 qlink sweep + 1 detach.
+        assert_eq!(captured.len(), 3);
         assert!(captured[0].text.contains("MATCH (s:Source"));
         assert!(captured[0].text.contains("{name: $source_name}"));
-        assert!(captured[1].text.contains("libqlink.delete_batch"));
-        assert!(captured[4].text.contains("DETACH DELETE"));
-        // The detach call must receive every doomed id: 3 orphans + 2 chunks + 1 source = 6.
-        match captured[4].params.get("ids").unwrap() {
+        assert!(captured[1].text.contains("libqlink.delete_batch_all"));
+        // The sweep must receive every doomed id: 3 orphans + 2 chunks + 1 source = 6.
+        match captured[1].params.get("ids").unwrap() {
+            Literal::List(items) => assert_eq!(items.len(), 6),
+            other => panic!("expected list, got {other:?}"),
+        }
+        assert!(captured[2].text.contains("DETACH DELETE"));
+        // The detach call must receive every doomed id too.
+        match captured[2].params.get("ids").unwrap() {
             Literal::List(items) => assert_eq!(items.len(), 6),
             other => panic!("expected list, got {other:?}"),
         }
@@ -1976,11 +2012,9 @@ mod tests {
 
     #[tokio::test]
     async fn delete_by_source_threads_prefix_label_into_cypher() {
-        use crate::ast::query::Literal;
         let mock = Arc::new(MockClient::new());
-        mock.enqueue(QueryResult::empty());
-        mock.enqueue(QueryResult::empty());
-        mock.enqueue(QueryResult::empty());
+        mock.enqueue(QueryResult::empty()); // detach
+        mock.enqueue(QueryResult::empty()); // qlink sweep
         let mut fields = BTreeMap::new();
         fields.insert("source_id".into(), DbValue::Json(serde_json::json!(1)));
         fields.insert("orphan_ids".into(), DbValue::Json(serde_json::json!([])));
@@ -1996,17 +2030,30 @@ mod tests {
         pipeline.delete_by_source("src-1").await.unwrap();
 
         let captured = mock.captured.lock().unwrap();
-        // Discover query carries the prefix on every MATCH.
+        // Discover query carries the prefix_label on every MATCH so it only
+        // touches the tenant's partition.
         assert!(captured[0].text.contains("(s:Source:Tenant1"));
-        // qlink collection names carry the prefix_index.
-        let coll = captured[1]
-            .params
-            .get("coll")
-            .and_then(|v| match v {
-                Literal::String(s) => Some(s.as_str()),
-                _ => None,
-            })
-            .unwrap_or("");
-        assert!(coll.starts_with("tenant1__semantic_text__"), "got {coll}");
+        // The qlink cleanup is collection-agnostic: it sweeps every Qdrant
+        // collection by id, so the prefix_index no longer has to be baked
+        // into a per-collection name (which is exactly what used to leak
+        // entity vectors when the catalog was incomplete).
+        assert!(captured[1].text.contains("libqlink.delete_batch_all"));
+        assert!(!captured[1].params.contains_key("coll"));
+    }
+
+    #[test]
+    fn parse_collections_swept_reads_count_and_degrades_to_zero() {
+        // Happy path: the `collections` column is surfaced verbatim.
+        let mut fields = BTreeMap::new();
+        fields.insert("success".into(), DbValue::Bool(true));
+        fields.insert("collections".into(), DbValue::Json(serde_json::json!(4)));
+        let result = QueryResult {
+            columns: vec!["success".into(), "collections".into()],
+            rows: vec![Row { fields }],
+        };
+        assert_eq!(parse_collections_swept(&result), 4);
+
+        // Missing column / empty result degrade to 0 rather than panicking.
+        assert_eq!(parse_collections_swept(&QueryResult::empty()), 0);
     }
 }

@@ -652,8 +652,75 @@ async fn cmd_traversal(
         }
     }
     let result = pipeline.run_traversal(traversal).await?;
-    print_query_result_table(&result);
+    print_traversal_result(&result);
     Ok(())
+}
+
+/// Render a traversal result as readable text blocks instead of a
+/// table: each chunk is printed as its score (and rerank score when
+/// present), an optional source label, and the full chunk text on its
+/// own lines. Long chunk text in a table is unreadable; this keeps the
+/// newlines intact and surfaces only what callers care about.
+fn print_traversal_result(result: &QueryResult) {
+    if result.rows.is_empty() {
+        println!("(no matching chunks)");
+        return;
+    }
+
+    for (idx, row) in result.rows.iter().enumerate() {
+        if idx > 0 {
+            println!();
+            println!("{}", "─".repeat(60));
+        }
+
+        let score = row.fields.get("score").map(traversal_score_string);
+        let rerank = row.fields.get("rerank_score").map(traversal_score_string);
+
+        let mut header = format!("#{}", idx + 1);
+        if let Some(score) = score {
+            header.push_str(&format!("  score={score}"));
+        }
+        if let Some(rerank) = rerank {
+            header.push_str(&format!("  rerank={rerank}"));
+        }
+        if let Some(name) = row.fields.get("source_name").and_then(traversal_text_value) {
+            if !name.is_empty() {
+                header.push_str(&format!("  source={name}"));
+            }
+        }
+        println!("{header}");
+
+        let text = row
+            .fields
+            .get("chunk_text")
+            .and_then(traversal_text_value)
+            .unwrap_or_default();
+        println!("{text}");
+    }
+    println!();
+    println!("{} chunk(s)", result.rows.len());
+}
+
+/// Format a score cell with a stable 4-decimal precision; falls back to
+/// the raw cell rendering for non-numeric values.
+fn traversal_score_string(value: &Value) -> String {
+    match value {
+        Value::Float(v) => format!("{v:.4}"),
+        Value::Int(v) => format!("{v}"),
+        Value::Null => "—".into(),
+        other => value_cell(other),
+    }
+}
+
+/// Extract a plain string from a result cell, preserving newlines
+/// (unlike [`value_cell`], which escapes them for table layout).
+fn traversal_text_value(value: &Value) -> Option<String> {
+    match value {
+        Value::Null => None,
+        Value::String(v) => Some(v.clone()),
+        Value::Json(serde_json::Value::String(v)) => Some(v.clone()),
+        other => Some(value_cell(other)),
+    }
 }
 
 fn print_query_result_table(result: &QueryResult) {

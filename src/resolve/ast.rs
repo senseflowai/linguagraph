@@ -178,10 +178,10 @@ pub fn lower_full(
     let group_by = dsl
         .group_by
         .iter()
-        .map(|s| resolve_property(s, &bound))
+        .map(|g| lower_group_by(g, &bound))
         .collect::<Result<Vec<_>, _>>()?;
 
-    let mut sort = lower_sort(&dsl.sort, &returns, &bound)?;
+    let mut sort = lower_sort(&dsl.sort, &returns, &group_by, &bound)?;
 
     // Cypher has no standalone GROUP BY: the grouping keys of an
     // aggregating projection are exactly its non-aggregate RETURN
@@ -362,6 +362,38 @@ fn parse_typed_op(s: &str) -> Option<TypedOp> {
     })
 }
 
+fn lower_group_by(
+    item: &d::GroupByItem,
+    bound: &HashMap<String, ()>,
+) -> Result<GroupByKey, AstError> {
+    Ok(match item {
+        d::GroupByItem::Field(field) => GroupByKey {
+            field: resolve_property(field, bound)?,
+            transform: None,
+            alias: None,
+        },
+        d::GroupByItem::DatePart {
+            field,
+            date_part,
+            alias,
+        } => GroupByKey {
+            field: resolve_property(field, bound)?,
+            transform: Some(GroupByTransform::DatePart(lower_date_part(*date_part))),
+            alias: alias.clone(),
+        },
+    })
+}
+
+fn lower_date_part(part: d::DatePart) -> DatePart {
+    match part {
+        d::DatePart::Year => DatePart::Year,
+        d::DatePart::Quarter => DatePart::Quarter,
+        d::DatePart::Month => DatePart::Month,
+        d::DatePart::Day => DatePart::Day,
+        d::DatePart::Hour => DatePart::Hour,
+    }
+}
+
 fn lower_returns(
     items: &[d::ReturnItem],
     bound: &HashMap<String, ()>,
@@ -399,15 +431,18 @@ fn lower_agg(a: d::AggregateFn) -> AggregateFn {
 fn lower_sort(
     items: &[d::SortItem],
     returns: &[ReturnClause],
+    group_by: &[GroupByKey],
     bound: &HashMap<String, ()>,
 ) -> Result<Vec<SortKey>, AstError> {
-    let projection_aliases: Vec<&str> = returns
+    let mut projection_aliases: Vec<&str> = returns
         .iter()
         .filter_map(|r| match r {
             ReturnClause::Field { alias, .. } => alias.as_deref(),
+            ReturnClause::GroupKey { alias, .. } => Some(alias.as_str()),
             ReturnClause::Aggregate { alias, .. } => alias.as_deref(),
         })
         .collect();
+    projection_aliases.extend(group_by.iter().filter_map(|g| g.alias.as_deref()));
 
     items
         .iter()
@@ -445,37 +480,58 @@ fn lower_sort(
 fn project_group_by_keys(
     returns: &mut Vec<ReturnClause>,
     sort: &mut [SortKey],
-    group_by: &[PropertyRef],
+    group_by: &[GroupByKey],
     bound: &HashMap<String, ()>,
 ) {
     // A generated alias must not collide with an existing projection
     // alias or with a variable bound by the MATCH pattern.
     let mut taken: HashSet<String> = bound.keys().cloned().collect();
     for r in returns.iter() {
-        let (ReturnClause::Field { alias, .. } | ReturnClause::Aggregate { alias, .. }) = r;
+        let alias = match r {
+            ReturnClause::Field { alias, .. } | ReturnClause::Aggregate { alias, .. } => alias,
+            ReturnClause::GroupKey { alias, .. } => {
+                taken.insert(alias.clone());
+                continue;
+            }
+        };
         if let Some(a) = alias {
             taken.insert(a.clone());
         }
     }
 
-    let mut key_alias: Vec<(PropertyRef, String)> = Vec::with_capacity(group_by.len());
+    let mut key_alias: Vec<(GroupByKey, String)> = Vec::with_capacity(group_by.len());
     for key in group_by {
-        // Reuse the projection if the key is already returned as a
+        // Reuse the projection if a plain group key is already returned as a
         // plain field; give that projection an alias if it lacks one.
-        let existing = returns.iter_mut().find_map(|r| match r {
-            ReturnClause::Field { field, alias } if field == key => Some(alias),
-            _ => None,
-        });
+        let existing = if key.transform.is_none() {
+            returns.iter_mut().find_map(|r| match r {
+                ReturnClause::Field { field, alias } if field == &key.field => Some(alias),
+                _ => None,
+            })
+        } else {
+            None
+        };
         let alias = match existing {
             Some(slot) => slot
                 .get_or_insert_with(|| unique_alias(key, &mut taken))
                 .clone(),
             None => {
-                let a = unique_alias(key, &mut taken);
-                returns.push(ReturnClause::Field {
-                    field: key.clone(),
-                    alias: Some(a.clone()),
-                });
+                let a = key
+                    .alias
+                    .clone()
+                    .filter(|candidate| taken.insert(candidate.clone()))
+                    .unwrap_or_else(|| unique_alias(key, &mut taken));
+                if key.transform.is_none() {
+                    returns.push(ReturnClause::Field {
+                        field: key.field.clone(),
+                        alias: Some(a.clone()),
+                    });
+                } else {
+                    returns.push(ReturnClause::GroupKey {
+                        key: key.clone(),
+                        alias: a.clone(),
+                    });
+                }
                 a
             }
         };
@@ -484,7 +540,7 @@ fn project_group_by_keys(
 
     for s in sort.iter_mut() {
         if let SortRef::Property(p) = &s.key {
-            if let Some((_, a)) = key_alias.iter().find(|(k, _)| k == p) {
+            if let Some((_, a)) = key_alias.iter().find(|(k, _)| &k.field == p) {
                 s.key = SortRef::Projected(a.clone());
             }
         }
@@ -493,10 +549,16 @@ fn project_group_by_keys(
 
 /// Derive an identifier-shaped alias for a group_by key that does not
 /// collide with anything in `taken` (which it also updates).
-fn unique_alias(key: &PropertyRef, taken: &mut HashSet<String>) -> String {
-    let base = match &key.property {
-        Some(prop) => format!("{}_{}", key.alias, prop),
-        None => key.alias.0.clone(),
+fn unique_alias(key: &GroupByKey, taken: &mut HashSet<String>) -> String {
+    let base = match (&key.field.property, key.transform) {
+        (Some(prop), Some(GroupByTransform::DatePart(part))) => {
+            format!("{}_{}_{}", key.field.alias, prop, date_part_name(part))
+        }
+        (Some(prop), None) => format!("{}_{}", key.field.alias, prop),
+        (None, Some(GroupByTransform::DatePart(part))) => {
+            format!("{}_{}", key.field.alias, date_part_name(part))
+        }
+        (None, None) => key.field.alias.0.clone(),
     };
     let mut candidate = base.clone();
     let mut n = 2u32;
@@ -505,6 +567,16 @@ fn unique_alias(key: &PropertyRef, taken: &mut HashSet<String>) -> String {
         n += 1;
     }
     candidate
+}
+
+fn date_part_name(part: DatePart) -> &'static str {
+    match part {
+        DatePart::Year => "year",
+        DatePart::Quarter => "quarter",
+        DatePart::Month => "month",
+        DatePart::Day => "day",
+        DatePart::Hour => "hour",
+    }
 }
 
 fn resolve_property(s: &str, bound: &HashMap<String, ()>) -> Result<PropertyRef, AstError> {
@@ -529,11 +601,14 @@ fn infer_action(returns: &[ReturnClause]) -> Action {
 fn enforce_aggregation_rules(
     action: Action,
     returns: &[ReturnClause],
-    group_by: &[String],
+    group_by: &[d::GroupByItem],
 ) -> Result<(), AstError> {
-    let has_plain = returns
-        .iter()
-        .any(|r| matches!(r, ReturnClause::Field { .. }));
+    let has_plain = returns.iter().any(|r| {
+        matches!(
+            r,
+            ReturnClause::Field { .. } | ReturnClause::GroupKey { .. }
+        )
+    });
 
     match action {
         Action::Find => {}

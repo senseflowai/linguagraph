@@ -159,6 +159,15 @@ fn projected_columns(query: &ReadQuery, inject_sources: bool, inject_score: bool
                     .map(|label| NodeType::from_label(label));
                 cols.push(Column { name, node_type });
             }
+            ReturnClause::GroupKey { key, alias } => {
+                let node_type = alias_to_label
+                    .get(key.field.alias.as_str())
+                    .map(|label| NodeType::from_label(label));
+                cols.push(Column {
+                    name: alias.clone(),
+                    node_type,
+                });
+            }
             ReturnClause::Aggregate { func, field, alias } => {
                 let name = alias
                     .clone()
@@ -267,6 +276,7 @@ fn is_sources_aliased_already(query: &ReadQuery) -> bool {
         ReturnClause::Field { alias, .. } | ReturnClause::Aggregate { alias, .. } => {
             alias.as_deref() == Some(SOURCES_COLUMN)
         }
+        ReturnClause::GroupKey { alias, .. } => alias == SOURCES_COLUMN,
     })
 }
 
@@ -275,6 +285,7 @@ fn is_score_aliased_already(query: &ReadQuery) -> bool {
         ReturnClause::Field { alias, .. } | ReturnClause::Aggregate { alias, .. } => {
             alias.as_deref() == Some(SCORE_COLUMN)
         }
+        ReturnClause::GroupKey { alias, .. } => alias == SCORE_COLUMN,
     })
 }
 
@@ -330,6 +341,14 @@ mod tests {
         PropertyRef {
             alias: alias(a),
             property: p.map(str::to_string),
+        }
+    }
+
+    fn gkey(a: &str, p: Option<&str>) -> GroupByKey {
+        GroupByKey {
+            field: pref(a, p),
+            transform: None,
+            alias: None,
         }
     }
 
@@ -481,7 +500,7 @@ mod tests {
                     alias: Some("total_spent".into()),
                 },
             ],
-            group_by: vec![pref("c", Some("name"))],
+            group_by: vec![gkey("c", Some("name"))],
             sort: vec![SortKey {
                 key: SortRef::Projected("total_spent".into()),
                 order: SortOrder::Desc,

@@ -266,6 +266,10 @@ fn return_item_of(r: &ReturnClause) -> ReturnItem {
             field: field.clone(),
             alias: alias.clone(),
         },
+        ReturnClause::GroupKey { key, alias } => ReturnItem::Expr {
+            expr: super::return_part::render_group_key(key),
+            alias: Some(alias.clone()),
+        },
         ReturnClause::Aggregate { func, field, alias } => ReturnItem::Aggregate {
             func: *func,
             field: field.clone(),

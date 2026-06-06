@@ -17,10 +17,18 @@ pub(super) fn render_group_key(key: &GroupByKey) -> String {
     let base = render_property(&key.field);
     match key.transform {
         None => base,
-        Some(GroupByTransform::DatePart(part)) => {
-            format!("{}.{}", base, render_date_part(part))
-        }
+        Some(GroupByTransform::DatePart(part)) => render_date_part_expr(&base, part),
     }
+}
+
+fn render_date_part_expr(base: &str, part: DatePart) -> String {
+    let value_expr = match part {
+        DatePart::Quarter => format!("toInt(ceil(datetime({base}).month / 3.0))"),
+        DatePart::Year | DatePart::Month | DatePart::Day | DatePart::Hour => {
+            format!("datetime({base}).{}", render_date_part(part))
+        }
+    };
+    format!("CASE WHEN {base} IS NULL THEN NULL ELSE {value_expr} END")
 }
 
 fn render_date_part(part: DatePart) -> &'static str {

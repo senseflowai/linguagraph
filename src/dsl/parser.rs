@@ -178,7 +178,7 @@ fn validate(q: &DslQuery) -> Result<(), DslError> {
     }
     for item in &q.return_ {
         match item {
-            ReturnItem::Field { field, alias } => {
+            ReturnItem::DatePart { field, alias, .. } | ReturnItem::Field { field, alias } => {
                 check_field_ref(field)?;
                 if let Some(a) = alias {
                     check_identifier(a)?;

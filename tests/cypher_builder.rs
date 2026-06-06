@@ -21,14 +21,18 @@ fn find_example_round_trip() {
     assert!(cypher.text.trim_end().ends_with("LIMIT 25"));
     // Two filter values bound as parameters.
     assert_eq!(cypher.params.len(), 2);
-    assert!(cypher
-        .params
-        .values()
-        .any(|v| matches!(v, Literal::Int(30))));
-    assert!(cypher
-        .params
-        .values()
-        .any(|v| matches!(v, Literal::String(s) if s == "Berlin")));
+    assert!(
+        cypher
+            .params
+            .values()
+            .any(|v| matches!(v, Literal::Int(30)))
+    );
+    assert!(
+        cypher
+            .params
+            .values()
+            .any(|v| matches!(v, Literal::String(s) if s == "Berlin"))
+    );
 }
 
 #[test]
@@ -178,7 +182,7 @@ fn aggregate_can_group_datetime_by_year() {
     assert!(
         cypher
             .text
-            .contains("RETURN count(c) AS client_count, c.created_at.year AS created_year"),
+            .contains("RETURN count(c) AS client_count, CASE WHEN c.created_at IS NULL THEN NULL ELSE datetime(c.created_at).year END AS created_year"),
         "got: {}",
         cypher.text
     );
@@ -186,6 +190,49 @@ fn aggregate_can_group_datetime_by_year() {
         cypher.text.contains("ORDER BY created_year ASC"),
         "got: {}",
         cypher.text
+    );
+}
+
+#[test]
+fn aggregate_can_project_return_date_part_without_raw_property() {
+    let cypher = compile(
+        r#"{
+            "action": "aggregate",
+            "start": { "label": "Client", "alias": "c" },
+            "filters": [
+                { "field": "c.created_at", "op": "gte", "value": "2023-01-01" },
+                { "field": "c.created_at", "op": "lt", "value": "2028-01-01" }
+            ],
+            "return": [
+                { "aggregate": "count", "field": "c.id", "alias": "client_count" },
+                { "field": "c.created_at", "alias": "created_year", "date_part": "year" }
+            ],
+            "group_by": [
+                { "field": "c.created_at", "date_part": "year", "alias": "created_year" }
+            ],
+            "sort": [
+                { "field": "created_year", "order": "asc" }
+            ]
+        }"#,
+    );
+
+    let return_line = cypher
+        .text
+        .lines()
+        .find(|l| l.starts_with("RETURN "))
+        .expect("query has a RETURN clause");
+    assert!(
+        return_line.contains("CASE WHEN c.created_at IS NULL THEN NULL ELSE datetime(c.created_at).year END AS created_year"),
+        "date_part return must project the null-safe transformed datetime expression: {return_line}"
+    );
+    assert!(
+        !return_line.contains("c.created_at AS created_year"),
+        "date_part return must not alias the raw property: {return_line}"
+    );
+    assert_eq!(
+        return_line.matches("created_year").count(),
+        1,
+        "group_by projection should reuse the explicit date_part return: {return_line}"
     );
 }
 

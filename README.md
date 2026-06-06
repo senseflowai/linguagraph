@@ -297,7 +297,7 @@ cargo run -- prompt --schema schema.json
 
 ```json
 {
-  "action": "find" | "aggregate",
+  "action": "find" | "aggregate",  // optional legacy hint; inferred from `return`
   "start":  { "label": "<NodeLabel>", "alias": "<ident>" },
   "traversals": [
     {
@@ -324,8 +324,10 @@ Validation rules enforced before any query is built:
 
 - Aliases are unique and match `[A-Za-z_][A-Za-z0-9_]*`.
 - Field references are exactly one `<alias>` or `<alias>.<property>`.
-- `find` queries may not contain aggregations.
-- `aggregate` queries that mix aggregated and plain projections must list the
+- The effective query kind is inferred from `return`: any aggregate projection
+  makes the query aggregate, so `action` can be omitted and a stale
+  `"action": "find"` is ignored.
+- Aggregate queries that mix aggregated and plain projections must list the
   plain ones in `group_by`.
 - Traversal depth is bounded by `query.max_traversal_depth` from config.
 - Every filter value lands in a Bolt parameter — never in the query string.

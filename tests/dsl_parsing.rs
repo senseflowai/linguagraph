@@ -21,6 +21,16 @@ fn accepts_example_aggregate() {
 }
 
 #[test]
+fn accepts_missing_action() {
+    let json = r#"{
+        "start": { "label": "Person", "alias": "p" },
+        "return": [{ "field": "p.name" }]
+    }"#;
+    let q = dsl::parse_str(json).expect("action should be optional");
+    assert_eq!(q.action, Action::Find);
+}
+
+#[test]
 fn rejects_unknown_top_level_field() {
     // serde_json by default ignores unknown fields, but we can still detect
     // syntactic problems via empty `return`, which the validator rejects.

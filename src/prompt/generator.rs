@@ -371,7 +371,7 @@ fn format_ty(t: super::schema::PropertyType) -> &'static str {
 
 const DSL_RULES: &str = r#"Output a single JSON object with this shape:
 {
-  "action": "find" | "aggregate",
+  "action": "find" | "aggregate",  // optional; inferred from `return`
   "start":  { "label": <NodeLabel>, "alias": <ident> },
   "traversals": [
     {
@@ -399,8 +399,9 @@ Constraints:
 - Every alias — the start node, each traversal edge, and each traversal target —
   must be unique across the whole query. Nodes and edges share one namespace, so
   an edge and the node it points at can never reuse the same alias.
-- "find" queries must NOT contain aggregations.
-- "aggregate" queries that mix aggregated and non-aggregated columns must list the
+- `action` is optional and only a legacy hint; the engine infers aggregate queries
+  from aggregate items in `return`, so prefer omitting `action` if unsure.
+- Queries that mix aggregated and non-aggregated columns must list the
   non-aggregated columns in `group_by`.
 - Never embed user-supplied values in identifiers; values go in `filters[*].value`.
 - Explicitly specify in `traversals[*].from` where the relation should be created .

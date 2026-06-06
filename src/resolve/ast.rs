@@ -1,9 +1,9 @@
 //! Lower a [`DslQuery`] into the strongly-typed [`Query`] AST.
 //!
-//! This is the only place where DSL-level concepts (`Action::Aggregate`,
-//! qualified field strings, JSON literals) are translated into the typed
-//! domain. Anything downstream may assume the AST is consistent: aliases
-//! resolve, aggregations are only present in `Aggregate` queries, and so on.
+//! This is the only place where DSL-level concepts (qualified field strings,
+//! JSON literals, optional action hints) are translated into the typed domain.
+//! Anything downstream may assume the AST is consistent: aliases resolve,
+//! aggregations use `Aggregate` queries, and so on.
 
 use std::collections::{HashMap, HashSet};
 
@@ -25,9 +25,6 @@ pub enum AstError {
 
     #[error("unsupported literal value (objects/non-finite numbers are not allowed)")]
     UnsupportedLiteral,
-
-    #[error("`find` queries may not contain aggregations; use action='aggregate'")]
-    AggregateInFind,
 
     #[error("`aggregate` queries must include `group_by` when projecting non-aggregate fields")]
     MissingGroupBy,
@@ -174,10 +171,7 @@ pub fn lower_full(
     )?;
     let mut returns = lower_returns(&dsl.return_, &bound)?;
 
-    let action = match dsl.action {
-        d::Action::Find => Action::Find,
-        d::Action::Aggregate => Action::Aggregate,
-    };
+    let action = infer_action(&returns);
 
     enforce_aggregation_rules(action, &returns, &dsl.group_by)?;
 
@@ -521,28 +515,32 @@ fn resolve_property(s: &str, bound: &HashMap<String, ()>) -> Result<PropertyRef,
     Ok(r)
 }
 
+fn infer_action(returns: &[ReturnClause]) -> Action {
+    if returns
+        .iter()
+        .any(|r| matches!(r, ReturnClause::Aggregate { .. }))
+    {
+        Action::Aggregate
+    } else {
+        Action::Find
+    }
+}
+
 fn enforce_aggregation_rules(
     action: Action,
     returns: &[ReturnClause],
     group_by: &[String],
 ) -> Result<(), AstError> {
-    let has_aggregate = returns
-        .iter()
-        .any(|r| matches!(r, ReturnClause::Aggregate { .. }));
     let has_plain = returns
         .iter()
         .any(|r| matches!(r, ReturnClause::Field { .. }));
 
     match action {
-        Action::Find => {
-            if has_aggregate {
-                return Err(AstError::AggregateInFind);
-            }
-        }
+        Action::Find => {}
         Action::Aggregate => {
             // If we project both aggregated and plain columns, the plain ones
             // must appear in `group_by` — that's how SQL/Cypher semantics work.
-            if has_aggregate && has_plain && group_by.is_empty() {
+            if has_plain && group_by.is_empty() {
                 return Err(AstError::MissingGroupBy);
             }
         }

@@ -10,6 +10,11 @@ use serde::{Deserialize, Serialize};
 /// Top-level DSL document.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DslQuery {
+    /// Legacy action hint. The lowerer derives the effective read kind from
+    /// the projection (`return`) so generated DSL remains valid when an LLM
+    /// forgets to switch this from `find` to `aggregate`. The field is optional
+    /// on input and defaults to `find` for backwards-compatible Rust callers.
+    #[serde(default)]
     pub action: Action,
     pub start: NodePattern,
     #[serde(default)]
@@ -43,6 +48,12 @@ pub struct DslQuery {
 pub enum Action {
     Find,
     Aggregate,
+}
+
+impl Default for Action {
+    fn default() -> Self {
+        Self::Find
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -374,11 +385,7 @@ mod traversal_tests {
 
     #[test]
     fn entity_names_trims_and_drops_blanks() {
-        let t = TraversalQuery::new(
-            ["  Elon Musk ", "", "  ", "SpaceX"],
-            "goal",
-            "query",
-        );
+        let t = TraversalQuery::new(["  Elon Musk ", "", "  ", "SpaceX"], "goal", "query");
         assert_eq!(t.entity_names(), vec!["Elon Musk", "SpaceX"]);
     }
 

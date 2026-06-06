@@ -152,15 +152,27 @@ fn aggregate_with_multiple_aggregates_sorts_by_group_key_alias() {
 }
 
 #[test]
-fn rejects_aggregation_in_find() {
+fn infers_aggregate_when_find_action_contains_aggregation() {
     let json = r#"{
         "action": "find",
         "start": { "label": "Person", "alias": "p" },
         "return": [{ "aggregate": "count", "field": "p", "alias": "n" }]
     }"#;
     let dsl = dsl::parse_str(json).unwrap();
-    let err = from_dsl::lower(dsl, 6).unwrap_err();
-    assert!(matches!(err, linguagraph::ast::AstError::AggregateInFind));
+    let query = from_dsl::lower(dsl, 6).expect("aggregate projection should determine action");
+    assert_eq!(query.action, linguagraph::ast::query::Action::Aggregate);
+}
+
+#[test]
+fn infers_aggregate_when_action_is_omitted() {
+    let json = r#"{
+        "start": { "label": "Person", "alias": "p" },
+        "return": [{ "aggregate": "count", "field": "p", "alias": "n" }]
+    }"#;
+    let dsl = dsl::parse_str(json).unwrap();
+    let query =
+        from_dsl::lower(dsl, 6).expect("action should be optional for aggregate projections");
+    assert_eq!(query.action, linguagraph::ast::query::Action::Aggregate);
 }
 
 #[test]

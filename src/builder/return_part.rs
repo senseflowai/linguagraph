@@ -13,6 +13,26 @@ pub(super) fn write_return(cur: &mut Cursor, q: &ReadQuery) {
     cur.buf.push_str(&parts.join(", "));
 }
 
+pub(super) fn render_group_key(key: &GroupByKey) -> String {
+    let base = render_property(&key.field);
+    match key.transform {
+        None => base,
+        Some(GroupByTransform::DatePart(part)) => {
+            format!("datetime({base}).{}", render_date_part(part))
+        }
+    }
+}
+
+fn render_date_part(part: DatePart) -> &'static str {
+    match part {
+        DatePart::Year => "year",
+        DatePart::Quarter => "quarter",
+        DatePart::Month => "month",
+        DatePart::Day => "day",
+        DatePart::Hour => "hour",
+    }
+}
+
 #[allow(dead_code)]
 pub(super) fn write_order_by(cur: &mut Cursor, sort: &[SortKey]) {
     if sort.is_empty() {
@@ -66,6 +86,10 @@ fn render_return(item: &ReturnClause) -> String {
                 Some(a) => format!("{base} AS {a}"),
                 None => base,
             }
+        }
+        ReturnClause::GroupKey { key, alias } => {
+            let base = render_group_key(key);
+            format!("{base} AS {alias}")
         }
         ReturnClause::Aggregate { func, field, alias } => {
             let inner = render_property(field);

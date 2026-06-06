@@ -401,6 +401,23 @@ fn lower_returns(
     items
         .iter()
         .map(|item| match item {
+            d::ReturnItem::DatePart {
+                field,
+                date_part,
+                alias,
+            } => {
+                let key = GroupByKey {
+                    field: resolve_property(field, bound)?,
+                    transform: Some(GroupByTransform::DatePart(lower_date_part(*date_part))),
+                    alias: alias.clone(),
+                };
+                Ok(ReturnClause::GroupKey {
+                    alias: alias
+                        .clone()
+                        .unwrap_or_else(|| default_group_key_alias(&key)),
+                    key,
+                })
+            }
             d::ReturnItem::Field { field, alias } => Ok(ReturnClause::Field {
                 field: resolve_property(field, bound)?,
                 alias: alias.clone(),
@@ -501,20 +518,37 @@ fn project_group_by_keys(
 
     let mut key_alias: Vec<(GroupByKey, String)> = Vec::with_capacity(group_by.len());
     for key in group_by {
-        // Reuse the projection if a plain group key is already returned as a
-        // plain field; give that projection an alias if it lacks one.
-        let existing = if key.transform.is_none() {
-            returns.iter_mut().find_map(|r| match r {
-                ReturnClause::Field { field, alias } if field == &key.field => Some(alias),
-                _ => None,
-            })
-        } else {
-            None
-        };
+        enum ExistingProjection<'a> {
+            Field(&'a mut Option<String>),
+            GroupKey(&'a str),
+        }
+
+        let existing = returns.iter_mut().find_map(|r| match r {
+            ReturnClause::Field { field, alias }
+                if key.transform.is_none() && field == &key.field =>
+            {
+                Some(ExistingProjection::Field(alias))
+            }
+            ReturnClause::GroupKey {
+                key: projected,
+                alias,
+            } if projected == key => Some(ExistingProjection::GroupKey(alias.as_str())),
+            _ => None,
+        });
         let alias = match existing {
-            Some(slot) => slot
-                .get_or_insert_with(|| unique_alias(key, &mut taken))
-                .clone(),
+            Some(ExistingProjection::Field(slot)) => {
+                let alias = slot
+                    .clone()
+                    .unwrap_or_else(|| unique_alias(key, &mut taken));
+                taken.insert(alias.clone());
+                *slot = Some(alias.clone());
+                alias
+            }
+            Some(ExistingProjection::GroupKey(alias)) => {
+                let alias = alias.to_string();
+                taken.insert(alias.clone());
+                alias
+            }
             None => {
                 let a = key
                     .alias
@@ -550,7 +584,18 @@ fn project_group_by_keys(
 /// Derive an identifier-shaped alias for a group_by key that does not
 /// collide with anything in `taken` (which it also updates).
 fn unique_alias(key: &GroupByKey, taken: &mut HashSet<String>) -> String {
-    let base = match (&key.field.property, key.transform) {
+    let base = default_group_key_alias(key);
+    let mut candidate = base.clone();
+    let mut n = 2u32;
+    while !taken.insert(candidate.clone()) {
+        candidate = format!("{base}_{n}");
+        n += 1;
+    }
+    candidate
+}
+
+fn default_group_key_alias(key: &GroupByKey) -> String {
+    match (&key.field.property, key.transform) {
         (Some(prop), Some(GroupByTransform::DatePart(part))) => {
             format!("{}_{}_{}", key.field.alias, prop, date_part_name(part))
         }
@@ -559,14 +604,7 @@ fn unique_alias(key: &GroupByKey, taken: &mut HashSet<String>) -> String {
             format!("{}_{}", key.field.alias, date_part_name(part))
         }
         (None, None) => key.field.alias.0.clone(),
-    };
-    let mut candidate = base.clone();
-    let mut n = 2u32;
-    while !taken.insert(candidate.clone()) {
-        candidate = format!("{base}_{n}");
-        n += 1;
     }
-    candidate
 }
 
 fn date_part_name(part: DatePart) -> &'static str {

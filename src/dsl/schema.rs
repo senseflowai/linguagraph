@@ -173,6 +173,12 @@ pub enum ReturnItem {
         #[serde(default)]
         alias: Option<String>,
     },
+    DatePart {
+        field: String,
+        date_part: DatePart,
+        #[serde(default)]
+        alias: Option<String>,
+    },
     Field {
         field: String,
         #[serde(default)]

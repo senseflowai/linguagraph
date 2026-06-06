@@ -69,7 +69,7 @@ pub struct ReadQuery {
     pub traversals: Vec<EdgeTraversal>,
     pub filter: Option<FilterExpression>,
     pub returns: Vec<ReturnClause>,
-    pub group_by: Vec<PropertyRef>,
+    pub group_by: Vec<GroupByKey>,
     pub sort: Vec<SortKey>,
     pub limit: Option<u32>,
 }
@@ -139,6 +139,27 @@ pub struct Predicate {
     pub field: PropertyRef,
     pub op: ComparisonOp,
     pub value: Literal,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
+pub struct GroupByKey {
+    pub field: PropertyRef,
+    pub transform: Option<GroupByTransform>,
+    pub alias: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Serialize, Deserialize)]
+pub enum GroupByTransform {
+    DatePart(DatePart),
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Serialize, Deserialize)]
+pub enum DatePart {
+    Year,
+    Quarter,
+    Month,
+    Day,
+    Hour,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -236,6 +257,10 @@ pub enum ReturnClause {
     Field {
         field: PropertyRef,
         alias: Option<String>,
+    },
+    GroupKey {
+        key: GroupByKey,
+        alias: String,
     },
     Aggregate {
         func: AggregateFn,

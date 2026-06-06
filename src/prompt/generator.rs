@@ -389,7 +389,7 @@ const DSL_RULES: &str = r#"Output a single JSON object with this shape:
     { "field": "<alias>.<prop>", "alias": <ident> },
     { "aggregate": "count|sum|avg|min|max", "field": "<alias>[.<prop>]", "alias": <ident> }
   ],
-  "group_by": [ "<alias>.<prop>" ],
+  "group_by": [ "<alias>.<prop>" | { "field": "<alias>.<datetime_prop>", "date_part": "year|quarter|month|day|hour", "alias": <ident> } ],
   "sort":     [ { "field": <alias-or-projected>, "order": "asc"|"desc" } ],
   "limit":    <int>
 }
@@ -403,6 +403,10 @@ Constraints:
   from aggregate items in `return`, so prefer omitting `action` if unsure.
 - Queries that mix aggregated and non-aggregated columns must list the
   non-aggregated columns in `group_by`.
+- For timestamp/date aggregation like "by year" or "monthly", do not group by
+  the raw datetime field. Use the object form, e.g.
+  `{ "field": "c.created_at", "date_part": "year", "alias": "created_year" }`,
+  and sort by that alias.
 - Never embed user-supplied values in identifiers; values go in `filters[*].value`.
 - Explicitly specify in `traversals[*].from` where the relation should be created .
 "#;

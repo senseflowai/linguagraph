@@ -152,6 +152,44 @@ fn aggregate_with_multiple_aggregates_sorts_by_group_key_alias() {
 }
 
 #[test]
+fn aggregate_can_group_datetime_by_year() {
+    let cypher = compile(
+        r#"{
+            "action": "aggregate",
+            "start": { "label": "Client", "alias": "c" },
+            "traversals": [],
+            "filters": [
+                { "field": "c.created_at", "op": "gte", "value": "2023-01-01" },
+                { "field": "c.created_at", "op": "lte", "value": "2027-12-31" }
+            ],
+            "return": [
+                { "aggregate": "count", "field": "c.id", "alias": "client_count" }
+            ],
+            "group_by": [
+                { "field": "c.created_at", "date_part": "year", "alias": "created_year" }
+            ],
+            "sort": [
+                { "field": "created_year", "order": "asc" }
+            ],
+            "limit": 100
+        }"#,
+    );
+
+    assert!(
+        cypher
+            .text
+            .contains("RETURN count(c) AS client_count, c.created_at.year AS created_year"),
+        "got: {}",
+        cypher.text
+    );
+    assert!(
+        cypher.text.contains("ORDER BY created_year ASC"),
+        "got: {}",
+        cypher.text
+    );
+}
+
+#[test]
 fn infers_aggregate_when_find_action_contains_aggregation() {
     let json = r#"{
         "action": "find",

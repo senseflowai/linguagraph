@@ -24,7 +24,7 @@ pub struct DslQuery {
     #[serde(default, rename = "return")]
     pub return_: Vec<ReturnItem>,
     #[serde(default)]
-    pub group_by: Vec<String>,
+    pub group_by: Vec<GroupByItem>,
     #[serde(default)]
     pub sort: Vec<SortItem>,
     #[serde(default)]
@@ -195,6 +195,30 @@ pub struct SortItem {
     pub field: String,
     #[serde(default)]
     pub order: SortOrder,
+}
+
+/// A grouping key. Keep the common case tiny (`"c.name"`), but allow
+/// date/time bucketing when a timestamp should be grouped by a component.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum GroupByItem {
+    Field(String),
+    DatePart {
+        field: String,
+        date_part: DatePart,
+        #[serde(default)]
+        alias: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DatePart {
+    Year,
+    Quarter,
+    Month,
+    Day,
+    Hour,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]

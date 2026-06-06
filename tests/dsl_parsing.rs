@@ -1,7 +1,7 @@
 //! Parse-stage integration tests. Hits the public `dsl::parse_str` API the
 //! CLI uses, not internals.
 
-use linguagraph::dsl::{self, Action, DslError};
+use linguagraph::dsl::{self, Action, DslError, GroupByItem};
 
 #[test]
 fn accepts_example_find() {
@@ -17,7 +17,7 @@ fn accepts_example_aggregate() {
     let json = include_str!("../examples/aggregate_orders.json");
     let q = dsl::parse_str(json).expect("aggregate example must parse");
     assert_eq!(q.action, Action::Aggregate);
-    assert_eq!(q.group_by, vec!["c.name".to_string()]);
+    assert_eq!(q.group_by, vec![GroupByItem::Field("c.name".to_string())]);
 }
 
 #[test]

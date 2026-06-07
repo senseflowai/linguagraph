@@ -10,7 +10,8 @@ use crate::graph::{
     OntologyPropertyType, PropertySpec, PropertyType, RelationTypeSpec, Scope,
 };
 
-use super::{extract, Extracted, MapperError, Mapping};
+use super::extractor::primary_key_part_to_string;
+use super::{extract, EntityRow, Extracted, MapperError, Mapping};
 
 /// Default domain used by [`catalog_from_mapping`] when the mapping
 /// document doesn't carry its own. Picked to match what senseflowai
@@ -146,32 +147,84 @@ fn graph_from_extracted(
             }
         })?;
 
-        for from_row in &from.rows {
-            for to_row in &to.rows {
-                if !contexts_align(&from_row.context, &to_row.context) {
-                    continue;
+        match &rel.from_key {
+            // Foreign-key value join: link a `from` row to every `to`
+            // row whose `to_key` (default: primary key) value equals the
+            // `from` row's `from_key` value. This is what connects
+            // entities that live in separate top-level arrays, where
+            // array-context alignment is meaningless.
+            Some(from_key) => {
+                let mut index: HashMap<String, Vec<&EntityRow>> = HashMap::new();
+                for to_row in &to.rows {
+                    if let Some(key) = target_key_string(to_row, rel.to_key.as_deref()) {
+                        index.entry(key).or_default().push(to_row);
+                    }
                 }
-                let from_ref = *refs
-                    .get(&(from.label.clone(), from_row.id.clone()))
-                    .ok_or_else(|| MapperError::UnknownRelationshipEndpoint {
-                        label: rel.kind.clone(),
-                        missing: from.label.clone(),
-                    })?;
-                let to_ref = *refs
-                    .get(&(to.label.clone(), to_row.id.clone()))
-                    .ok_or_else(|| MapperError::UnknownRelationshipEndpoint {
-                        label: rel.kind.clone(),
-                        missing: to.label.clone(),
-                    })?;
-                builder
-                    .relationship(from_ref, rel.kind.clone(), to_ref)
-                    .add()
-                    .map_err(|e| MapperError::Graph(e.to_string()))?;
+                for from_row in &from.rows {
+                    let Some(value) = from_row.join_keys.get(from_key) else {
+                        continue;
+                    };
+                    let Some(key) = primary_key_part_to_string(value) else {
+                        continue;
+                    };
+                    let Some(matches) = index.get(&key) else {
+                        // Unmatched FK → no edge (tolerate partial data).
+                        continue;
+                    };
+                    let from_ref = resolve_ref(&refs, &from.label, &from_row.id, &rel.kind)?;
+                    for to_row in matches {
+                        let to_ref = resolve_ref(&refs, &to.label, &to_row.id, &rel.kind)?;
+                        builder
+                            .relationship(from_ref, rel.kind.clone(), to_ref)
+                            .add()
+                            .map_err(|e| MapperError::Graph(e.to_string()))?;
+                    }
+                }
+            }
+            // Default: array-context alignment (unchanged behavior).
+            None => {
+                for from_row in &from.rows {
+                    for to_row in &to.rows {
+                        if !contexts_align(&from_row.context, &to_row.context) {
+                            continue;
+                        }
+                        let from_ref = resolve_ref(&refs, &from.label, &from_row.id, &rel.kind)?;
+                        let to_ref = resolve_ref(&refs, &to.label, &to_row.id, &rel.kind)?;
+                        builder
+                            .relationship(from_ref, rel.kind.clone(), to_ref)
+                            .add()
+                            .map_err(|e| MapperError::Graph(e.to_string()))?;
+                    }
+                }
             }
         }
     }
 
     Ok(builder.build())
+}
+
+/// Resolve the [`EntityRef`] of an extracted row by `(label, id)`.
+fn resolve_ref(
+    refs: &HashMap<(String, Literal), EntityRef>,
+    label: &str,
+    id: &Literal,
+    kind: &str,
+) -> Result<EntityRef, MapperError> {
+    refs.get(&(label.to_string(), id.clone()))
+        .copied()
+        .ok_or_else(|| MapperError::UnknownRelationshipEndpoint {
+            label: kind.to_string(),
+            missing: label.to_string(),
+        })
+}
+
+/// Normalized join value for a `to` row: the resolved `to_key` value when
+/// one is declared, otherwise the row's (already stringified) primary key.
+fn target_key_string(to_row: &EntityRow, to_key: Option<&str>) -> Option<String> {
+    match to_key {
+        Some(key) => to_row.join_keys.get(key).and_then(primary_key_part_to_string),
+        None => primary_key_part_to_string(&to_row.id),
+    }
 }
 
 fn property_types_by_name(
@@ -430,6 +483,150 @@ mod tests {
                 .property_type,
             OntologyPropertyType::String
         );
+    }
+
+    #[test]
+    fn fk_join_links_cross_array_entities_by_value_not_index() {
+        // Cameras and places are sibling top-level arrays joined by
+        // `place_id`. The array ordering is deliberately mismatched so
+        // that the old context-alignment behavior (index pairing) would
+        // give the WRONG answer — the FK join must pair by value.
+        let mapping: Mapping = serde_json::from_value(json!({
+            "entities": [
+                {"type": "Place", "source_path": "$.places[*]", "primary_key": "$.places[*].id",
+                 "properties": [{"name": "name", "source_path": "$.places[*].name", "type": "Text"}]},
+                {"type": "Camera", "source_path": "$.cameras[*]", "primary_key": "$.cameras[*].id",
+                 "properties": [{"name": "name", "source_path": "$.cameras[*].name", "type": "Text"}]}
+            ],
+            "relationships": [
+                {"type": "INSTALLED_AT", "from": "Camera", "to": "Place",
+                 "from_key": "$.cameras[*].place_id", "to_key": "$.places[*].id"}
+            ]
+        }))
+        .unwrap();
+        mapping.validate().unwrap();
+        let data = json!({
+            "places": [
+                {"id": 72,   "name": "Office"},
+                {"id": 5390, "name": "Sales"}
+            ],
+            "cameras": [
+                {"id": "cam-a", "name": "A", "place_id": 5390},
+                {"id": "cam-b", "name": "B", "place_id": 72}
+            ]
+        });
+
+        let graph = to_graph(&mapping, &data).unwrap().graph;
+        assert_eq!(graph.entities().len(), 4, "2 places + 2 cameras");
+
+        let edges: Vec<_> = graph
+            .relations()
+            .iter()
+            .filter(|r| r.r#type == "INSTALLED_AT")
+            .collect();
+        assert_eq!(edges.len(), 2);
+
+        for edge in edges {
+            let cam = &graph.entities()[edge.from.index()];
+            let place = &graph.entities()[edge.to.index()];
+            assert_eq!(cam.r#type, "Camera");
+            assert_eq!(place.r#type, "Place");
+            let cam_name = cam.properties["name"].value.as_str().unwrap();
+            // Place PK is injected as a stringified `id` property.
+            let place_id = place.properties["id"].value.as_str().unwrap();
+            match cam_name {
+                "A" => assert_eq!(place_id, "5390", "camera A's place_id is 5390"),
+                "B" => assert_eq!(place_id, "72", "camera B's place_id is 72"),
+                other => panic!("unexpected camera {other}"),
+            }
+        }
+    }
+
+    #[test]
+    fn bundled_teye_example_builds_all_fk_relationships() {
+        let load = |name: &str| {
+            std::fs::read_to_string(format!(
+                "{}/examples/teye/{name}",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .unwrap()
+        };
+        let mapping = Mapping::from_str(&load("teye_mapping.json")).unwrap();
+        let data: Value = serde_json::from_str(&load("teye_data.json")).unwrap();
+
+        let graph = to_graph(&mapping, &data).unwrap().graph;
+        let count = |t: &str| {
+            graph
+                .relations()
+                .iter()
+                .filter(|r| r.r#type == t)
+                .count()
+        };
+        // 2 cameras → places, 2 events → cameras, 2 events → places.
+        assert_eq!(count("INSTALLED_AT"), 2);
+        assert_eq!(count("CAPTURED_BY"), 2);
+        assert_eq!(count("OCCURRED_AT"), 2);
+    }
+
+    #[test]
+    fn fk_join_skips_unmatched_foreign_keys() {
+        let mapping: Mapping = serde_json::from_value(json!({
+            "entities": [
+                {"type": "Place", "source_path": "$.places[*]", "primary_key": "$.places[*].id",
+                 "properties": [{"name": "name", "source_path": "$.places[*].name", "type": "Text"}]},
+                {"type": "Camera", "source_path": "$.cameras[*]", "primary_key": "$.cameras[*].id",
+                 "properties": [{"name": "name", "source_path": "$.cameras[*].name", "type": "Text"}]}
+            ],
+            "relationships": [
+                {"type": "INSTALLED_AT", "from": "Camera", "to": "Place",
+                 "from_key": "$.cameras[*].place_id", "to_key": "$.places[*].id"}
+            ]
+        }))
+        .unwrap();
+        mapping.validate().unwrap();
+        let data = json!({
+            "places": [{"id": 72, "name": "Office"}],
+            "cameras": [{"id": "cam-x", "name": "X", "place_id": 999}]
+        });
+
+        let graph = to_graph(&mapping, &data).unwrap().graph;
+        let edges = graph
+            .relations()
+            .iter()
+            .filter(|r| r.r#type == "INSTALLED_AT")
+            .count();
+        assert_eq!(edges, 0, "unmatched foreign key produces no edge");
+    }
+
+    #[test]
+    fn fk_to_key_defaults_to_target_primary_key() {
+        // Omitting `to_key` falls back to the target entity's primary key.
+        let mapping: Mapping = serde_json::from_value(json!({
+            "entities": [
+                {"type": "Place", "source_path": "$.places[*]", "primary_key": "$.places[*].id",
+                 "properties": [{"name": "name", "source_path": "$.places[*].name", "type": "Text"}]},
+                {"type": "Camera", "source_path": "$.cameras[*]", "primary_key": "$.cameras[*].id",
+                 "properties": [{"name": "name", "source_path": "$.cameras[*].name", "type": "Text"}]}
+            ],
+            "relationships": [
+                {"type": "INSTALLED_AT", "from": "Camera", "to": "Place",
+                 "from_key": "$.cameras[*].place_id"}
+            ]
+        }))
+        .unwrap();
+        mapping.validate().unwrap();
+        let data = json!({
+            "places": [{"id": 72, "name": "Office"}],
+            "cameras": [{"id": "cam-b", "name": "B", "place_id": 72}]
+        });
+
+        let graph = to_graph(&mapping, &data).unwrap().graph;
+        let edges = graph
+            .relations()
+            .iter()
+            .filter(|r| r.r#type == "INSTALLED_AT")
+            .count();
+        assert_eq!(edges, 1);
     }
 
     #[test]

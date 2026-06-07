@@ -1,0 +1,67 @@
+{
+  "source": "teye_data.json",
+  "domain": "surveillance",
+  "entities": [
+    {
+      "type": "Place",
+      "source_path": "$.places[*]",
+      "primary_key": "$.places[*].id",
+      "description": "A physical location where cameras are installed.",
+      "properties": [
+        { "name": "id", "type": "Text", "source_path": "$.places[*].id" },
+        { "name": "name", "type": "SemanticText", "source_path": "$.places[*].name" },
+        { "name": "description", "type": "SemanticText", "source_path": "$.places[*].description" },
+        { "name": "latitude", "type": "Number", "source_path": "$.places[*].latitude" },
+        { "name": "longitude", "type": "Number", "source_path": "$.places[*].longitude" }
+      ]
+    },
+    {
+      "type": "Camera",
+      "source_path": "$.cameras[*]",
+      "primary_key": "$.cameras[*].id",
+      "description": "A video camera installed at a place.",
+      "properties": [
+        { "name": "id", "type": "Text", "source_path": "$.cameras[*].id" },
+        { "name": "name", "type": "SemanticText", "source_path": "$.cameras[*].name" },
+        { "name": "place_id", "type": "Number", "source_path": "$.cameras[*].place_id" },
+        { "name": "state", "type": "Text", "source_path": "$.cameras[*].state" }
+      ]
+    },
+    {
+      "type": "Event",
+      "source_path": "$.events[*]",
+      "primary_key": "$.events[*].event_id",
+      "description": "A detection event captured by a camera at a place.",
+      "properties": [
+        { "name": "event_id", "type": "Text", "source_path": "$.events[*].event_id" },
+        { "name": "event_type", "type": "Text", "source_path": "$.events[*].event_type" },
+        { "name": "ts", "type": "Number", "source_path": "$.events[*].ts" },
+        { "name": "camera_id", "type": "Text", "source_path": "$.events[*].origin.camera_id" },
+        { "name": "place_id", "type": "Number", "source_path": "$.events[*].origin.place_id" }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "type": "INSTALLED_AT",
+      "from": "Camera",
+      "to": "Place",
+      "from_key": "$.cameras[*].place_id",
+      "to_key": "$.places[*].id"
+    },
+    {
+      "type": "CAPTURED_BY",
+      "from": "Event",
+      "to": "Camera",
+      "from_key": "$.events[*].origin.camera_id",
+      "to_key": "$.cameras[*].id"
+    },
+    {
+      "type": "OCCURRED_AT",
+      "from": "Event",
+      "to": "Place",
+      "from_key": "$.events[*].origin.place_id",
+      "to_key": "$.places[*].id"
+    }
+  ]
+}

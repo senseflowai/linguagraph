@@ -226,10 +226,38 @@ pub fn refine_interactively(
                 .map_err(ui_err)?;
             let kind = kind.trim();
             if !kind.is_empty() {
+                // Optional foreign-key join: required when `from`/`to`
+                // come from separate top-level arrays linked by an id.
+                // Leave the from-key blank to use array-context alignment.
+                let from_key: String = Input::new()
+                    .with_prompt("    from_key JSONPath (FK on `from`; blank = none)")
+                    .allow_empty(true)
+                    .interact_text()
+                    .map_err(ui_err)?;
+                let (from_key, to_key) = if from_key.trim().is_empty() {
+                    (None, None)
+                } else {
+                    let to_key: String = Input::new()
+                        .with_prompt("    to_key JSONPath (blank = target primary_key)")
+                        .allow_empty(true)
+                        .interact_text()
+                        .map_err(ui_err)?;
+                    let to_key = to_key.trim();
+                    (
+                        Some(from_key.trim().to_string()),
+                        if to_key.is_empty() {
+                            None
+                        } else {
+                            Some(to_key.to_string())
+                        },
+                    )
+                };
                 mapping.relationships.push(RelationshipMapping {
                     kind: kind.to_ascii_uppercase(),
                     from: kinds[from].clone(),
                     to: kinds[to].clone(),
+                    from_key,
+                    to_key,
                 });
             }
         }

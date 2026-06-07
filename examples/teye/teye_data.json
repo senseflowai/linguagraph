@@ -1,0 +1,62 @@
+{
+  "events": [
+    {
+      "origin": {
+        "camera_id": "4e94bbf1-5207-43d6-b727-e6689ec13193",
+        "camera_name": "TargetAI - Face (RTSP)",
+        "place_id": 5390,
+        "place_name": "Sales",
+        "place_description": "проспект Мангилик Ел, С4.6, Астана"
+      },
+      "ts": 1780835154104,
+      "event_id": "0724d380-626c-11f1-99c8-38fa190afc70",
+      "event_type": "fr",
+      "stream_id": "4e94bbf1-5207-43d6-b727-e6689ec13193"
+    },
+    {
+      "origin": {
+        "camera_id": "0977a573-e7f0-47be-8f7f-a829ba1b9f1f",
+        "camera_name": "zTargetAI - Terminal Hik",
+        "place_id": 72,
+        "place_name": "Office",
+        "place_description": "проспект Мангилик Ел, 55/22, Астана"
+      },
+      "ts": 1780835142315,
+      "event_id": "001df7b0-626c-11f1-bcce-11f0d5ec2738",
+      "event_type": "fr",
+      "stream_id": "0977a573-e7f0-47be-8f7f-a829ba1b9f1f"
+    }
+  ],
+
+  "places": [
+    {
+      "name": "Office",
+      "description": "проспект Мангилик Ел, 55/22, Астана",
+      "latitude": 51.08784147023002,
+      "longitude": 71.41307690647338,
+      "id": 72
+    },
+    {
+      "name": "Sales",
+      "description": "проспект Мангилик Ел, С4.6, Астана",
+      "latitude": 51.088347218320884,
+      "longitude": 71.41420765848626,
+      "id": 5390
+    }
+  ],
+
+  "cameras": [
+    {
+      "name": "TargetAI - Face (RTSP)",
+      "place_id": 5390,
+      "state": "active",
+      "id": "4e94bbf1-5207-43d6-b727-e6689ec13193"
+    },
+    {
+      "name": "zTargetAI - Terminal Hik",
+      "place_id": 72,
+      "state": "active",
+      "id": "0977a573-e7f0-47be-8f7f-a829ba1b9f1f"
+    }
+  ]
+}

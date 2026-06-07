@@ -123,6 +123,18 @@ fn render_ontology_section(out: &mut String, ontology: &DomainOntology) {
          implies them. Each relationship's `from`/`to` MUST reference entity types you \
          actually emit.\n\n",
     );
+    out.push_str(
+        "When the two entities come from **separate top-level arrays** linked by an id \
+         value, you MUST add `from_key` (JSONPath of the foreign key on the `from` entity) \
+         and `to_key` (JSONPath of the matching key on the `to` entity — usually its \
+         primary_key). Example: cameras and places are sibling arrays joined by \
+         `place_id`:\n\n\
+         ```json\n\
+         {\"type\":\"INSTALLED_AT\",\"from\":\"Camera\",\"to\":\"Place\",\
+         \"from_key\":\"$.cameras[*].place_id\",\"to_key\":\"$.places[*].id\"}\n\
+         ```\n\n\
+         Omit `from_key`/`to_key` for nested (parent/child) entities.\n\n",
+    );
 }
 
 fn render_schema_section(out: &mut String, schema: &GraphSchema) {
@@ -220,6 +232,25 @@ mod tests {
         // User payload carries the document.
         assert!(user.contains("\"companies\""));
         assert!(user.contains("Output ONLY the JSON mapping"));
+    }
+
+    #[test]
+    fn prompt_documents_foreign_key_relationships() {
+        let data = json!({"cameras": [{"id": "c", "place_id": 1}], "places": [{"id": 1}]});
+        let summary = analyze(&data);
+        let (system, _) = build_mapping_prompt(
+            &data,
+            &summary,
+            &ontology(),
+            None,
+            &MapGenPromptOptions::default(),
+        );
+        // The mapgen relation section teaches FK joins with an example.
+        assert!(system.contains("from_key"));
+        assert!(system.contains("to_key"));
+        assert!(system.contains("$.cameras[*].place_id"));
+        // The shared mapping spec / rules also mention the keys.
+        assert!(system.contains("Foreign-key relationships"));
     }
 
     #[test]

@@ -389,6 +389,22 @@ for a worked pair.
 linguagraph ingest-json examples/companies_data.json examples/companies_mapping.json
 ```
 
+By default a relationship between two entities is resolved by **array-context
+alignment** — it links rows that share the same nesting position (a parent and
+its nested children). When the two entities come from **separate top-level
+arrays** linked by an id value, that alignment is meaningless; declare a
+**foreign-key join** with `from_key` / `to_key` (JSONPaths) so the correct
+objects are connected:
+
+```json
+{ "type": "INSTALLED_AT", "from": "Camera", "to": "Place",
+  "from_key": "$.cameras[*].place_id", "to_key": "$.places[*].id" }
+```
+
+`from_key` is the foreign key on the `from` entity; `to_key` is the matching key
+on the `to` entity (defaults to its `primary_key`). Unmatched keys simply
+produce no edge. See `examples/teye/` for a worked camera/place/event dataset.
+
 `generate-prompt` analyses an arbitrary JSON document and emits a prompt that
 asks an LLM to author the mapping for it, so you don't have to write the
 mapping by hand.

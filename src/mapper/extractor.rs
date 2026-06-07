@@ -54,6 +54,12 @@ pub struct EntityRow {
     /// Indices captured at every `[*]` segment in the source path.
     /// The planner uses this to align relationships across entity types.
     pub context: Vec<usize>,
+    /// Resolved values for relationship foreign-key paths that target
+    /// this entity, keyed by the raw JSONPath string declared in the
+    /// relationship's `from_key`/`to_key`. Populated only for paths that
+    /// some relationship actually references; empty otherwise. Used by
+    /// [`super::graph`] to resolve value-joined (FK) relationships.
+    pub join_keys: BTreeMap<String, Literal>,
 }
 
 /// Two contexts are compatible iff one is a prefix of the other.
@@ -101,16 +107,55 @@ enum PrimaryKeyPart {
 
 /// Public entry-point — pure function over data + mapping.
 pub fn extract(mapping: &Mapping, data: &Value) -> Result<Extracted, MapperError> {
+    let join_key_paths = join_key_paths_by_entity(mapping);
     let mut entities = Vec::with_capacity(mapping.entities.len());
     for ent in &mapping.entities {
-        entities.push(extract_entity(ent, data)?);
+        let keys = join_key_paths
+            .get(ent.kind.as_str())
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        entities.push(extract_entity(ent, data, keys)?);
     }
     Ok(Extracted { entities })
 }
 
-fn extract_entity(ent: &EntityMapping, data: &Value) -> Result<ExtractedEntity, MapperError> {
+/// Collect, per entity `kind`, the distinct foreign-key JSONPath strings
+/// that relationships reference for that entity: `from_key` when the
+/// entity is the relationship's `from`, `to_key` when it is the `to`.
+/// These are resolved per row so [`super::graph`] can value-join.
+fn join_key_paths_by_entity(mapping: &Mapping) -> std::collections::HashMap<&str, Vec<String>> {
+    let mut out: std::collections::HashMap<&str, Vec<String>> = std::collections::HashMap::new();
+    for rel in &mapping.relationships {
+        if let Some(from_key) = &rel.from_key {
+            let entry = out.entry(rel.from.as_str()).or_default();
+            if !entry.contains(from_key) {
+                entry.push(from_key.clone());
+            }
+        }
+        if let Some(to_key) = &rel.to_key {
+            let entry = out.entry(rel.to.as_str()).or_default();
+            if !entry.contains(to_key) {
+                entry.push(to_key.clone());
+            }
+        }
+    }
+    out
+}
+
+fn extract_entity(
+    ent: &EntityMapping,
+    data: &Value,
+    join_key_paths: &[String],
+) -> Result<ExtractedEntity, MapperError> {
     let source = parse(&ent.source_path)?;
     let pk_spec = parse_primary_key_spec(&ent.primary_key)?;
+
+    // Pre-parse relationship foreign-key paths once, mirroring how
+    // property paths are pre-parsed below.
+    let join_paths: Vec<(String, JsonPath)> = join_key_paths
+        .iter()
+        .map(|raw| Ok::<_, MapperError>((raw.clone(), parse(raw)?)))
+        .collect::<Result<_, _>>()?;
 
     // Pre-parse property paths so a bad mapping fails before we walk the
     // potentially huge input. We *do not* require property paths to be
@@ -174,11 +219,25 @@ fn extract_entity(ent: &EntityMapping, data: &Value) -> Result<ExtractedEntity, 
             }
         }
 
+        // Resolve relationship foreign-key paths for this row. We take
+        // the first match (FK fields are single-valued); missing values
+        // simply yield no join key, so such rows contribute no FK edge.
+        let mut join_keys: BTreeMap<String, Literal> = BTreeMap::new();
+        for (raw, path) in &join_paths {
+            let matches = resolve_value(path, &source, src.value, &src.context, data);
+            if let Some(first) = matches.first() {
+                if let Some(v) = Literal::from_json_any(first.value) {
+                    join_keys.insert(raw.clone(), v);
+                }
+            }
+        }
+
         rows.push(EntityRow {
             id,
             properties,
             raw_typed,
             context: src.context,
+            join_keys,
         });
     }
 
@@ -288,7 +347,7 @@ fn primary_key_json_to_string(value: &serde_json::Value) -> String {
     }
 }
 
-fn primary_key_part_to_string(value: &Literal) -> Option<String> {
+pub(crate) fn primary_key_part_to_string(value: &Literal) -> Option<String> {
     match value {
         Literal::String(s) => Some(s.clone()),
         Literal::Bool(b) => Some(b.to_string()),
@@ -459,6 +518,56 @@ mod tests {
         assert_eq!(
             e.rows[1].properties.get("state"),
             Some(&Literal::String("inactive".into()))
+        );
+    }
+
+    #[test]
+    fn extract_resolves_relationship_join_keys() {
+        // Foreign-key paths declared on relationships are resolved per row
+        // into `join_keys`, including nested paths and the `to_key` target.
+        let mapping: Mapping = serde_json::from_value(json!({
+            "entities": [
+                {"type": "Camera", "source_path": "$.cameras[*]", "primary_key": "$.cameras[*].id",
+                 "properties": [{"name": "name", "source_path": "$.cameras[*].name", "type": "Text"}]},
+                {"type": "Place", "source_path": "$.places[*]", "primary_key": "$.places[*].id",
+                 "properties": [{"name": "name", "source_path": "$.places[*].name", "type": "Text"}]},
+                {"type": "Event", "source_path": "$.events[*]", "primary_key": "$.events[*].event_id",
+                 "properties": [{"name": "etype", "source_path": "$.events[*].event_type", "type": "Text"}]}
+            ],
+            "relationships": [
+                {"type": "INSTALLED_AT", "from": "Camera", "to": "Place",
+                 "from_key": "$.cameras[*].place_id", "to_key": "$.places[*].id"},
+                {"type": "CAPTURED_BY", "from": "Event", "to": "Camera",
+                 "from_key": "$.events[*].origin.camera_id", "to_key": "$.cameras[*].id"}
+            ]
+        }))
+        .unwrap();
+        mapping.validate().unwrap();
+        let data = json!({
+            "places": [{"id": 72, "name": "Office"}],
+            "cameras": [{"id": "cam-1", "name": "A", "place_id": 72}],
+            "events": [{"event_id": "ev-1", "event_type": "fr",
+                        "origin": {"camera_id": "cam-1", "place_id": 72}}]
+        });
+        let out = extract(&mapping, &data).unwrap();
+        let by_label = |label: &str| out.entities.iter().find(|e| e.label == label).unwrap();
+
+        let cam = &by_label("Camera").rows[0];
+        // from_key (FK to place) and to_key (own id, target of CAPTURED_BY).
+        assert_eq!(cam.join_keys.get("$.cameras[*].place_id"), Some(&Literal::Int(72)));
+        assert_eq!(
+            cam.join_keys.get("$.cameras[*].id"),
+            Some(&Literal::String("cam-1".into()))
+        );
+
+        let place = &by_label("Place").rows[0];
+        assert_eq!(place.join_keys.get("$.places[*].id"), Some(&Literal::Int(72)));
+
+        // Nested foreign-key path resolves too.
+        let ev = &by_label("Event").rows[0];
+        assert_eq!(
+            ev.join_keys.get("$.events[*].origin.camera_id"),
+            Some(&Literal::String("cam-1".into()))
         );
     }
 

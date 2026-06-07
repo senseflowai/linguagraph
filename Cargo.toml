@@ -42,6 +42,7 @@ pretty_assertions = "1.4"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
 
 [features]
+cuda = ["llama-cpp-2/cuda"]
 llama = ["dep:llama-cpp-2"]
 default = ["llama"]
 

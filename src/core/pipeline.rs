@@ -13,7 +13,7 @@ use crate::embeddings::{SharedEmbedder, SharedReranker};
 use crate::error::Result;
 use crate::graph::{EntityTypeMatch, Graph, OntologyCatalog, OntologyCatalogStorage};
 use crate::ingest::{self, soft_merge, DeletePlan, DiscoveredNodes, IngestError, PlannerOptions};
-use crate::types::handlers::semantic_text::with_prefix_index;
+use crate::types::handlers::semantic_text::{with_prefix_index, DEFAULT_RERANKER_THRESHOLD};
 use crate::types::{handlers, SharedRegistry, SideEffect, SideEffectQueue};
 
 use crate::core::entity_type_search::{
@@ -21,6 +21,8 @@ use crate::core::entity_type_search::{
 };
 
 use std::sync::RwLock;
+
+const DEFAULT_TRAVERSAL_RERANK_TOP_K: usize = 50;
 
 /// High-level entrypoint used by the CLI and library consumers.
 ///
@@ -46,6 +48,9 @@ pub struct Pipeline {
     /// [`Self::run_traversal`] re-scores the top-N chunks with this
     /// reranker; when unset, the rerank step is skipped silently.
     reranker: Option<SharedReranker>,
+    /// Minimum reranker score required for a reranked traversal hit to
+    /// survive in the final result set.
+    reranker_threshold: f64,
     /// In-memory snapshot of [`OntologyCatalog`] consulted by
     /// [`Self::lower`] to auto-resolve filter types when the DSL omits
     /// `"type"`, and by [`Self::live_schema`] to enrich introspection
@@ -157,6 +162,11 @@ impl Pipeline {
             registry: Arc::new(handlers::core_registry()),
             embedder: None,
             reranker: None,
+            reranker_threshold: config
+                .types
+                .get("SemanticText")
+                .and_then(|t| t.reranker_threshold)
+                .unwrap_or(DEFAULT_RERANKER_THRESHOLD),
             ontology_catalog: Arc::new(RwLock::new(None)),
             prefix_label: None,
             prefix_index: None,
@@ -255,6 +265,13 @@ impl Pipeline {
 
     pub fn reranker(&self) -> Option<SharedReranker> {
         self.reranker.clone()
+    }
+
+    /// Override the traversal reranker cutoff. Scores below this value
+    /// are dropped after `Reranker::rerank` returns.
+    pub fn with_reranker_threshold(mut self, threshold: f64) -> Self {
+        self.reranker_threshold = threshold;
+        self
     }
 
     /// Pre-load the ontology-catalog snapshot used to auto-resolve
@@ -499,7 +516,10 @@ impl Pipeline {
         let entity_names = traversal.entity_names();
         let goal_text = traversal.goal_search_text();
 
-        let prefix_label = traversal.prefix_label.as_deref().or(self.prefix_label.as_deref());
+        let prefix_label = traversal
+            .prefix_label
+            .as_deref()
+            .or(self.prefix_label.as_deref());
         if let Some(p) = prefix_label {
             if !crate::ingest::delete::is_valid_ident(p) {
                 return Err(crate::error::Error::Ingest(IngestError::InvalidLabel(
@@ -517,7 +537,10 @@ impl Pipeline {
             }
         }
 
-        let prefix_index = traversal.prefix_index.as_deref().or(self.prefix_index.as_deref());
+        let prefix_index = traversal
+            .prefix_index
+            .as_deref()
+            .or(self.prefix_index.as_deref());
 
         // ── 1. Embed all query texts in a single batch. ──────────────
         let embedder = self.embedder.as_ref().ok_or_else(|| {
@@ -625,11 +648,7 @@ impl Pipeline {
         }
 
         // ── 3. Graph traversal: map hits → chunks (+ source + entities). ──
-        let cypher = build_traversal_graph_cypher(
-            &entity_hits,
-            &chunk_hits,
-            prefix_label,
-        );
+        let cypher = build_traversal_graph_cypher(&entity_hits, &chunk_hits, prefix_label);
         tracing::debug!(
             target: "linguagraph::traversal",
             cypher = %cypher.text,
@@ -648,14 +667,19 @@ impl Pipeline {
         let mut merged = TraversalMerge::default();
         merged.extend(result);
 
-        // ── 5. Sort + top-N. ─────────────────────────────────────────
-        let mut top = merged.take_top(limit);
-
-        // ── 6. Optional rerank. ──────────────────────────────────────
+        // ── 5. Sort + top-N candidate pool. ─────────────────────────
         let want_rerank = match traversal.rerank {
             Some(v) => v,
             None => self.reranker.is_some(),
         };
+        let candidate_limit = if want_rerank {
+            std::cmp::max(limit, DEFAULT_TRAVERSAL_RERANK_TOP_K)
+        } else {
+            limit
+        };
+        let mut top = merged.take_top(candidate_limit);
+
+        // ── 6. Optional rerank. ──────────────────────────────────────
         let mut reranked = false;
         if want_rerank {
             let reranker = self.reranker.as_ref().ok_or_else(|| {
@@ -680,9 +704,7 @@ impl Pipeline {
                     traversal.query.as_str()
                 };
                 let scores = reranker.rerank(query_str, &texts).map_err(|e| {
-                    crate::error::Error::Ingest(IngestError::Type(format!(
-                        "reranker failed: {e}"
-                    )))
+                    crate::error::Error::Ingest(IngestError::Type(format!("reranker failed: {e}")))
                 })?;
                 if scores.len() != top.len() {
                     return Err(crate::error::Error::Ingest(IngestError::Type(format!(
@@ -694,6 +716,10 @@ impl Pipeline {
                 for (hit, score) in top.iter_mut().zip(scores.into_iter()) {
                     hit.rerank_score = Some(score);
                 }
+                top.retain(|hit| {
+                    hit.rerank_score
+                        .is_some_and(|score| score >= self.reranker_threshold)
+                });
                 // Sort by rerank_score desc, tie-break with total_score.
                 top.sort_by(|a, b| {
                     b.rerank_score
@@ -701,15 +727,13 @@ impl Pipeline {
                         .total_cmp(&a.rerank_score.unwrap_or(f64::NEG_INFINITY))
                         .then_with(|| b.score.total_cmp(&a.score))
                 });
+                top.truncate(limit);
                 reranked = true;
             }
         }
 
         // ── 7. Build QueryResult. ────────────────────────────────────
-        let rows: Vec<Row> = top
-            .into_iter()
-            .map(|hit| hit.into_row(reranked))
-            .collect();
+        let rows: Vec<Row> = top.into_iter().map(|hit| hit.into_row(reranked)).collect();
         Ok(QueryResult {
             columns: traversal_result_columns(reranked),
             rows,
@@ -813,13 +837,7 @@ impl Pipeline {
         // ── Catalog channel ─────────────────────────────────────────
         if q.include_catalog_signal {
             if let Some(catalog) = catalog {
-                match catalog.find(
-                    &q.text,
-                    q.catalog_threshold,
-                    embedder.as_ref(),
-                    None,
-                    0.0,
-                ) {
+                match catalog.find(&q.text, q.catalog_threshold, embedder.as_ref(), None, 0.0) {
                     Ok(catalog_hits) => merge_catalog_signal(&mut matches, catalog_hits),
                     Err(err) => {
                         tracing::debug!(
@@ -1366,19 +1384,12 @@ fn build_traversal_search_cypher(
     if let Some(p) = prefix_label {
         params.insert("prefix_label".into(), Literal::String(p.to_string()));
     }
-    let has_types = entity_types
-        .map(|t| !t.is_empty())
-        .unwrap_or(false);
+    let has_types = entity_types.map(|t| !t.is_empty()).unwrap_or(false);
     if let Some(types) = entity_types {
         if !types.is_empty() {
             params.insert(
                 "entity_types".into(),
-                Literal::List(
-                    types
-                        .iter()
-                        .map(|s| Literal::String(s.clone()))
-                        .collect(),
-                ),
+                Literal::List(types.iter().map(|s| Literal::String(s.clone())).collect()),
             );
         }
     }
@@ -1401,8 +1412,7 @@ fn build_traversal_search_cypher(
                 where_parts.push("$prefix_label IN labels(e)".into());
             }
             if has_types {
-                where_parts
-                    .push("any(t IN $entity_types WHERE t IN labels(e))".into());
+                where_parts.push("any(t IN $entity_types WHERE t IN labels(e))".into());
             }
             branches.push(format!(
                 "CALL libqlink.search([$entity_collection], $\
@@ -1423,7 +1433,8 @@ fn build_traversal_search_cypher(
             "emb_goal".into(),
             Literal::List(vec.iter().map(|f| Literal::Float(*f as f64)).collect()),
         );
-        let mut where_parts: Vec<String> = vec!["id(c) = qid".into(), "\"Chunk\" IN labels(c)".into()];
+        let mut where_parts: Vec<String> =
+            vec!["id(c) = qid".into(), "\"Chunk\" IN labels(c)".into()];
         if has_prefix {
             where_parts.push("$prefix_label IN labels(c)".into());
         }
@@ -1455,13 +1466,7 @@ fn build_traversal_graph_cypher(
 
     params.insert(
         "entity_hit_ids".into(),
-        Literal::List(
-            entity_hits
-                .keys()
-                .copied()
-                .map(Literal::Int)
-                .collect(),
-        ),
+        Literal::List(entity_hits.keys().copied().map(Literal::Int).collect()),
     );
     params.insert(
         "chunk_hit_ids".into(),
@@ -1479,9 +1484,7 @@ fn build_traversal_graph_cypher(
     params.insert("entity_scores".into(), Literal::Object(entity_score_map));
     params.insert("chunk_scores".into(), Literal::Object(chunk_score_map));
 
-    let plabel = prefix_label
-        .map(|p| format!(":{p}"))
-        .unwrap_or_default();
+    let plabel = prefix_label.map(|p| format!(":{p}")).unwrap_or_default();
 
     let mut branches: Vec<String> = Vec::new();
 
@@ -2117,8 +2120,8 @@ mod tests {
             ],
         });
 
-        let pipeline = Pipeline::new(mock.clone(), &cfg())
-            .with_embedder(StdArc::new(MockEmbedder::new(8)));
+        let pipeline =
+            Pipeline::new(mock.clone(), &cfg()).with_embedder(StdArc::new(MockEmbedder::new(8)));
 
         let _ = pipeline
             .run_traversal(crate::dsl::TraversalQuery {
@@ -2190,8 +2193,8 @@ mod tests {
             rows: vec![],
         });
 
-        let pipeline = Pipeline::new(mock.clone(), &cfg())
-            .with_embedder(StdArc::new(MockEmbedder::new(8)));
+        let pipeline =
+            Pipeline::new(mock.clone(), &cfg()).with_embedder(StdArc::new(MockEmbedder::new(8)));
 
         let _ = pipeline
             .run_traversal(crate::dsl::TraversalQuery {
@@ -2246,8 +2249,7 @@ mod tests {
             ],
         });
 
-        let pipeline = Pipeline::new(mock, &cfg())
-            .with_embedder(StdArc::new(MockEmbedder::new(8)));
+        let pipeline = Pipeline::new(mock, &cfg()).with_embedder(StdArc::new(MockEmbedder::new(8)));
         let result = pipeline
             .run_traversal(crate::dsl::TraversalQuery {
                 entities: vec!["E1".into(), "E2".into()],
@@ -2290,6 +2292,145 @@ mod tests {
             panic!("entities must be a JSON array");
         };
         assert_eq!(entities.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn run_traversal_reranker_filters_hits_below_threshold() {
+        use crate::embeddings::{EmbedError, MockEmbedder, Reranker};
+        use std::sync::Arc as StdArc;
+
+        #[derive(Debug)]
+        struct FixedReranker {
+            scores: Vec<f64>,
+        }
+
+        impl Reranker for FixedReranker {
+            fn rerank(
+                &self,
+                _query: &str,
+                documents: &[String],
+            ) -> std::result::Result<Vec<f64>, EmbedError> {
+                assert_eq!(documents.len(), self.scores.len());
+                Ok(self.scores.clone())
+            }
+        }
+
+        let mock = Arc::new(MockClient::new());
+        mock.enqueue(QueryResult {
+            columns: vec![],
+            rows: vec![
+                traversal_aggregated_row("c1", 0, "", "chunk", 0.9),
+                traversal_aggregated_row("c2", 0, "", "chunk", 0.8),
+                traversal_aggregated_row("c3", 0, "", "chunk", 0.7),
+            ],
+        });
+        mock.enqueue(QueryResult {
+            columns: vec![],
+            rows: vec![
+                retrieval_row(10, 0.9, "chunk"),
+                retrieval_row(20, 0.8, "chunk"),
+                retrieval_row(30, 0.7, "chunk"),
+            ],
+        });
+
+        let pipeline = Pipeline::new(mock, &cfg())
+            .with_embedder(StdArc::new(MockEmbedder::new(8)))
+            .with_reranker(StdArc::new(FixedReranker {
+                scores: vec![0.9, 0.2, 0.7],
+            }))
+            .with_reranker_threshold(0.5);
+
+        let result = pipeline
+            .run_traversal(crate::dsl::TraversalQuery {
+                entities: Vec::new(),
+                goal: "find".into(),
+                query: "q".into(),
+                prefix_label: None,
+                prefix_index: None,
+                limit: Some(10),
+                entity_types: None,
+                rerank: Some(true),
+            })
+            .await
+            .expect("traversal runs");
+
+        let ids: Vec<&str> = result
+            .rows
+            .iter()
+            .filter_map(|row| match row.fields.get("chunk_id") {
+                Some(DbValue::String(s)) => Some(s.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ids, vec!["c1", "c3"]);
+        assert_eq!(result.rows.len(), 2);
+        assert!(result.columns.iter().any(|c| c.name == "rerank_score"));
+    }
+
+    #[tokio::test]
+    async fn run_traversal_reranker_receives_minimum_top_50_candidate_pool() {
+        use crate::config::TypeConfig;
+        use crate::embeddings::{EmbedError, MockEmbedder, Reranker};
+        use std::sync::Arc as StdArc;
+
+        #[derive(Debug)]
+        struct LengthAssertingReranker {
+            expected_len: usize,
+        }
+
+        impl Reranker for LengthAssertingReranker {
+            fn rerank(
+                &self,
+                _query: &str,
+                documents: &[String],
+            ) -> std::result::Result<Vec<f64>, EmbedError> {
+                assert_eq!(documents.len(), self.expected_len);
+                Ok(vec![1.0; documents.len()])
+            }
+        }
+
+        let mock = Arc::new(MockClient::new());
+        mock.enqueue(QueryResult {
+            columns: vec![],
+            rows: (1..=50)
+                .map(|idx| traversal_aggregated_row(&format!("c{idx}"), 0, "", "chunk", 1.0))
+                .collect(),
+        });
+        mock.enqueue(QueryResult {
+            columns: vec![],
+            rows: (1..=50)
+                .map(|idx| retrieval_row(idx, 1.0, "chunk"))
+                .collect(),
+        });
+
+        let mut cfg = cfg();
+        cfg.query.default_limit = 30;
+        cfg.types.insert(
+            "SemanticText".into(),
+            TypeConfig {
+                reranker_threshold: Some(0.0),
+                ..TypeConfig::default()
+            },
+        );
+        let pipeline = Pipeline::new(mock, &cfg)
+            .with_embedder(StdArc::new(MockEmbedder::new(8)))
+            .with_reranker(StdArc::new(LengthAssertingReranker { expected_len: 50 }));
+
+        let result = pipeline
+            .run_traversal(crate::dsl::TraversalQuery {
+                entities: Vec::new(),
+                goal: "find".into(),
+                query: "q".into(),
+                prefix_label: None,
+                prefix_index: None,
+                limit: None,
+                entity_types: None,
+                rerank: None,
+            })
+            .await
+            .expect("traversal runs");
+
+        assert_eq!(result.rows.len(), 30);
     }
 
     fn retrieval_row(nid: i64, score: f64, leg: &str) -> Row {

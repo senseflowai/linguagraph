@@ -161,7 +161,8 @@ impl LlamaEmbedder {
         let mut results = Vec::with_capacity(prompt_lines.len());
 
         for prompt in prompt_lines {
-            let tokenizer = Self::tokenize_prompt(&model, &prompt)?;
+            let mut tokenizer = Self::tokenize_prompt(&model, &prompt)?;
+            tokenizer.tokens.truncate(MAX_BATCH_SIZE);
             tokenizers.push(tokenizer);
         }
 

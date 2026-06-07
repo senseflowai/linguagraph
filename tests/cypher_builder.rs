@@ -182,12 +182,61 @@ fn aggregate_can_group_datetime_by_year() {
     assert!(
         cypher
             .text
-            .contains("RETURN count(c) AS client_count, CASE WHEN c.created_at IS NULL THEN NULL ELSE datetime(c.created_at).year END AS created_year"),
+            .contains("RETURN count(c) AS client_count, CASE WHEN c.created_at IS NULL OR size(toString(c.created_at)) < 4 THEN NULL ELSE toInteger(substring(toString(c.created_at), 0, 4)) END AS created_year"),
         "got: {}",
         cypher.text
     );
     assert!(
         cypher.text.contains("ORDER BY created_year ASC"),
+        "got: {}",
+        cypher.text
+    );
+    assert!(
+        !cypher.text.contains("datetime("),
+        "date_part grouping must not call datetime() because date-only strings are valid DSL bounds and may be stored values: {}",
+        cypher.text
+    );
+}
+
+#[test]
+fn aggregate_can_group_datetime_by_year_for_reported_dsl() {
+    let cypher = compile(
+        r#"{
+            "action": "aggregate",
+            "start": { "label": "Client", "alias": "c" },
+            "filters": [
+                { "field": "c.created_at", "op": "gte", "value": "2022-01-01" },
+                { "field": "c.created_at", "op": "lte", "value": "2027-12-31" }
+            ],
+            "return": [
+                { "field": "c.created_at", "date_part": "year", "alias": "year" },
+                { "aggregate": "count", "field": "c.id", "alias": "count" }
+            ],
+            "group_by": [
+                { "field": "c.created_at", "date_part": "year", "alias": "year" }
+            ],
+            "sort": [
+                { "field": "year", "order": "asc" }
+            ]
+        }"#,
+    );
+
+    let return_line = cypher
+        .text
+        .lines()
+        .find(|l| l.starts_with("RETURN "))
+        .expect("query has a RETURN clause");
+    assert!(
+        return_line.contains("CASE WHEN c.created_at IS NULL OR size(toString(c.created_at)) < 4 THEN NULL ELSE toInteger(substring(toString(c.created_at), 0, 4)) END AS year"),
+        "date_part return must extract the year without forcing LocalDateTime parsing: {return_line}"
+    );
+    assert!(
+        !cypher.text.contains("datetime("),
+        "reported DSL must not emit datetime() around date-only compatible properties: {}",
+        cypher.text
+    );
+    assert!(
+        cypher.text.contains("ORDER BY year ASC"),
         "got: {}",
         cypher.text
     );
@@ -222,7 +271,7 @@ fn aggregate_can_project_return_date_part_without_raw_property() {
         .find(|l| l.starts_with("RETURN "))
         .expect("query has a RETURN clause");
     assert!(
-        return_line.contains("CASE WHEN c.created_at IS NULL THEN NULL ELSE datetime(c.created_at).year END AS created_year"),
+        return_line.contains("CASE WHEN c.created_at IS NULL OR size(toString(c.created_at)) < 4 THEN NULL ELSE toInteger(substring(toString(c.created_at), 0, 4)) END AS created_year"),
         "date_part return must project the null-safe transformed datetime expression: {return_line}"
     );
     assert!(

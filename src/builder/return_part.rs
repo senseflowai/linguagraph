@@ -22,23 +22,37 @@ pub(super) fn render_group_key(key: &GroupByKey) -> String {
 }
 
 fn render_date_part_expr(base: &str, part: DatePart) -> String {
-    let value_expr = match part {
-        DatePart::Quarter => format!("toInt(ceil(datetime({base}).month / 3.0))"),
-        DatePart::Year | DatePart::Month | DatePart::Day | DatePart::Hour => {
-            format!("datetime({base}).{}", render_date_part(part))
+    // Date/time properties are stored as ISO-8601 strings by the ingest
+    // layer, and older datasets may contain date-only values (`YYYY-MM-DD`).
+    // Neo4j's `datetime()` rejects those date-only strings, so date-part
+    // grouping extracts fixed-width ISO components from `toString(value)`
+    // instead. This also works for native temporal values because Neo4j
+    // renders them as ISO-shaped strings.
+    let value = format!("toString({base})");
+    match part {
+        DatePart::Year => render_numeric_component(base, &value, 0, 4, 4),
+        DatePart::Month => render_numeric_component(base, &value, 5, 2, 7),
+        DatePart::Day => render_numeric_component(base, &value, 8, 2, 10),
+        DatePart::Hour => render_numeric_component(base, &value, 11, 2, 13),
+        DatePart::Quarter => {
+            let month = format!("toInteger(substring({value}, 5, 2))");
+            format!(
+                "CASE WHEN {base} IS NULL OR size({value}) < 7 THEN NULL ELSE toInteger(ceil({month} / 3.0)) END"
+            )
         }
-    };
-    format!("CASE WHEN {base} IS NULL THEN NULL ELSE {value_expr} END")
+    }
 }
 
-fn render_date_part(part: DatePart) -> &'static str {
-    match part {
-        DatePart::Year => "year",
-        DatePart::Quarter => "quarter",
-        DatePart::Month => "month",
-        DatePart::Day => "day",
-        DatePart::Hour => "hour",
-    }
+fn render_numeric_component(
+    base: &str,
+    value: &str,
+    start: usize,
+    length: usize,
+    min_size: usize,
+) -> String {
+    format!(
+        "CASE WHEN {base} IS NULL OR size({value}) < {min_size} THEN NULL ELSE toInteger(substring({value}, {start}, {length})) END"
+    )
 }
 
 #[allow(dead_code)]

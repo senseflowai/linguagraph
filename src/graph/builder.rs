@@ -218,6 +218,21 @@ impl GraphBuilder {
         entity_ref
     }
 
+    /// Add a **reference-only** entity: a skeletal node used solely as a
+    /// relationship endpoint that should resolve against an existing
+    /// graph node by primary key (or be upserted as an id-only stub).
+    ///
+    /// Unlike [`add_entity`](Self::add_entity) it does **not**
+    /// auto-attach a `:mention` edge to the active source, synthesize a
+    /// `_canonical` field, or stamp the default scope — the entity is
+    /// stored verbatim. Callers pass a minimal `EntityGraph` carrying
+    /// just the type, a strict primary key, and the id property.
+    pub fn add_reference_entity(&mut self, entity: EntityGraph) -> EntityRef {
+        let entity_ref = EntityRef(self.graph.entities.len());
+        self.graph.entities.push(entity);
+        entity_ref
+    }
+
     /// Stamp the builder's [`default_scope`] on `entity` when it has
     /// no scopes of its own and isn't a builtin (`Source`/`Chunk`).
     /// Caller-set scopes always win.

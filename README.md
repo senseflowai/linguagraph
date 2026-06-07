@@ -402,8 +402,16 @@ objects are connected:
 ```
 
 `from_key` is the foreign key on the `from` entity; `to_key` is the matching key
-on the `to` entity (defaults to its `primary_key`). Unmatched keys simply
-produce no edge. See `examples/teye/` for a worked camera/place/event dataset.
+on the `to` entity (defaults to its `primary_key`). See `examples/teye/` for a
+worked camera/place/event dataset.
+
+**Cross-ingest links.** When a foreign key points at an entity that isn't in the
+current document — e.g. you ingest a batch of `events` whose `camera_id` refers to
+a `Camera` already in the graph (or ingested later) — the target is **upserted by
+id**: an id-only stub node is `MERGE`d, so the edge links the existing node
+(preserving its properties) or a skeleton that gets enriched when the real entity
+is ingested. This works regardless of ingest order and needs no in-document copy
+of the target. (Only applies when `to_key` is the target's primary key.)
 
 `generate-prompt` analyses an arbitrary JSON document and emits a prompt that
 asks an LLM to author the mapping for it, so you don't have to write the

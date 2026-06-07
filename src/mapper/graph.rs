@@ -133,6 +133,11 @@ fn graph_from_extracted(
         .map(|entity| (entity.label.as_str(), entity))
         .collect();
 
+    // Stub endpoints synthesised for foreign keys whose target isn't in
+    // the current document, deduplicated by (label, normalized id) so N
+    // referrers share one id-only node. Shared across relationships.
+    let mut stub_refs: HashMap<(String, String), EntityRef> = HashMap::new();
+
     for rel in &mapping.relationships {
         let from = by_label.get(rel.from.as_str()).ok_or_else(|| {
             MapperError::UnknownRelationshipEndpoint {
@@ -160,6 +165,15 @@ fn graph_from_extracted(
                         index.entry(key).or_default().push(to_row);
                     }
                 }
+                // A stub can only be upserted when `to_key` targets the
+                // destination entity's primary key — then the target PK
+                // equals the from-row's foreign-key value.
+                let to_mapping = mapping.entities.iter().find(|e| e.kind == to.label);
+                let to_key_is_pk = match (&rel.to_key, to_mapping) {
+                    (None, _) => true,
+                    (Some(k), Some(m)) => k == &m.primary_key,
+                    (Some(_), None) => false,
+                };
                 for from_row in &from.rows {
                     let Some(value) = from_row.join_keys.get(from_key) else {
                         continue;
@@ -167,18 +181,46 @@ fn graph_from_extracted(
                     let Some(key) = primary_key_part_to_string(value) else {
                         continue;
                     };
-                    let Some(matches) = index.get(&key) else {
-                        // Unmatched FK → no edge (tolerate partial data).
-                        continue;
-                    };
                     let from_ref = resolve_ref(&refs, &from.label, &from_row.id, &rel.kind)?;
-                    for to_row in matches {
-                        let to_ref = resolve_ref(&refs, &to.label, &to_row.id, &rel.kind)?;
+                    if let Some(matches) = index.get(&key) {
+                        // Target present in this document → link the real
+                        // entities (unchanged behavior).
+                        for to_row in matches {
+                            let to_ref = resolve_ref(&refs, &to.label, &to_row.id, &rel.kind)?;
+                            builder
+                                .relationship(from_ref, rel.kind.clone(), to_ref)
+                                .add()
+                                .map_err(|e| MapperError::Graph(e.to_string()))?;
+                        }
+                    } else if to_key_is_pk {
+                        // Target not in this document → upsert an id-only
+                        // stub. At ingest the stub's `MERGE (n:To {id})`
+                        // matches an existing graph node (preserving its
+                        // properties) or creates a skeleton to be enriched
+                        // when the real entity is ingested later.
+                        let to_pk_field = to_mapping
+                            .map(primary_key_property_name)
+                            .unwrap_or_else(|| "id".to_string());
+                        let stub_ref = *stub_refs
+                            .entry((to.label.clone(), key.clone()))
+                            .or_insert_with(|| {
+                                let stub = EntityGraph::new(to.label.clone())
+                                    .domain(domain)
+                                    .strict_primary_key(to_pk_field.clone())
+                                    .property(
+                                        to_pk_field.clone(),
+                                        PropertyType::String,
+                                        literal_to_json(value),
+                                    );
+                                builder.add_reference_entity(stub)
+                            });
                         builder
-                            .relationship(from_ref, rel.kind.clone(), to_ref)
+                            .relationship(from_ref, rel.kind.clone(), stub_ref)
                             .add()
                             .map_err(|e| MapperError::Graph(e.to_string()))?;
                     }
+                    // else: non-PK `to_key` with no in-document match →
+                    // target PK is unknown, so no edge is emitted.
                 }
             }
             // Default: array-context alignment (unchanged behavior).
@@ -569,7 +611,10 @@ mod tests {
     }
 
     #[test]
-    fn fk_join_skips_unmatched_foreign_keys() {
+    fn fk_join_upserts_stub_for_target_not_in_document() {
+        // The referenced place isn't in this document. Instead of dropping
+        // the edge, an id-only stub Place is upserted so the edge links a
+        // node that exists (or will exist) in the graph.
         let mapping: Mapping = serde_json::from_value(json!({
             "entities": [
                 {"type": "Place", "source_path": "$.places[*]", "primary_key": "$.places[*].id",
@@ -590,12 +635,21 @@ mod tests {
         });
 
         let graph = to_graph(&mapping, &data).unwrap().graph;
-        let edges = graph
+        let edges: Vec<_> = graph
             .relations()
             .iter()
             .filter(|r| r.r#type == "INSTALLED_AT")
-            .count();
-        assert_eq!(edges, 0, "unmatched foreign key produces no edge");
+            .collect();
+        assert_eq!(edges.len(), 1, "edge to the stubbed target is emitted");
+
+        let stub = &graph.entities()[edges[0].to.index()];
+        assert_eq!(stub.r#type, "Place");
+        // Stub carries only its id (the raw FK value), no real properties.
+        assert_eq!(stub.properties["id"].value, json!(999));
+        assert!(
+            !stub.properties.contains_key("name"),
+            "stub must not fabricate real properties"
+        );
     }
 
     #[test]
@@ -627,6 +681,157 @@ mod tests {
             .filter(|r| r.r#type == "INSTALLED_AT")
             .count();
         assert_eq!(edges, 1);
+    }
+
+    /// Mapping used by the cross-ingest scenarios: Place/Camera/Event with
+    /// FK relationships, matching the generated teye shape.
+    fn surveillance_mapping() -> Mapping {
+        let m: Mapping = serde_json::from_value(json!({
+            "domain": "surveillance",
+            "entities": [
+                {"type": "Place", "source_path": "$.places[*]", "primary_key": "$.places[*].id",
+                 "properties": [
+                    {"name": "id", "source_path": "$.places[*].id", "type": "Text"},
+                    {"name": "name", "source_path": "$.places[*].name", "type": "Text"}]},
+                {"type": "Camera", "source_path": "$.cameras[*]", "primary_key": "$.cameras[*].id",
+                 "properties": [
+                    {"name": "id", "source_path": "$.cameras[*].id", "type": "Text"},
+                    {"name": "name", "source_path": "$.cameras[*].name", "type": "Text"}]},
+                {"type": "Event", "source_path": "$.events[*]", "primary_key": "$.events[*].event_id",
+                 "properties": [
+                    {"name": "event_id", "source_path": "$.events[*].event_id", "type": "Text"}]}
+            ],
+            "relationships": [
+                {"type": "CAPTURED_BY", "from": "Event", "to": "Camera",
+                 "from_key": "$.events[*].origin.camera_id", "to_key": "$.cameras[*].id"},
+                {"type": "OCCURRED_AT", "from": "Event", "to": "Place",
+                 "from_key": "$.events[*].origin.place_id", "to_key": "$.places[*].id"}
+            ]
+        }))
+        .unwrap();
+        m.validate().unwrap();
+        m
+    }
+
+    #[test]
+    fn event_links_to_camera_already_in_graph_via_stub() {
+        // New batch: cameras[] is empty, but events reference a camera that
+        // lives in the graph from a previous ingest. A stub Camera is
+        // upserted so the CAPTURED_BY edge links it by id.
+        let mapping = surveillance_mapping();
+        let data = json!({
+            "places": [{"id": 72, "name": "Office"}],
+            "cameras": [],
+            "events": [{
+                "event_id": "ev-1",
+                "origin": {"camera_id": "cam-in-graph", "place_id": 72}
+            }]
+        });
+
+        let graph = to_graph(&mapping, &data).unwrap().graph;
+
+        // CAPTURED_BY → stub Camera (id-only); OCCURRED_AT → real Place.
+        let captured: Vec<_> = graph
+            .relations()
+            .iter()
+            .filter(|r| r.r#type == "CAPTURED_BY")
+            .collect();
+        assert_eq!(captured.len(), 1);
+        let cam = &graph.entities()[captured[0].to.index()];
+        assert_eq!(cam.r#type, "Camera");
+        assert_eq!(cam.properties["id"].value, json!("cam-in-graph"));
+        assert!(!cam.properties.contains_key("name"), "stub has no real props");
+        assert_eq!(cam.domain.as_deref(), Some("surveillance"));
+
+        let occurred = graph
+            .relations()
+            .iter()
+            .filter(|r| r.r#type == "OCCURRED_AT")
+            .count();
+        assert_eq!(occurred, 1);
+    }
+
+    #[test]
+    fn stub_endpoints_lower_to_idonly_merge_and_relation() {
+        // Confirm the ingest planner turns the stub into an id-only node
+        // MERGE (no clobbering props) plus a CAPTURED_BY relation batch.
+        // Uses plain `String` props so an empty type registry suffices.
+        let mapping: Mapping = serde_json::from_value(json!({
+            "domain": "surveillance",
+            "entities": [
+                {"type": "Camera", "source_path": "$.cameras[*]", "primary_key": "$.cameras[*].id",
+                 "properties": [{"name": "id", "source_path": "$.cameras[*].id", "type": "String"}]},
+                {"type": "Event", "source_path": "$.events[*]", "primary_key": "$.events[*].event_id",
+                 "properties": [{"name": "event_id", "source_path": "$.events[*].event_id", "type": "String"}]}
+            ],
+            "relationships": [
+                {"type": "CAPTURED_BY", "from": "Event", "to": "Camera",
+                 "from_key": "$.events[*].origin.camera_id", "to_key": "$.cameras[*].id"}
+            ]
+        }))
+        .unwrap();
+        mapping.validate().unwrap();
+        let data = json!({
+            "cameras": [],
+            "events": [{
+                "event_id": "ev-1",
+                "origin": {"camera_id": "cam-9"}
+            }]
+        });
+        let graph = to_graph(&mapping, &data).unwrap().graph;
+
+        // Real entities carry a `_canonical` Text property (SemanticText),
+        // so the registry needs the core + SemanticText handlers. Stubs
+        // skip `_canonical`, so they never require a handler.
+        use crate::types::handlers::{self, SemanticTextConfig, SemanticTextHandler};
+        let registry = handlers::register_core(crate::types::RegistryBuilder::new())
+            .register(SemanticTextHandler::new(
+                SemanticTextConfig {
+                    embedding_model: None,
+                    collection: "cams".into(),
+                    top_k: 10,
+                    search_threshold: 0.1,
+                    reranker_threshold: 0.2,
+                },
+                std::sync::Arc::new(crate::embeddings::MockEmbedder::new(8)),
+            ))
+            .build();
+        let mut effects = crate::types::SideEffectQueue::new();
+        let insert = crate::ingest::plan_graph_with_registry(
+            &graph,
+            crate::ingest::PlannerOptions::default(),
+            &registry,
+            &mut effects,
+        )
+        .unwrap();
+
+        // Camera stub node batch: merge_on `id`, single row carrying the id.
+        let cam_batch = insert
+            .node_batches
+            .iter()
+            .find(|b| b.label == "Camera")
+            .expect("Camera stub node batch");
+        assert_eq!(cam_batch.merge_on, "id");
+        assert_eq!(cam_batch.rows.len(), 1);
+        assert_eq!(cam_batch.rows[0].id, Literal::String("cam-9".into()));
+        // Stub props must not carry fabricated fields beyond the id.
+        assert!(
+            cam_batch.rows[0]
+                .props
+                .keys()
+                .all(|k| k == "id"),
+            "stub node should not set non-id properties"
+        );
+
+        // CAPTURED_BY relation batch matches Event→Camera by id.
+        let rel = insert
+            .relation_batches
+            .iter()
+            .find(|b| b.rel_type == "CAPTURED_BY")
+            .expect("CAPTURED_BY relation batch");
+        assert_eq!(rel.to_label, "Camera");
+        assert_eq!(rel.to_key, "id");
+        assert_eq!(rel.rows[0].to_id, Literal::String("cam-9".into()));
     }
 
     #[test]

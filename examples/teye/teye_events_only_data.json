@@ -1,0 +1,28 @@
+{
+  "events": [
+    {
+      "origin": {
+        "camera_id": "4e94bbf1-5207-43d6-b727-e6689ec13193",
+        "place_id": 5390
+      },
+      "ts": 1780900000000,
+      "event_id": "aaaa1111-0000-11f1-99c8-38fa190afc70",
+      "event_type": "fr",
+      "stream_id": "4e94bbf1-5207-43d6-b727-e6689ec13193"
+    },
+    {
+      "origin": {
+        "camera_id": "0977a573-e7f0-47be-8f7f-a829ba1b9f1f",
+        "place_id": 72
+      },
+      "ts": 1780900050000,
+      "event_id": "bbbb2222-0000-11f1-bcce-11f0d5ec2738",
+      "event_type": "fr",
+      "stream_id": "0977a573-e7f0-47be-8f7f-a829ba1b9f1f"
+    }
+  ],
+
+  "places": [],
+
+  "cameras": []
+}

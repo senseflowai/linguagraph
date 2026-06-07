@@ -41,6 +41,12 @@ pub enum Error {
     #[error("Ontology error: {0}")]
     Ontology(#[from] crate::graph::OntologyError),
 
+    #[error("LLM error: {0}")]
+    Llm(#[from] crate::llm::LlmError),
+
+    #[error("Mapping generation error: {0}")]
+    MapGen(#[from] crate::mapgen::MapGenError),
+
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 

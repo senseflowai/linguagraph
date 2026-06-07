@@ -393,6 +393,40 @@ linguagraph ingest-json examples/companies_data.json examples/companies_mapping.
 asks an LLM to author the mapping for it, so you don't have to write the
 mapping by hand.
 
+### LLM-generated mapping (`generate-mapping`)
+
+`generate-mapping` goes one step further than `generate-prompt`: it actually
+calls an LLM and returns a **validated mapping**. It takes three inputs —
+
+* an **ontology** (mandatory): entity `type`s are strictly whitelisted to the
+  ontology's `entity_types`; relationships and extra properties may be invented;
+* the **JSON data** document;
+* the **live graph schema** (optional): when reachable, existing labels /
+  properties / relationship types are fed to the model so it reuses them.
+
+The result is parsed, validated, and verified (every `primary_key` must resolve
+against the data). On failure the prompt is replayed with the error appended, up
+to `--max-repairs` times. With `--interactive`, you confirm or override each
+entity's `primary_key`, choose which properties to keep (and their types), and
+review / add relationships on the terminal.
+
+```bash
+# Using a domain from the configured ontology catalog:
+linguagraph generate-mapping examples/companies_data.json \
+  --ontology-domain core_business --no-schema -o mapping.json
+
+# Using a standalone DomainOntology file, with interactive refinement:
+linguagraph generate-mapping examples/companies_data.json \
+  --ontology-file my_ontology.json --interactive
+```
+
+The LLM backend is provider-agnostic (the [`LlmClient`] trait). The bundled
+`OpenAiClient` (cargo feature `openai`, on by default) targets any
+OpenAI-compatible `/v1/chat/completions` endpoint — e.g. a self-hosted **vLLM**
+server. Point it via `[llm].base_url` / `--base-url` and `[llm].model` /
+`--model`; the API key is read from the env var named by `[llm].api_key_env`.
+Interactive refinement is behind the `interactive` feature (also on by default).
+
 ### Graph-JSON ingest
 
 When you already have a graph in hand, `ingest-graph` ingests a compact
@@ -804,6 +838,10 @@ provider = "anthropic"
 model = "claude-opus-4-7"
 temperature = 0.0
 max_tokens = 2048
+# OpenAI-compatible endpoint used by `generate-mapping` (e.g. a vLLM server).
+base_url = "http://localhost:8000/v1"
+# Env var holding the API key (optional for local servers).
+api_key_env = "OPENAI_API_KEY"
 
 [query]
 max_traversal_depth = 6

@@ -236,6 +236,15 @@ pub struct LlmConfig {
     pub temperature: f32,
     #[serde(default)]
     pub max_tokens: Option<u32>,
+    /// Base URL of an OpenAI-compatible chat-completions API. Defaults
+    /// to a local vLLM server (`http://localhost:8000/v1`). The client
+    /// POSTs to `{base_url}/chat/completions`.
+    #[serde(default = "default_llm_base_url")]
+    pub base_url: String,
+    /// Name of the environment variable holding the API key. For a
+    /// local vLLM server this can be left unset (the key is optional).
+    #[serde(default = "default_llm_api_key_env")]
+    pub api_key_env: String,
 }
 
 impl Default for LlmConfig {
@@ -245,6 +254,8 @@ impl Default for LlmConfig {
             model: default_model(),
             temperature: 0.0,
             max_tokens: None,
+            base_url: default_llm_base_url(),
+            api_key_env: default_llm_api_key_env(),
         }
     }
 }
@@ -254,6 +265,12 @@ fn default_provider() -> String {
 }
 fn default_model() -> String {
     "claude-opus-4-7".into()
+}
+fn default_llm_base_url() -> String {
+    "http://localhost:8000/v1".into()
+}
+fn default_llm_api_key_env() -> String {
+    "OPENAI_API_KEY".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

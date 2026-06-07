@@ -241,14 +241,14 @@ pub enum SortOrder {
 /// emits when its goal is text search over the document graph. The
 /// pipeline runs a two-channel retrieval against the vector store
 /// (entities in the `_canonical` collection, chunks in the `text`
-/// collection), follows `MENTIONS` from matched entities back to
+/// collection), follows `mentions` from matched entities back to
 /// the chunks that contain them, deduplicates chunks, aggregates
 /// per-chunk scores, sorts, and (optionally) reranks the top hits
 /// with a cross-encoder. See [`crate::core::Pipeline::run_traversal`]
 /// for the full pipeline.
 ///
 /// The schema labels and relations are fixed (`Chunk` / `Source` /
-/// `MENTIONS` / `part_of`, with the text on `Chunk.text` and the
+/// `mentions` / `part_of`, with the text on `Chunk.text` and the
 /// entity-merge key on `<Entity>._canonical`). Graphs with a
 /// different ingest schema can't use this endpoint directly.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

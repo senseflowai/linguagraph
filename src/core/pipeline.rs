@@ -464,11 +464,11 @@ impl Pipeline {
     // [`TraversalQuery`] is a high-level, doc-graph–oriented retrieval
     // request. The pipeline runs an explicit two-channel vector search
     // (entities via `_canonical`, chunks via `text`) plus a Cypher
-    // traversal that walks `MENTIONS` from matched entities to their
+    // traversal that walks chunk-level `mentions` from matched entities to their
     // chunks. Results are deduplicated by chunk, per-chunk scores are
     // summed, sorted, truncated to `limit`, and (optionally) reranked.
     //
-    // The graph schema is fixed: `Chunk` / `Source` / `MENTIONS` /
+    // The graph schema is fixed: `Chunk` / `Source` / `mentions` /
     // `part_of`, chunk text on `Chunk.text`, entity merge-key on
     // `<Entity>._canonical`. Graphs ingested with custom labels can't
     // use this entry point.
@@ -1441,7 +1441,7 @@ fn build_traversal_search_cypher(
 }
 
 /// Build the graph-traversal Cypher. Entity hits → walk back through
-/// `MENTIONS` to chunks; chunk hits → fan out to mentioned entities.
+/// `mentions` to chunks; chunk hits → fan out to mentioned entities.
 /// Each row carries the originating contribution score so the merge
 /// step can sum them per chunk.
 fn build_traversal_graph_cypher(
@@ -1449,6 +1449,8 @@ fn build_traversal_graph_cypher(
     chunk_hits: &BTreeMap<i64, f64>,
     prefix_label: Option<&str>,
 ) -> CypherQuery {
+    const CHUNK_MENTION_REL: &str = "mentions";
+
     let mut params: BTreeMap<String, Literal> = BTreeMap::new();
 
     params.insert(
@@ -1486,7 +1488,7 @@ fn build_traversal_graph_cypher(
     if !entity_hits.is_empty() {
         branches.push(format!(
             "MATCH (e) WHERE id(e) IN $entity_hit_ids\n\
-             MATCH (c:Chunk{plabel})-[:MENTIONS]->(e)\n\
+             MATCH (c:Chunk{plabel})-[:{chunk_mention_rel}]->(e)\n\
              OPTIONAL MATCH (c)-[:part_of]->(s:Source{plabel})\n\
              RETURN id(c) AS chunk_id, c.id AS chunk_pk, c.text AS chunk_text, \
                     s.id AS source_id, s.name AS source_name, \
@@ -1494,13 +1496,14 @@ fn build_traversal_graph_cypher(
                     coalesce($entity_scores[toString(id(e))], 0.0) AS contrib_score, \
                     \"entity\" AS leg",
             plabel = plabel,
+            chunk_mention_rel = CHUNK_MENTION_REL,
         ));
     }
 
     if !chunk_hits.is_empty() {
         branches.push(format!(
             "MATCH (c:Chunk{plabel}) WHERE id(c) IN $chunk_hit_ids\n\
-             OPTIONAL MATCH (c)-[:MENTIONS]->(e)\n\
+             OPTIONAL MATCH (c)-[:{chunk_mention_rel}]->(e)\n\
              OPTIONAL MATCH (c)-[:part_of]->(s:Source{plabel})\n\
              RETURN id(c) AS chunk_id, c.id AS chunk_pk, c.text AS chunk_text, \
                     s.id AS source_id, s.name AS source_name, \
@@ -1508,6 +1511,7 @@ fn build_traversal_graph_cypher(
                     coalesce($chunk_scores[toString(id(c))], 0.0) AS contrib_score, \
                     \"chunk\" AS leg",
             plabel = plabel,
+            chunk_mention_rel = CHUNK_MENTION_REL,
         ));
     }
 
@@ -2163,7 +2167,7 @@ mod tests {
         assert!(
             traversal_cypher
                 .text
-                .contains("(c:Chunk:Tenant1)-[:MENTIONS]->(e)"),
+                .contains("(c:Chunk:Tenant1)-[:mentions]->(e)"),
             "expected prefix-stamped chunk traversal: {}",
             traversal_cypher.text
         );

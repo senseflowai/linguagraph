@@ -99,7 +99,7 @@ pub enum Command {
     /// ```
     ///
     /// Runs a two-channel vector search (entities in `_canonical`,
-    /// chunks in `text`), follows `MENTIONS` from matched entities
+    /// chunks in `text`), follows `mentions` from matched entities
     /// to their chunks, deduplicates, aggregates per-chunk
     /// `total_score`, sorts, and optionally reranks.
     Traversal {

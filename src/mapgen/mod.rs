@@ -30,17 +30,19 @@
 //! Entity types are constrained to the ontology; relationships and extra
 //! properties may be invented by the model.
 
+mod collections;
 mod describe;
 mod prompt;
 
 #[cfg(feature = "interactive")]
 mod interactive;
 
+pub use collections::{detect_collections, filter_collections, CollectionInfo, ROOT_COLLECTION};
 pub use describe::{describe_properties, DescribeOptions};
 pub use prompt::{build_mapping_prompt, MapGenPromptOptions};
 
 #[cfg(feature = "interactive")]
-pub use interactive::refine_interactively;
+pub use interactive::{refine_interactively, select_collections};
 
 use serde_json::Value;
 use thiserror::Error;

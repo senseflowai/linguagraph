@@ -15,7 +15,33 @@ use crate::graph::DomainOntology;
 use crate::mapper::{self, Mapping, PropertyMapping, RelationshipMapping};
 use crate::promptgen::{analyze, InferredType};
 
+use super::collections::CollectionInfo;
 use super::{enforce_ontology, MapGenError};
+
+/// Interactively choose which top-level collections to map.
+///
+/// Presents a checkbox menu (all pre-selected) and returns the chosen
+/// collection names. Loops until at least one is selected.
+pub fn select_collections(items: &[CollectionInfo]) -> Result<Vec<String>, MapGenError> {
+    let labels: Vec<String> = items
+        .iter()
+        .map(|c| format!("{} ({} item(s))", c.name, c.len))
+        .collect();
+    let defaults = vec![true; labels.len()];
+    loop {
+        let picked = MultiSelect::new()
+            .with_prompt("Collections to map (space toggles, enter confirms)")
+            .items(&labels)
+            .defaults(&defaults)
+            .interact()
+            .map_err(ui_err)?;
+        if picked.is_empty() {
+            println!("  select at least one collection.");
+            continue;
+        }
+        return Ok(picked.into_iter().map(|i| items[i].name.clone()).collect());
+    }
+}
 
 /// Field-type vocabulary offered when (re)typing a property.
 const FIELD_TYPES: &[&str] = &[

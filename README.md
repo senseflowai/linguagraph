@@ -428,6 +428,21 @@ calls an LLM and returns a **validated mapping**. It takes three inputs —
 * the **live graph schema** (optional): when reachable, existing labels /
   properties / relationship types are fed to the model so it reuses them.
 
+Before generating, you pick **which top-level collections** of the input get
+mapped. A "collection" is a top-level array of objects — one per key of a root
+object (`{ "cameras": [...], "places": [...] }`), or the root array itself
+(`[...]`). Pass them explicitly with `--collections cameras,places`
+(comma-separated), or — when omitted on a terminal — choose them from an
+interactive checkbox menu. With a single collection, or a non-TTY run (e.g.
+CI), the choice is made for you: the lone collection, or all of them. Only the
+selected collections are analysed, verified, and sent to the model.
+
+The model is shown a **structural sample** of the selected data, not the whole
+file: every array (including nested ones) is capped to `--sample-items` items
+(default 2), so a 10 000-row `cameras` collection becomes a 2-row example that
+still shows the exact field shape. Analysis and `primary_key` verification still
+run over the full selected data.
+
 The result is parsed, validated, and verified (every `primary_key` must resolve
 against the data). On failure the prompt is replayed with the error appended, up
 to `--max-repairs` times. With `--interactive`, you confirm or override each
@@ -445,6 +460,11 @@ doesn't serialize the wait; only missing descriptions are filled unless
 # Using a domain from the configured ontology catalog:
 linguagraph generate-mapping examples/companies_data.json \
   --ontology-domain core_business --no-schema -o mapping.json
+
+# Map only specific collections; the model sees a 2-item structural sample:
+linguagraph generate-mapping data.json \
+  --ontology-domain core_business --no-schema \
+  --collections cameras,places -o mapping.json
 
 # Generate, then enrich property descriptions from sample values:
 linguagraph generate-mapping examples/companies_data.json \

@@ -23,6 +23,7 @@ thiserror = "1.0"
 anyhow = "1.0"
 async-trait = "0.1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "io-util", "sync"] }
+futures = "0.3"
 clap = { version = "4.5", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -37,6 +38,13 @@ llama-cpp-2 = { git = "https://github.com/senseflowai/llama-cpp-rs", branch = "m
 encoding_rs = "0.8.35"
 uuid = { version = "1", features = ["v4", "v5"] }
 
+# OpenAI-compatible LLM client (e.g. a self-hosted vLLM server). Gated
+# behind the `openai` feature so the default library build stays
+# HTTP-free; the CLI enables it by default.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+# Interactive TTY refinement of generated mappings.
+dialoguer = { version = "0.11", optional = true }
+
 [dev-dependencies]
 pretty_assertions = "1.4"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
@@ -44,7 +52,11 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
 [features]
 cuda = ["llama-cpp-2/cuda"]
 llama = ["dep:llama-cpp-2"]
-default = ["llama"]
+# OpenAI-compatible LLM backend (vLLM and friends).
+openai = ["dep:reqwest"]
+# Interactive mapping refinement on the terminal.
+interactive = ["dep:dialoguer"]
+default = ["llama", "openai", "interactive"]
 
 [profile.release]
 lto = "thin"

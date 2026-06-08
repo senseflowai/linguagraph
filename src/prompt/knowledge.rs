@@ -90,7 +90,7 @@ pub fn property_type_label(t: OntologyPropertyType) -> &'static str {
     }
 }
 
-fn render_entity_list(out: &mut String, types: &[EntityTypeSpec]) {
+pub(crate) fn render_entity_list(out: &mut String, types: &[EntityTypeSpec]) {
     for t in types {
         match &t.description {
             Some(d) => {
@@ -122,7 +122,7 @@ fn render_entity_list(out: &mut String, types: &[EntityTypeSpec]) {
     }
 }
 
-fn render_relation_list(out: &mut String, types: &[RelationTypeSpec]) {
+pub(crate) fn render_relation_list(out: &mut String, types: &[RelationTypeSpec]) {
     for t in types {
         let upper = t.name.to_ascii_uppercase();
         match &t.description {

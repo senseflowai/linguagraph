@@ -389,9 +389,78 @@ for a worked pair.
 linguagraph ingest-json examples/companies_data.json examples/companies_mapping.json
 ```
 
+By default a relationship between two entities is resolved by **array-context
+alignment** — it links rows that share the same nesting position (a parent and
+its nested children). When the two entities come from **separate top-level
+arrays** linked by an id value, that alignment is meaningless; declare a
+**foreign-key join** with `from_key` / `to_key` (JSONPaths) so the correct
+objects are connected:
+
+```json
+{ "type": "INSTALLED_AT", "from": "Camera", "to": "Place",
+  "from_key": "$.cameras[*].place_id", "to_key": "$.places[*].id" }
+```
+
+`from_key` is the foreign key on the `from` entity; `to_key` is the matching key
+on the `to` entity (defaults to its `primary_key`). See `examples/teye/` for a
+worked camera/place/event dataset.
+
+**Cross-ingest links.** When a foreign key points at an entity that isn't in the
+current document — e.g. you ingest a batch of `events` whose `camera_id` refers to
+a `Camera` already in the graph (or ingested later) — the target is **upserted by
+id**: an id-only stub node is `MERGE`d, so the edge links the existing node
+(preserving its properties) or a skeleton that gets enriched when the real entity
+is ingested. This works regardless of ingest order and needs no in-document copy
+of the target. (Only applies when `to_key` is the target's primary key.)
+
 `generate-prompt` analyses an arbitrary JSON document and emits a prompt that
 asks an LLM to author the mapping for it, so you don't have to write the
 mapping by hand.
+
+### LLM-generated mapping (`generate-mapping`)
+
+`generate-mapping` goes one step further than `generate-prompt`: it actually
+calls an LLM and returns a **validated mapping**. It takes three inputs —
+
+* an **ontology** (mandatory): entity `type`s are strictly whitelisted to the
+  ontology's `entity_types`; relationships and extra properties may be invented;
+* the **JSON data** document;
+* the **live graph schema** (optional): when reachable, existing labels /
+  properties / relationship types are fed to the model so it reuses them.
+
+The result is parsed, validated, and verified (every `primary_key` must resolve
+against the data). On failure the prompt is replayed with the error appended, up
+to `--max-repairs` times. With `--interactive`, you confirm or override each
+entity's `primary_key`, choose which properties to keep (and their types), and
+review / add relationships on the terminal.
+
+With `--describe`, a follow-up step asks the LLM to write a one-line
+`description` for each property, grounded in the entity's ontology description
+plus 1–2 real sample values pulled from the source JSON. Requests run **one per
+property, concurrently** (`--describe-concurrency`, default 8) so a wide mapping
+doesn't serialize the wait; only missing descriptions are filled unless
+`--describe-overwrite` is passed.
+
+```bash
+# Using a domain from the configured ontology catalog:
+linguagraph generate-mapping examples/companies_data.json \
+  --ontology-domain core_business --no-schema -o mapping.json
+
+# Generate, then enrich property descriptions from sample values:
+linguagraph generate-mapping examples/companies_data.json \
+  --ontology-domain core_business --no-schema --describe -o mapping.json
+
+# Using a standalone DomainOntology file, with interactive refinement:
+linguagraph generate-mapping examples/companies_data.json \
+  --ontology-file my_ontology.json --interactive
+```
+
+The LLM backend is provider-agnostic (the [`LlmClient`] trait). The bundled
+`OpenAiClient` (cargo feature `openai`, on by default) targets any
+OpenAI-compatible `/v1/chat/completions` endpoint — e.g. a self-hosted **vLLM**
+server. Point it via `[llm].base_url` / `--base-url` and `[llm].model` /
+`--model`; the API key is read from the env var named by `[llm].api_key_env`.
+Interactive refinement is behind the `interactive` feature (also on by default).
 
 ### Graph-JSON ingest
 
@@ -804,6 +873,10 @@ provider = "anthropic"
 model = "claude-opus-4-7"
 temperature = 0.0
 max_tokens = 2048
+# OpenAI-compatible endpoint used by `generate-mapping` (e.g. a vLLM server).
+base_url = "http://localhost:8000/v1"
+# Env var holding the API key (optional for local servers).
+api_key_env = "OPENAI_API_KEY"
 
 [query]
 max_traversal_depth = 6

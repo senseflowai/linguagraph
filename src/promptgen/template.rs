@@ -37,7 +37,12 @@ Output a single JSON object of this exact shape:
     {
       "type": "REL_NAME",            // SCREAMING_SNAKE_CASE
       "from": "EntityA",
-      "to": "EntityB"
+      "to": "EntityB",
+      // Optional foreign-key join. REQUIRED when EntityA and EntityB come
+      // from separate top-level arrays and are linked by an id value.
+      "from_key": "$.entityA[*].b_id",   // JSONPath of the FK on EntityA
+      "to_key": "$.entityB[*].id"        // JSONPath of the key on EntityB
+                                         // (defaults to EntityB's primary_key)
     }
   ]
 }
@@ -85,6 +90,16 @@ pub const RULES: &str = r#"# Rules
    merge the field set into a single entity.
 9. **Normalize names**: drop hyphens/underscores, capitalise initials,
    pluralise to singular.
+10. **Foreign-key relationships.** Scan every entity for foreign-key
+    fields — any field ending in `_id`/`_ref`, **including ones nested in
+    sub-objects** (e.g. `events[*].origin.camera_id`). When such a field
+    references another entity's id, you MUST emit a relationship with
+    `from_key` (the full JSONPath of the foreign key, e.g.
+    `$.events[*].origin.camera_id`) and `to_key` (the JSONPath of the
+    referenced entity's `primary_key`, e.g. `$.cameras[*].id`). Without
+    these keys the relationship cannot link the correct objects. Only a
+    nested child array physically inside its parent is linked positionally
+    and may omit `from_key`/`to_key`.
 "#;
 
 /// One worked example showing a flat document and the expected output.

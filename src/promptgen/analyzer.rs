@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use super::inference::{infer, is_id_field, InferredType, LeafStats};
+use super::inference::{infer, is_id_field, is_own_id_name, InferredType, LeafStats};
 
 /// Top-level summary of the input document.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -75,8 +75,14 @@ pub enum RelationshipHint {
         nested_path: String,
     },
     /// A field on `from` looks like it references another entity
-    /// (e.g. `customer_id`).
-    ForeignKey { from: String, field: String },
+    /// (e.g. `customer_id`, or a nested `origin.camera_id`).
+    /// `field` is the (possibly dotted) field name; `source_path` is its
+    /// full JSONPath so a mapping can use it directly as a `from_key`.
+    ForeignKey {
+        from: String,
+        field: String,
+        source_path: String,
+    },
 }
 
 /// Public entry point.
@@ -134,11 +140,37 @@ impl Acc {
             // LLM to choose. We deliberately don't try to pick a "first
             // unique scalar" here because uniqueness across a single
             // sample document is meaningless on small inputs.
+            // Only a *direct* (non-flattened) id field is a primary-key
+            // candidate — a nested `origin.camera_id` is a foreign key,
+            // never this entity's own key. Prefer an entity's own id name
+            // (`id`/`uuid`/…) over a `<thing>_id` foreign key that merely
+            // sorts earlier (e.g. pick `id` over `edge_id`).
+            let is_direct = |name: &str| !name.contains('.');
             let pk = ent
                 .fields
                 .iter()
-                .find(|(name, _)| is_id_field(name))
+                .find(|(name, _)| is_direct(name) && is_own_id_name(name))
+                .or_else(|| {
+                    ent.fields
+                        .iter()
+                        .find(|(name, _)| is_direct(name) && is_id_field(name))
+                })
                 .map(|(_, fa)| fa.source_path.clone());
+
+            // Emit a foreign-key hint for every id-like field that isn't
+            // this entity's primary key (deduplicated — `ent.fields` holds
+            // one accumulator per field). Includes nested ones flattened
+            // above, e.g. `origin.camera_id`.
+            for (fname, fa) in &ent.fields {
+                let leaf = fname.rsplit('.').next().unwrap_or(fname);
+                if is_id_field(leaf) && Some(&fa.source_path) != pk.as_ref() {
+                    relationships.push(RelationshipHint::ForeignKey {
+                        from: ent.name.clone(),
+                        field: fname.clone(),
+                        source_path: fa.source_path.clone(),
+                    });
+                }
+            }
 
             // Materialise field summaries (sorted by name for
             // determinism). The Identifier-typed field is dropped
@@ -331,36 +363,79 @@ fn walk_entity_fields(
                     let _ = items; // intentionally drop scalars
                 }
             }
-            Value::Object(_) => {
-                // Nested object: recurse to capture nested arrays.
-                walk(acc, &format!("{entity_path}.{k}"), v, Some(entity_name));
-                // Nested objects without arrays become flattened
-                // scalar fields so the LLM can still address them
-                // (e.g. `address.city`). We don't currently flatten
-                // — the prompt encourages the LLM to do so.
+            Value::Object(nested) => {
+                // Nested object: flatten its scalar leaves into the
+                // parent as dotted fields (e.g. `origin.camera_id`) so
+                // foreign keys buried in sub-objects are visible to the
+                // LLM and surface as `ForeignKey` hints. Nested *arrays*
+                // still become entities of their own.
+                flatten_object(acc, entity_path, entity_name, k, nested, 1);
             }
             _ => {
                 // Scalar leaf: feed the field accumulator.
-                let ent = acc.by_path.get_mut(entity_path).expect("entity allocated");
-                let fa = ent.fields.entry(k.clone()).or_insert_with(|| FieldAcc {
-                    source_path: field_path.clone(),
-                    ..Default::default()
-                });
-                fa.stats.observe(v);
-                let s = scalar_repr(v);
-                fa.distinct_seen.insert(s.clone());
-                if fa.samples.len() < 3 {
-                    fa.samples.push(s);
-                }
-                // Foreign-key hint.
-                if k != "id" && is_id_field(k) {
-                    acc.relationships.push(RelationshipHint::ForeignKey {
-                        from: entity_name.to_string(),
-                        field: k.clone(),
-                    });
-                }
+                record_scalar_field(acc, entity_path, k, &field_path, v);
             }
         }
+    }
+}
+
+/// Maximum object-nesting depth flattened into a parent entity. Beyond
+/// this we stop (deeply nested config blocks rarely carry useful keys).
+const MAX_FLATTEN_DEPTH: usize = 4;
+
+/// Flatten a nested object's scalar leaves into `entity_path`'s field set
+/// under the dotted `prefix` (e.g. `origin`), recursing through further
+/// sub-objects and letting nested arrays surface as their own entities.
+fn flatten_object(
+    acc: &mut Acc,
+    entity_path: &str,
+    entity_name: &str,
+    prefix: &str,
+    map: &Map<String, Value>,
+    depth: usize,
+) {
+    for (k, v) in map {
+        let field_name = format!("{prefix}.{k}");
+        let field_path = format!("{entity_path}.{field_name}");
+        match v {
+            Value::Array(_) => {
+                walk(acc, &format!("{entity_path}.{field_name}"), v, Some(entity_name));
+            }
+            Value::Object(inner) => {
+                if depth < MAX_FLATTEN_DEPTH {
+                    flatten_object(acc, entity_path, entity_name, &field_name, inner, depth + 1);
+                }
+            }
+            _ => {
+                record_scalar_field(acc, entity_path, &field_name, &field_path, v);
+            }
+        }
+    }
+}
+
+/// Record one scalar field on `entity_path` into its accumulator.
+/// Foreign-key hints are derived later in [`Acc::finish`], where the
+/// primary key is known and fields are already deduplicated.
+fn record_scalar_field(
+    acc: &mut Acc,
+    entity_path: &str,
+    field_name: &str,
+    field_path: &str,
+    v: &Value,
+) {
+    let ent = acc.by_path.get_mut(entity_path).expect("entity allocated");
+    let fa = ent
+        .fields
+        .entry(field_name.to_string())
+        .or_insert_with(|| FieldAcc {
+            source_path: field_path.to_string(),
+            ..Default::default()
+        });
+    fa.stats.observe(v);
+    let s = scalar_repr(v);
+    fa.distinct_seen.insert(s.clone());
+    if fa.samples.len() < 3 {
+        fa.samples.push(s);
     }
 }
 
@@ -493,8 +568,34 @@ mod tests {
         });
         let s = analyze(&v);
         assert!(s.relationships.iter().any(|r| matches!(r,
-            RelationshipHint::ForeignKey { from, field }
+            RelationshipHint::ForeignKey { from, field, source_path }
                 if from == "Order" && field == "customer_id"
+                    && source_path == "$.orders[*].customer_id"
+        )));
+    }
+
+    #[test]
+    fn nested_object_foreign_key_is_flattened_and_hinted() {
+        // A foreign key buried in a nested object (event.origin.camera_id)
+        // must surface both as a dotted field of the parent entity and as
+        // a ForeignKey hint carrying the full JSONPath.
+        let v = json!({
+            "events": [
+                {"event_id": "e1", "origin": {"camera_id": "c9", "place_id": 5}}
+            ]
+        });
+        let s = analyze(&v);
+        let event = s.entities.iter().find(|e| e.name == "Event").unwrap();
+        // primary key is the direct event_id, not the nested *_id fields.
+        assert_eq!(event.primary_key.as_deref(), Some("$.events[*].event_id"));
+        let field_paths: Vec<&str> = event.fields.iter().map(|f| f.source_path.as_str()).collect();
+        assert!(field_paths.contains(&"$.events[*].origin.camera_id"));
+        assert!(field_paths.contains(&"$.events[*].origin.place_id"));
+        // ForeignKey hint for the nested camera_id with its full path.
+        assert!(s.relationships.iter().any(|r| matches!(r,
+            RelationshipHint::ForeignKey { from, field, source_path }
+                if from == "Event" && field == "origin.camera_id"
+                    && source_path == "$.events[*].origin.camera_id"
         )));
     }
 

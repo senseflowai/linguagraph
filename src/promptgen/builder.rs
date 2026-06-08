@@ -263,11 +263,17 @@ fn render_relationship(out: &mut String, rel: &RelationshipHint) {
                 child_upper = child.to_ascii_uppercase()
             );
         }
-        RelationshipHint::ForeignKey { from, field } => {
+        RelationshipHint::ForeignKey {
+            from,
+            field,
+            source_path,
+        } => {
             let _ = writeln!(
                 out,
-                "- `{from}.{field}` looks like a foreign key — \
-                 consider a relationship to the referenced entity.",
+                "- `{from}` has a foreign key `{field}` at `{source_path}` → \
+                 emit a relationship to the entity this id references, setting \
+                 `from_key` to `{source_path}` and `to_key` to that entity's \
+                 `primary_key`.",
             );
         }
     }

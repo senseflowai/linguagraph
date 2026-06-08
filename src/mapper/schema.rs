@@ -92,6 +92,20 @@ pub struct RelationshipMapping {
     pub kind: String,
     pub from: String,
     pub to: String,
+    /// Optional foreign-key JSONPath on the `from` entity (e.g.
+    /// `"$.cameras[*].place_id"`). When set, the relationship is resolved
+    /// by **value join** — a `from` row links to a `to` row whose
+    /// [`Self::to_key`] value equals this key's value — instead of the
+    /// default array-context alignment. This is what makes relationships
+    /// between sibling top-level arrays (no nesting) expressible.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_key: Option<String>,
+    /// Optional JSONPath of the matching key on the `to` entity (e.g.
+    /// `"$.places[*].id"`). Only meaningful together with
+    /// [`Self::from_key`]. When omitted it defaults to the `to` entity's
+    /// `primary_key`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_key: Option<String>,
 }
 
 impl Mapping {

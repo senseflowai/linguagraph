@@ -30,11 +30,13 @@
 //! Entity types are constrained to the ontology; relationships and extra
 //! properties may be invented by the model.
 
+mod describe;
 mod prompt;
 
 #[cfg(feature = "interactive")]
 mod interactive;
 
+pub use describe::{describe_properties, DescribeOptions};
 pub use prompt::{build_mapping_prompt, MapGenPromptOptions};
 
 #[cfg(feature = "interactive")]

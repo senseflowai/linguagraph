@@ -434,10 +434,21 @@ to `--max-repairs` times. With `--interactive`, you confirm or override each
 entity's `primary_key`, choose which properties to keep (and their types), and
 review / add relationships on the terminal.
 
+With `--describe`, a follow-up step asks the LLM to write a one-line
+`description` for each property, grounded in the entity's ontology description
+plus 1–2 real sample values pulled from the source JSON. Requests run **one per
+property, concurrently** (`--describe-concurrency`, default 8) so a wide mapping
+doesn't serialize the wait; only missing descriptions are filled unless
+`--describe-overwrite` is passed.
+
 ```bash
 # Using a domain from the configured ontology catalog:
 linguagraph generate-mapping examples/companies_data.json \
   --ontology-domain core_business --no-schema -o mapping.json
+
+# Generate, then enrich property descriptions from sample values:
+linguagraph generate-mapping examples/companies_data.json \
+  --ontology-domain core_business --no-schema --describe -o mapping.json
 
 # Using a standalone DomainOntology file, with interactive refinement:
 linguagraph generate-mapping examples/companies_data.json \

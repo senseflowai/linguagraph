@@ -362,6 +362,19 @@ pub enum Command {
         /// Maximum number of repair retries after an invalid generation.
         #[arg(long, default_value_t = 2)]
         max_repairs: usize,
+        /// After generating, ask the LLM to write a short `description`
+        /// for each property using the ontology's entity description plus
+        /// 1–2 real sample values from the data. One request per property,
+        /// run concurrently.
+        #[arg(long)]
+        describe: bool,
+        /// Re-describe properties that already have a description (implies
+        /// `--describe`).
+        #[arg(long = "describe-overwrite")]
+        describe_overwrite: bool,
+        /// Maximum number of concurrent description requests.
+        #[arg(long = "describe-concurrency", default_value_t = 8)]
+        describe_concurrency: usize,
         /// Write the mapping to this path instead of stdout.
         #[arg(long, short = 'o')]
         output: Option<PathBuf>,
@@ -479,6 +492,9 @@ pub async fn run(cli: Cli) -> Result<()> {
             model,
             base_url,
             max_repairs,
+            describe,
+            describe_overwrite,
+            describe_concurrency,
             output,
             prefix_label,
         } => {
@@ -492,6 +508,9 @@ pub async fn run(cli: Cli) -> Result<()> {
                 model,
                 base_url,
                 max_repairs,
+                describe || describe_overwrite,
+                describe_overwrite,
+                describe_concurrency,
                 output,
                 prefix_label,
             )
@@ -1173,10 +1192,15 @@ async fn cmd_generate_mapping(
     model: Option<String>,
     base_url: Option<String>,
     max_repairs: usize,
+    describe: bool,
+    describe_overwrite: bool,
+    describe_concurrency: usize,
     output: Option<PathBuf>,
     prefix_label: Option<String>,
 ) -> Result<()> {
-    use crate::mapgen::{generate_mapping, MapGenOptions, MapGenPromptOptions};
+    use crate::mapgen::{
+        describe_properties, generate_mapping, DescribeOptions, MapGenOptions, MapGenPromptOptions,
+    };
 
     let cfg = load_config_or_default(config_path).await;
 
@@ -1220,11 +1244,25 @@ async fn cmd_generate_mapping(
     let mapping =
         generate_mapping(&value, &ontology, schema.as_ref(), llm.as_ref(), &opts).await?;
 
-    let mapping = if interactive {
+    let mut mapping = if interactive {
         refine_mapping_interactively(mapping, &value, &ontology)?
     } else {
         mapping
     };
+
+    // Optional enrichment: fill property descriptions from the ontology
+    // entity description + real sample values, one concurrent request per
+    // property. Best-effort — failures leave descriptions unset.
+    if describe {
+        let opts = DescribeOptions {
+            max_concurrency: describe_concurrency,
+            overwrite_existing: describe_overwrite,
+            ..DescribeOptions::default()
+        };
+        let n =
+            describe_properties(&mut mapping, &ontology, &value, llm.as_ref(), &opts).await?;
+        tracing::info!(target: "linguagraph::cli", described = n, "wrote property descriptions");
+    }
 
     let body = serde_json::to_string_pretty(&mapping)?;
     match output {
@@ -1310,7 +1348,7 @@ async fn fetch_live_schema(cfg: &Config, prefix_label: Option<String>) -> Result
     }
     // Enriching the schema with ontology descriptions is best-effort.
     let _ = pipeline.load_ontology_catalog().await;
-    Ok(pipeline.live_schema::<&str>(&[]).await?)
+    pipeline.live_schema::<&str>(&[]).await
 }
 
 #[cfg(feature = "openai")]

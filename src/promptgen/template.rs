@@ -90,14 +90,16 @@ pub const RULES: &str = r#"# Rules
    merge the field set into a single entity.
 9. **Normalize names**: drop hyphens/underscores, capitalise initials,
    pluralise to singular.
-10. **Foreign-key relationships.** When two entities come from **separate
-    top-level arrays** (not nested) and are linked by an id value — e.g.
-    `cameras[*].place_id` referring to `places[*].id` — you MUST set
-    `from_key` (the JSONPath of the foreign key on the `from` entity) and
-    `to_key` (the JSONPath of the matching key on the `to` entity, usually
-    its `primary_key`). Without these keys such a relationship cannot link
-    the correct objects. Nested entities (child array inside the parent)
-    do NOT need keys — leave `from_key`/`to_key` out for them.
+10. **Foreign-key relationships.** Scan every entity for foreign-key
+    fields — any field ending in `_id`/`_ref`, **including ones nested in
+    sub-objects** (e.g. `events[*].origin.camera_id`). When such a field
+    references another entity's id, you MUST emit a relationship with
+    `from_key` (the full JSONPath of the foreign key, e.g.
+    `$.events[*].origin.camera_id`) and `to_key` (the JSONPath of the
+    referenced entity's `primary_key`, e.g. `$.cameras[*].id`). Without
+    these keys the relationship cannot link the correct objects. Only a
+    nested child array physically inside its parent is linked positionally
+    and may omit `from_key`/`to_key`.
 "#;
 
 /// One worked example showing a flat document and the expected output.

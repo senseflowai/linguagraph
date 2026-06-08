@@ -196,6 +196,14 @@ pub fn is_id_field(name: &str) -> bool {
     lower.ends_with("_id") || lower.ends_with("id") && name.chars().any(|c| c.is_uppercase())
 }
 
+/// Is `name` an entity's *own* identifier name — an exact id-like name
+/// (`id`/`uuid`/`pk`/…) rather than a `<thing>_id` foreign key? Used to
+/// prefer the real primary key when several id-ish fields coexist.
+pub fn is_own_id_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    ID_NAMES.iter().any(|n| *n == lower)
+}
+
 /// Bag of properties matched on field-name lowercased.
 fn name_matches_any(name: &str, names: &[&str]) -> bool {
     let lower = name.to_ascii_lowercase();

@@ -124,16 +124,25 @@ fn render_ontology_section(out: &mut String, ontology: &DomainOntology) {
          actually emit.\n\n",
     );
     out.push_str(
-        "When the two entities come from **separate top-level arrays** linked by an id \
-         value, you MUST add `from_key` (JSONPath of the foreign key on the `from` entity) \
-         and `to_key` (JSONPath of the matching key on the `to` entity — usually its \
-         primary_key). Example: cameras and places are sibling arrays joined by \
-         `place_id`:\n\n\
+        "## Foreign keys (REQUIRED)\n\n\
+         Scan **every** entity for foreign-key fields — any field whose name ends in `_id` \
+         (or `_ref`/`_key`), **including fields nested inside sub-objects** such as \
+         `origin.camera_id`. For each one whose value is the id of another entity you emit, \
+         you MUST add a relationship with `from_key` (the FULL JSONPath of that foreign key, \
+         e.g. `$.events[*].origin.camera_id`) and `to_key` (the JSONPath of the referenced \
+         entity's `primary_key`, e.g. `$.cameras[*].id`). Match by the field name and the \
+         entity descriptions above (e.g. `camera_id` → the `Camera` entity, `place_id` → \
+         `Place`). The \"Relationship hints\" section lists the foreign keys we detected — \
+         act on each of them.\n\n\
+         Examples (sibling top-level arrays joined by id):\n\n\
          ```json\n\
          {\"type\":\"INSTALLED_AT\",\"from\":\"Camera\",\"to\":\"Place\",\
          \"from_key\":\"$.cameras[*].place_id\",\"to_key\":\"$.places[*].id\"}\n\
+         {\"type\":\"CAPTURED_BY\",\"from\":\"Event\",\"to\":\"Camera\",\
+         \"from_key\":\"$.events[*].origin.camera_id\",\"to_key\":\"$.cameras[*].id\"}\n\
          ```\n\n\
-         Omit `from_key`/`to_key` for nested (parent/child) entities.\n\n",
+         Omit `from_key`/`to_key` ONLY for nested parent/child entities (a child array \
+         physically inside its parent), where the link is positional.\n\n",
     );
 }
 
@@ -209,6 +218,32 @@ mod tests {
             entity_types: vec![EntityTypeSpec::with_description("Company", "A business.")],
             relation_types: vec![RelationTypeSpec::new("OWNS")],
         }
+    }
+
+    #[test]
+    fn prompt_surfaces_nested_foreign_key_with_full_path() {
+        // The model must be told about a nested foreign key (origin.camera_id)
+        // — both via the entity-description-aware FK guidance and the
+        // detected hint carrying the full JSONPath.
+        let data = json!({
+            "events": [{"event_id": "e1", "origin": {"camera_id": "c9"}}],
+            "cameras": [{"id": "c9", "name": "Cam"}]
+        });
+        let summary = analyze(&data);
+        let onto = DomainOntology {
+            entity_types: vec![
+                EntityTypeSpec::with_description("Event", "A detection event from a camera."),
+                EntityTypeSpec::with_description("Camera", "A video camera."),
+            ],
+            relation_types: vec![],
+        };
+        let (system, _) =
+            build_mapping_prompt(&data, &summary, &onto, None, &MapGenPromptOptions::default());
+        // Strengthened FK section + entity descriptions present.
+        assert!(system.contains("## Foreign keys (REQUIRED)"));
+        assert!(system.contains("* `Camera` — A video camera."));
+        // Detected nested FK hint with its full JSONPath.
+        assert!(system.contains("$.events[*].origin.camera_id"));
     }
 
     #[test]

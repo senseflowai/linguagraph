@@ -57,6 +57,7 @@
 //! - [`handlers`] — bundled handler implementations (currently
 //!   [`handlers::SemanticTextHandler`])
 
+pub mod builtin;
 pub mod capability;
 pub mod context;
 pub mod handlers;
@@ -69,6 +70,7 @@ use std::sync::Arc;
 
 use thiserror::Error;
 
+pub use builtin::BuiltinType;
 pub use capability::Capabilities;
 pub use context::{EmitCtx, IngestCtx, LowerCtx, PrepareCtx, PromptHint};
 pub use op::TypedOp;

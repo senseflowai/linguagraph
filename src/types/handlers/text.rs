@@ -5,7 +5,9 @@
 
 use crate::ast::query::{Literal, PropertyRef};
 use crate::types::context::{EmitCtx, IngestCtx, LowerCtx};
-use crate::types::{Capabilities, TypeError, TypeHandler, TypeId, TypedOp, TypedPredicate};
+use crate::types::{
+    BuiltinType, Capabilities, TypeError, TypeHandler, TypeId, TypedOp, TypedPredicate,
+};
 
 use super::core::{json_kind, ScalarParser, TextParser};
 
@@ -55,7 +57,7 @@ impl TextHandler {
 
 impl TypeHandler for TextHandler {
     fn type_id(&self) -> TypeId {
-        TypeId::new("Text")
+        BuiltinType::Text.type_id()
     }
 
     fn capabilities(&self) -> Capabilities {

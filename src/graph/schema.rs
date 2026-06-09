@@ -3,13 +3,25 @@ use std::collections::{BTreeSet, HashMap};
 
 use crate::graph::scope::Scope;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+/// Storage-shape tag carried by an ingested [`Property`].
+///
+/// Parsed from a mapping document's PascalCase `type` name via the
+/// derived [`std::str::FromStr`]; the `#[strum]` aliases are the single
+/// place recording which spellings collapse onto each variant (e.g.
+/// `Date` / `Timestamp`). The ingest planner maps these to registry
+/// handler ids in [`crate::ingest`].
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+    strum::EnumString, strum::Display,
+)]
 pub enum PropertyType {
     String,
+    #[strum(serialize = "Text", serialize = "SemanticText")]
     Text,
     Number,
     Boolean,
     DateTime,
+    #[strum(serialize = "Timestamp", serialize = "Date")]
     Timestamp,
 }
 

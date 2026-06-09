@@ -342,17 +342,9 @@ fn catalog_from_mapping(mapping: &Mapping, domain: &str) -> Result<OntologyCatal
 }
 
 fn ontology_property_type(type_name: &str) -> Result<OntologyPropertyType, MapperError> {
-    match type_name {
-        "String" => Ok(OntologyPropertyType::String),
-        "Text" | "SemanticText" => Ok(OntologyPropertyType::Text),
-        "Number" | "Int" => Ok(OntologyPropertyType::Int),
-        "Float" => Ok(OntologyPropertyType::Float),
-        "Boolean" | "Bool" => Ok(OntologyPropertyType::Bool),
-        "Date" => Ok(OntologyPropertyType::Date),
-        "DateTime" | "Datetime" | "Timestamp" => Ok(OntologyPropertyType::Datetime),
-        "List" => Ok(OntologyPropertyType::List),
-        other => Err(MapperError::UnknownPropertyType(other.to_string())),
-    }
+    type_name
+        .parse()
+        .map_err(|_| MapperError::UnknownPropertyType(type_name.to_string()))
 }
 
 fn primary_key_property_name(entity: &super::EntityMapping) -> String {
@@ -365,15 +357,9 @@ fn primary_key_property_name(entity: &super::EntityMapping) -> String {
 }
 
 fn graph_property_type(type_name: &str) -> Result<PropertyType, MapperError> {
-    match type_name {
-        "String" => Ok(PropertyType::String),
-        "Text" | "SemanticText" => Ok(PropertyType::Text),
-        "Number" => Ok(PropertyType::Number),
-        "Boolean" => Ok(PropertyType::Boolean),
-        "DateTime" => Ok(PropertyType::DateTime),
-        "Date" | "Timestamp" => Ok(PropertyType::Timestamp),
-        other => Err(MapperError::UnknownPropertyType(other.to_string())),
-    }
+    type_name
+        .parse()
+        .map_err(|_| MapperError::UnknownPropertyType(type_name.to_string()))
 }
 
 fn contexts_align(a: &[usize], b: &[usize]) -> bool {

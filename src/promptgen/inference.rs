@@ -5,15 +5,20 @@
 //! [`InferredType`] guess. The analyzer composes these — it does **not**
 //! re-implement them — so we can exercise each rule in isolation.
 
-use std::fmt;
-
 use serde_json::Value;
+
+use crate::types::BuiltinType;
 
 /// A type guess emitted by [`infer`].
 ///
 /// The string identifiers match what the prompt asks the LLM to use
-/// in the resulting mapping (`"type": "SemanticText"` etc.).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+/// in the resulting mapping (`"type": "SemanticText"` etc.). Variant
+/// names are the strings verbatim, so `strum` derives `as_str` /
+/// `Display` with no `match` to maintain.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+    strum::Display, strum::IntoStaticStr,
+)]
 pub enum InferredType {
     /// Used for the entity's primary key — surfaced as a hint, not as
     /// a `type` tag in the output mapping.
@@ -36,23 +41,24 @@ pub enum InferredType {
 }
 
 impl InferredType {
+    /// The guess as a static string (e.g. `"SemanticText"`).
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Identifier => "Identifier",
-            Self::SemanticText => "SemanticText",
-            Self::Keyword => "Keyword",
-            Self::DateTime => "DateTime",
-            Self::Text => "Text",
-            Self::Number => "Number",
-            Self::Boolean => "Boolean",
-            Self::Unknown => "Unknown",
-        }
+        self.into()
     }
-}
 
-impl fmt::Display for InferredType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
+    /// The registered [`BuiltinType`] this guess corresponds to, when
+    /// any. Inference-only hints (`Identifier`, `Keyword`, `Unknown`)
+    /// and `SemanticText` (registered conditionally, not a core scalar)
+    /// have no core scalar counterpart and return `None`.
+    pub fn to_builtin(self) -> Option<BuiltinType> {
+        match self {
+            Self::Text => Some(BuiltinType::Text),
+            Self::Number => Some(BuiltinType::Number),
+            Self::Boolean => Some(BuiltinType::Boolean),
+            Self::DateTime => Some(BuiltinType::Timestamp),
+            Self::SemanticText => Some(BuiltinType::SemanticText),
+            Self::Identifier | Self::Keyword | Self::Unknown => None,
+        }
     }
 }
 

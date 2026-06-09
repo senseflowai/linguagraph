@@ -14,7 +14,7 @@ use crate::types::TypeRegistry;
 /// Properties added by the senseflow ingestion pipeline that carry no
 /// semantic meaning for DSL query construction and should be hidden from
 /// the schema block shown to the LLM.
-const SCHEMA_HIDDEN_PROPS: &[&str] = &["entity_id", "primary_key"];
+const SCHEMA_HIDDEN_PROPS: &[&str] = &["_canonical", "entity_id", "primary_key"];
 
 #[derive(Debug, Clone)]
 pub struct PromptSchemaSelection {
@@ -723,6 +723,11 @@ mod tests {
                         description: None,
                     },
                     Property {
+                        name: "_canonical".into(),
+                        ty: PT::String,
+                        description: None,
+                    },
+                    Property {
                         name: "title".into(),
                         ty: PT::String,
                         description: None,
@@ -750,6 +755,49 @@ mod tests {
         assert!(
             !prompt.contains("primary_key"),
             "primary_key must be excluded"
+        );
+        assert!(
+            !prompt.contains("_canonical"),
+            "_canonical must be excluded"
+        );
+    }
+
+    #[test]
+    fn query_prompt_excludes_canonical_system_property_from_entity_type() {
+        let schema = GraphSchema {
+            nodes: vec![NodeKind {
+                label: "Person".into(),
+                domain: None,
+                extra_labels: Vec::new(),
+                scopes: Vec::new(),
+                description: None,
+                properties: vec![
+                    Property {
+                        name: "_canonical".into(),
+                        ty: PT::String,
+                        description: Some("system merge key".into()),
+                    },
+                    Property {
+                        name: "name".into(),
+                        ty: PT::String,
+                        description: None,
+                    },
+                ],
+            }],
+            relationships: vec![],
+        };
+
+        let prompt = generate_query_prompt("find people", &schema, &PromptOptions::default());
+
+        assert!(prompt.contains("Person"));
+        assert!(prompt.contains("name: string"));
+        assert!(
+            !prompt.contains("_canonical"),
+            "_canonical must not be rendered as an entity property"
+        );
+        assert!(
+            !prompt.contains("system merge key"),
+            "hidden property descriptions must not leak into the prompt"
         );
     }
 }

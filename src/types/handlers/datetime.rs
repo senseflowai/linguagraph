@@ -27,7 +27,9 @@ use serde_json::Value;
 
 use crate::ast::query::{Literal, PropertyRef};
 use crate::types::context::{EmitCtx, IngestCtx, LowerCtx, PromptHint};
-use crate::types::{Capabilities, TypeError, TypeHandler, TypeId, TypedOp, TypedPredicate};
+use crate::types::{
+    BuiltinType, Capabilities, TypeError, TypeHandler, TypeId, TypedOp, TypedPredicate,
+};
 
 use super::core::{
     days_in_month, epoch_to_ymdhms, json_kind, DateParser, ScalarParser, TimestampParser,
@@ -212,12 +214,12 @@ impl TypeHandler for DateTimeHandler {
 
 /// Build a [`DateTimeHandler`] for the built-in `Date` type.
 pub fn date_handler() -> DateTimeHandler {
-    DateTimeHandler::new("Date", Box::new(DateParser))
+    DateTimeHandler::new(BuiltinType::Date.type_id(), Box::new(DateParser))
 }
 
 /// Build a [`DateTimeHandler`] for the built-in `Timestamp` type.
 pub fn timestamp_handler() -> DateTimeHandler {
-    DateTimeHandler::new("Timestamp", Box::new(TimestampParser))
+    DateTimeHandler::new(BuiltinType::Timestamp.type_id(), Box::new(TimestampParser))
 }
 
 // ─── Value resolution ───────────────────────────────────────────────────

@@ -23,7 +23,9 @@
 
 use crate::ast::query::Literal;
 use crate::types::context::{EmitCtx, IngestCtx, LowerCtx};
-use crate::types::{Capabilities, TypeError, TypeHandler, TypeId, TypedOp, TypedPredicate};
+use crate::types::{
+    BuiltinType, Capabilities, TypeError, TypeHandler, TypeId, TypedOp, TypedPredicate,
+};
 use serde_json::Value;
 use tracing::warn;
 
@@ -654,12 +656,12 @@ pub(super) fn json_kind(v: &Value) -> &'static str {
 
 /// Build a [`ScalarTypeHandler`] for the built-in `Number` type.
 pub fn number_handler() -> ScalarTypeHandler {
-    ScalarTypeHandler::new("Number", Box::new(NumberParser))
+    ScalarTypeHandler::new(BuiltinType::Number.type_id(), Box::new(NumberParser))
 }
 
 /// Build a [`ScalarTypeHandler`] for the built-in `Boolean` type.
 pub fn boolean_handler() -> ScalarTypeHandler {
-    ScalarTypeHandler::new("Boolean", Box::new(BooleanParser))
+    ScalarTypeHandler::new(BuiltinType::Boolean.type_id(), Box::new(BooleanParser))
 }
 
 #[cfg(test)]

@@ -6,8 +6,12 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, strum::Display,
+    strum::IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum TypedOp {
     // ── Exact / range / containment ─────────────────────────────────
     Eq,
@@ -33,28 +37,8 @@ pub enum TypedOp {
 }
 
 impl TypedOp {
+    /// The op as a static snake_case string (e.g. `"starts_with"`).
     pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Eq => "eq",
-            Self::Neq => "neq",
-            Self::Gt => "gt",
-            Self::Gte => "gte",
-            Self::Lt => "lt",
-            Self::Lte => "lte",
-            Self::In => "in",
-            Self::Contains => "contains",
-            Self::StartsWith => "starts_with",
-            Self::EndsWith => "ends_with",
-            Self::Search => "search",
-            Self::SearchReranked => "search_reranked",
-            Self::HybridSearch => "hybrid_search",
-            Self::Near => "near",
-        }
-    }
-}
-
-impl std::fmt::Display for TypedOp {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
+        (*self).into()
     }
 }

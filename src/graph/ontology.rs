@@ -14,6 +14,7 @@ use thiserror::Error;
 
 use crate::embeddings::{EmbedError, Embedder, Reranker};
 use crate::prompt::GraphSchema;
+use crate::types::BuiltinType;
 
 /// Type of a property defined in the ontology.
 ///
@@ -21,29 +22,46 @@ use crate::prompt::GraphSchema;
 /// extraction and the storage shape ingested into the graph. `Text` is
 /// the semantic-text variant: properties of this type are routed
 /// through the `SemanticTextHandler` (embedded + vector-searchable).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Two string representations co-exist by design:
+///
+/// * **serde / prompt** — lowercase (`"text"`, `"int"`, …), the JSON
+///   shape used in stored ontologies and prompt rendering.
+/// * **mapping `type` names** — PascalCase (`"Text"`, `"Number"`, …),
+///   parsed via the derived [`std::str::FromStr`]. The `#[strum]`
+///   aliases below are the single place that records which historical
+///   spellings collapse onto each variant (e.g. `Number` / `Int`).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::EnumString, strum::Display,
+)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum OntologyPropertyType {
     String,
+    #[strum(serialize = "Text", serialize = "SemanticText")]
     Text,
+    #[strum(serialize = "Int", serialize = "Number")]
     Int,
     Float,
+    #[strum(serialize = "Bool", serialize = "Boolean")]
     Bool,
     Date,
+    #[strum(serialize = "Datetime", serialize = "DateTime", serialize = "Timestamp")]
     Datetime,
     List,
 }
 
 impl OntologyPropertyType {
     /// Stable type id used by the type registry to look up handlers.
-    /// Mirrors the historical mapping baked into the ingest pipeline.
+    /// Sourced from [`BuiltinType`] so the registry vocabulary has a
+    /// single definition; `List` has no handler and is a pseudo-type.
     pub fn type_id(self) -> &'static str {
         match self {
-            Self::String => "Text",
-            Self::Text => "SemanticText",
-            Self::Int | Self::Float => "Number",
-            Self::Bool => "Boolean",
-            Self::Date | Self::Datetime => "Timestamp",
+            Self::String => BuiltinType::Text.id(),
+            Self::Text => BuiltinType::SemanticText.id(),
+            Self::Int | Self::Float => BuiltinType::Number.id(),
+            Self::Bool => BuiltinType::Boolean.id(),
+            Self::Date | Self::Datetime => BuiltinType::Timestamp.id(),
             Self::List => "List",
         }
     }
@@ -53,7 +71,7 @@ impl OntologyPropertyType {
     /// lowering), `None` for plain comparisons.
     pub fn query_type_id(self) -> Option<&'static str> {
         match self {
-            Self::Text => Some("SemanticText"),
+            Self::Text => Some(BuiltinType::SemanticText.id()),
             Self::String | Self::Date | Self::Datetime => Some(self.type_id()),
             Self::Int | Self::Float | Self::Bool | Self::List => None,
         }
@@ -62,6 +80,7 @@ impl OntologyPropertyType {
 
 /// One typed property that an entity of a given type may carry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub struct PropertySpec {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -73,6 +92,7 @@ pub struct PropertySpec {
 
 /// One allowed entity type the LLM may emit.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub struct EntityTypeSpec {
     /// Canonical PascalCase name (e.g. `LegalNorm`).
     pub name: String,
@@ -121,6 +141,7 @@ impl EntityTypeSpec {
 
 /// One allowed relation type the LLM may emit.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub struct RelationTypeSpec {
     /// Canonical UPPER_SNAKE name (e.g. `GRANTS`).
     pub name: String,
@@ -146,6 +167,7 @@ impl RelationTypeSpec {
 
 /// All allowed types for a single domain (e.g. `legal`, `medical`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub struct DomainOntology {
     #[serde(default)]
     pub entity_types: Vec<EntityTypeSpec>,

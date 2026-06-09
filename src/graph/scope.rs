@@ -24,31 +24,36 @@
 //!   `scope_structured`) attached alongside the entity's type label.
 
 use serde::{Deserialize, Serialize};
+use strum::VariantNames;
 
 /// Origin of an [`EntityGraph`](crate::graph::EntityGraph): the kind of
 /// source it was extracted from. See the [module docs](self) for
 /// semantics and the round-trip representations.
+///
+/// The Cypher-label spelling (`scope_text`, …) lives in the `#[strum]`
+/// attributes — the single source for both [`cypher_label`](Self::cypher_label)
+/// and its inverse, with `serde` keeping the lowercase JSON form.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+    strum::EnumString, strum::IntoStaticStr, strum::VariantNames,
 )]
 #[serde(rename_all = "lowercase")]
 pub enum Scope {
     /// Extracted from free-form markdown text (NER, LLM extraction).
+    #[strum(serialize = "scope_text")]
     Text,
     /// Extracted from markdown tables.
+    #[strum(serialize = "scope_table")]
     Table,
     /// Sourced from JSON, databases, or other structured input.
+    #[strum(serialize = "scope_structured")]
     Structured,
 }
 
 impl Scope {
     /// Cypher label used to materialise this scope on a graph node.
     pub fn cypher_label(self) -> &'static str {
-        match self {
-            Scope::Text => "scope_text",
-            Scope::Table => "scope_table",
-            Scope::Structured => "scope_structured",
-        }
+        self.into()
     }
 
     /// Inverse of [`cypher_label`]. Returns `None` for any label that
@@ -56,19 +61,14 @@ impl Scope {
     ///
     /// [`cypher_label`]: Self::cypher_label
     pub fn from_cypher_label(label: &str) -> Option<Self> {
-        match label {
-            "scope_text" => Some(Scope::Text),
-            "scope_table" => Some(Scope::Table),
-            "scope_structured" => Some(Scope::Structured),
-            _ => None,
-        }
+        label.parse().ok()
     }
 }
 
 /// Every Cypher label reserved by [`Scope`], in enum-declaration order.
 /// Consumers (e.g. introspection) can use this to partition raw label
 /// strings into scope vs non-scope labels without re-deriving the set.
-pub const SCOPE_LABELS: &[&str] = &["scope_text", "scope_table", "scope_structured"];
+pub const SCOPE_LABELS: &[&str] = Scope::VARIANTS;
 
 #[cfg(test)]
 mod tests {

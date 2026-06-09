@@ -10,7 +10,7 @@ use crate::graph::{
 };
 use crate::types::context::IngestCtx;
 use crate::types::handlers::SemanticTextHandler;
-use crate::types::{SideEffectQueue, TypeId, TypeRegistry};
+use crate::types::{BuiltinType, SideEffectQueue, TypeId, TypeRegistry};
 
 use super::{IngestError, PlannerOptions};
 
@@ -381,20 +381,20 @@ fn lower_relation_property(
 
 fn node_type_id(property_type: PropertyType) -> &'static str {
     match property_type {
-        PropertyType::String => "Text",
+        PropertyType::String => BuiltinType::Text.id(),
         PropertyType::Text => SemanticTextHandler::TYPE_ID,
-        PropertyType::Number => "Number",
-        PropertyType::Boolean => "Boolean",
-        PropertyType::DateTime | PropertyType::Timestamp => "Timestamp",
+        PropertyType::Number => BuiltinType::Number.id(),
+        PropertyType::Boolean => BuiltinType::Boolean.id(),
+        PropertyType::DateTime | PropertyType::Timestamp => BuiltinType::Timestamp.id(),
     }
 }
 
 fn relation_type_id(property_type: PropertyType) -> &'static str {
     match property_type {
-        PropertyType::String | PropertyType::Text => "Text",
-        PropertyType::Number => "Number",
-        PropertyType::Boolean => "Boolean",
-        PropertyType::DateTime | PropertyType::Timestamp => "Timestamp",
+        PropertyType::String | PropertyType::Text => BuiltinType::Text.id(),
+        PropertyType::Number => BuiltinType::Number.id(),
+        PropertyType::Boolean => BuiltinType::Boolean.id(),
+        PropertyType::DateTime | PropertyType::Timestamp => BuiltinType::Timestamp.id(),
     }
 }
 

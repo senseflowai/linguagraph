@@ -40,6 +40,11 @@ pub struct MapGenPromptOptions {
     /// input document inlined into the user prompt. Oversized documents
     /// are truncated with a marker so a huge file can't blow the context.
     pub max_data_chars: usize,
+    /// Maximum number of items kept per array when inlining the input
+    /// document into the user prompt. The prompt only needs a structural
+    /// sample, not the whole dataset, so every array (including nested
+    /// ones) is capped to this many elements. Default: 2.
+    pub max_items_per_collection: usize,
 }
 
 impl Default for MapGenPromptOptions {
@@ -49,6 +54,7 @@ impl Default for MapGenPromptOptions {
             include_inferred_summary: true,
             registry: None,
             max_data_chars: 16_000,
+            max_items_per_collection: 2,
         }
     }
 }
@@ -87,7 +93,7 @@ pub fn build_mapping_prompt(
     }
     system.push_str(&base);
 
-    let user = render_user_payload(data, opts.max_data_chars);
+    let user = render_user_payload(data, opts.max_items_per_collection, opts.max_data_chars);
     (system, user)
 }
 
@@ -192,14 +198,23 @@ fn property_type_label(ty: PropertyType) -> &'static str {
     }
 }
 
-fn render_user_payload(data: &Value, max_chars: usize) -> String {
-    let mut body = serde_json::to_string_pretty(data).unwrap_or_else(|_| data.to_string());
+fn render_user_payload(data: &Value, max_items: usize, max_chars: usize) -> String {
+    // Inline only a structural *sample* of the document: every array is
+    // capped to `max_items` elements (nested arrays too) so the model sees
+    // the shape without the whole dataset. The char cap stays as a final
+    // safety net for pathologically wide rows.
+    let sample = super::collections::sample_arrays(data, max_items);
+    let mut body = serde_json::to_string_pretty(&sample).unwrap_or_else(|_| sample.to_string());
     if body.chars().count() > max_chars {
         let cut: String = body.chars().take(max_chars).collect();
         body = format!("{cut}\n… (input truncated for length)");
     }
     format!(
-        "# Input JSON\n\n```json\n{body}\n```\n\n\
+        "# Input JSON (structural sample)\n\n\
+         The document below is a STRUCTURAL SAMPLE of the real input: each array \
+         shows at most {max_items} item(s) to illustrate the shape. The real \
+         dataset has many more rows — infer the mapping from this structure.\n\n\
+         ```json\n{body}\n```\n\n\
          Produce the linguagraph mapping JSON for the document above now. \
          Output ONLY the JSON mapping.",
     )

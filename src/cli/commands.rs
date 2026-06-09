@@ -336,6 +336,15 @@ pub enum Command {
     GenerateMapping {
         /// Path to the input data JSON file.
         data: PathBuf,
+        /// Comma-separated list of top-level collections to map (e.g.
+        /// `--collections cameras,places`). When omitted, you're asked
+        /// interactively on a TTY; otherwise all collections are used.
+        #[arg(long, value_delimiter = ',')]
+        collections: Vec<String>,
+        /// Number of sample items kept per array when inlining the input
+        /// document into the prompt (structural example, not the full set).
+        #[arg(long = "sample-items", default_value_t = 2)]
+        sample_items: usize,
         /// Ontology domain to use (resolved against the configured
         /// catalog or the built-in one).
         #[arg(long = "ontology-domain")]
@@ -485,6 +494,8 @@ pub async fn run(cli: Cli) -> Result<()> {
         } => cmd_knowledge_prompt(&cli.config, domain, entity_types, relation_types, output).await,
         Command::GenerateMapping {
             data,
+            collections,
+            sample_items,
             ontology_domain,
             ontology_file,
             no_schema,
@@ -501,6 +512,8 @@ pub async fn run(cli: Cli) -> Result<()> {
             cmd_generate_mapping(
                 &cli.config,
                 data,
+                collections,
+                sample_items,
                 ontology_domain,
                 ontology_file,
                 !no_schema,
@@ -1185,6 +1198,8 @@ async fn cmd_knowledge_prompt(
 async fn cmd_generate_mapping(
     config_path: &std::path::Path,
     data: PathBuf,
+    collections: Vec<String>,
+    sample_items: usize,
     ontology_domain: Option<String>,
     ontology_file: Option<PathBuf>,
     fetch_schema: bool,
@@ -1199,14 +1214,51 @@ async fn cmd_generate_mapping(
     prefix_label: Option<String>,
 ) -> Result<()> {
     use crate::mapgen::{
-        describe_properties, generate_mapping, DescribeOptions, MapGenOptions, MapGenPromptOptions,
+        describe_properties, detect_collections, filter_collections, generate_mapping,
+        DescribeOptions, MapGenOptions, MapGenPromptOptions,
     };
+    use std::io::IsTerminal;
 
     let cfg = load_config_or_default(config_path).await;
 
     // Input data.
     let raw = fs::read_to_string(&data).await?;
     let value: serde_json::Value = serde_json::from_str(&raw)?;
+
+    // Choose which top-level collections to map. Precedence: explicit
+    // `--collections` flag → auto-select when there's only one → interactive
+    // multi-select on a TTY → otherwise all (non-interactive default).
+    let available = detect_collections(&value);
+    if available.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("no mappable collections found in {}", data.display()),
+        )
+        .into());
+    }
+    let selected: Vec<String> = if !collections.is_empty() {
+        let names: Vec<&str> = available.iter().map(|c| c.name.as_str()).collect();
+        for c in &collections {
+            if !names.contains(&c.as_str()) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("unknown collection `{c}`; available: {}", names.join(", ")),
+                )
+                .into());
+            }
+        }
+        collections
+    } else if available.len() == 1 {
+        vec![available[0].name.clone()]
+    } else if std::io::stdin().is_terminal() {
+        select_collections_interactively(&available)?
+    } else {
+        available.iter().map(|c| c.name.clone()).collect()
+    };
+    tracing::info!(target: "linguagraph::cli", collections = ?selected, "mapping selected collections");
+    // From here on, operate on just the selected collections (full rows);
+    // only the prompt payload is later down-sampled.
+    let value = filter_collections(&value, &selected);
 
     // Ontology (mandatory).
     let ontology = resolve_ontology(&cfg, ontology_domain, ontology_file).await?;
@@ -1237,6 +1289,7 @@ async fn cmd_generate_mapping(
         max_repair_attempts: max_repairs,
         prompt: MapGenPromptOptions {
             registry,
+            max_items_per_collection: sample_items,
             ..MapGenPromptOptions::default()
         },
     };
@@ -1400,6 +1453,22 @@ fn refine_mapping_interactively(
         "the `interactive` feature is disabled; rebuild with `--features interactive`",
     )
     .into())
+}
+
+#[cfg(feature = "interactive")]
+fn select_collections_interactively(
+    items: &[crate::mapgen::CollectionInfo],
+) -> Result<Vec<String>> {
+    Ok(crate::mapgen::select_collections(items)?)
+}
+
+#[cfg(not(feature = "interactive"))]
+fn select_collections_interactively(
+    items: &[crate::mapgen::CollectionInfo],
+) -> Result<Vec<String>> {
+    // Without the interactive feature there's no TTY menu; fall back to
+    // mapping every detected collection.
+    Ok(items.iter().map(|c| c.name.clone()).collect())
 }
 
 /// For commands that don't need a live DB, missing config falls back to

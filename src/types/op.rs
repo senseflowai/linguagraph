@@ -32,6 +32,12 @@ pub enum TypedOp {
     /// Hybrid: combine an exact equality with a vector score.
     #[serde(alias = "hybrid")]
     HybridSearch,
+    /// Internal consolidated op: a single per-entity hybrid retrieval
+    /// (BM25 ⊕ dense, RRF-fused) followed by one cross-encoder rerank over
+    /// `_canonical`. Produced by the resolver when it merges the
+    /// SemanticText filters that share an alias — never written directly
+    /// in a DSL filter, and deliberately not advertised in `prompt_hint`.
+    EntitySearch,
     /// Geo proximity (reserved for future GeoLocation handler).
     Near,
 }

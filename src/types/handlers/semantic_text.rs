@@ -64,6 +64,12 @@ pub const DEFAULT_SEARCH_THRESHOLD: f64 = 0.8;
 /// box BGE rerankers.
 pub const DEFAULT_RERANKER_THRESHOLD: f64 = 0.5;
 
+/// Default number of RRF-fused candidates handed to the cross-encoder by
+/// the consolidated [`TypedOp::EntitySearch`] path. This is the main
+/// rerank-cost knob: the cross-encoder runs once over `candidate_k`
+/// documents per entity alias, so keep it modest.
+pub const DEFAULT_CANDIDATE_K: i64 = 40;
+
 /// Configuration for [`SemanticTextHandler`].
 #[derive(Debug, Clone)]
 pub struct SemanticTextConfig {
@@ -249,13 +255,22 @@ impl TypeHandler for SemanticTextHandler {
             )
         })?;
 
+        // The consolidated `EntitySearch` op searches the per-entity
+        // `_canonical` collection (which carries every text field, so it
+        // is field-agnostic); every other op stays on its per-field
+        // collection. The base + prefix are identical to ingest, so the
+        // two always address the same Qdrant collection.
+        let collection = if ctx.raw.op == TypedOp::EntitySearch {
+            canonical_collection_for(self, ctx.prefix_index)
+        } else {
+            collection_for(self, &ctx.raw.field, ctx.prefix_index)
+        };
+
         let mut params = BTreeMap::new();
         params.insert("embedding".to_string(), lit_vec);
-        params.insert(
-            "collection".to_string(),
-            Literal::String(collection_for(self, &ctx.raw.field, ctx.prefix_index)),
-        );
+        params.insert("collection".to_string(), Literal::String(collection));
         params.insert("query_str".to_string(), Literal::String(text.to_string()));
+        params.insert("candidate_k".to_string(), Literal::Int(DEFAULT_CANDIDATE_K));
         params.insert("label".to_string(), Literal::String(label.to_string()));
         params.insert("top_k".to_string(), Literal::Int(self.config.top_k as i64));
         params.insert(
@@ -354,6 +369,68 @@ impl TypeHandler for SemanticTextHandler {
                 let score = format!("{alias}__score_{n}");
                 ctx.push_pre_match(format!(
                     "CALL libqlink.search_reranked({coll_p}, {q_p}, {emb_p}, {label_p}, \"{prop}\", {r_thr_p}) \
+                     YIELD id AS {qid}, score AS {score}"
+                ));
+                ctx.set_where(format!("id({alias}) = {qid}"));
+                ctx.contribution_mut()
+                    .order_by
+                    .push((score, OrderDir::Desc));
+                Ok(())
+            }
+
+            // ── Consolidated per-entity hybrid search + single rerank ──
+            //
+            // One CALL per alias against the `_canonical` collection.
+            // qlink fuses a dense and a BM25-sparse branch with RRF,
+            // label-filters by entity type, then reranks the top
+            // `candidate_k` candidates over their canonical text. The
+            // yield is the surviving (id, reranker_score) pairs descending;
+            // the MATCH then joins by id. This replaces N per-field
+            // `search_reranked` calls with a single field-agnostic one.
+            TypedOp::EntitySearch => {
+                let alias = pred.field.alias.as_str();
+                let coll = pred
+                    .params
+                    .get("collection")
+                    .cloned()
+                    .ok_or_else(|| TypeError::Handler("missing 'collection' param".into()))?;
+                let emb = pred
+                    .params
+                    .get("embedding")
+                    .cloned()
+                    .ok_or_else(|| TypeError::Handler("missing 'embedding' param".into()))?;
+                let query_str = pred
+                    .params
+                    .get("query_str")
+                    .cloned()
+                    .ok_or_else(|| TypeError::Handler("missing 'query_str' param".into()))?;
+                let label = pred
+                    .params
+                    .get("label")
+                    .cloned()
+                    .ok_or_else(|| TypeError::Handler("missing 'label' param".into()))?;
+                let rerank_thr = pred
+                    .params
+                    .get("reranker_threshold")
+                    .cloned()
+                    .unwrap_or(Literal::Float(DEFAULT_RERANKER_THRESHOLD));
+                let candidate_k = pred
+                    .params
+                    .get("candidate_k")
+                    .cloned()
+                    .unwrap_or(Literal::Int(DEFAULT_CANDIDATE_K));
+
+                let coll_p = ctx.bind(coll);
+                let q_p = ctx.bind(query_str);
+                let emb_p = ctx.bind(emb);
+                let label_p = ctx.bind(label);
+                let thr_p = ctx.bind(rerank_thr);
+                let k_p = ctx.bind(candidate_k);
+                let n = ctx.fresh_id();
+                let qid = format!("{alias}__qid_{n}");
+                let score = format!("{alias}__score_{n}");
+                ctx.push_pre_match(format!(
+                    "CALL libqlink.search_hybrid_reranked({coll_p}, {q_p}, {emb_p}, {label_p}, {thr_p}, {k_p}) \
                      YIELD id AS {qid}, score AS {score}"
                 ));
                 ctx.set_where(format!("id({alias}) = {qid}"));
@@ -497,6 +574,56 @@ fn collection_for(
     with_prefix_index(prefix_index, &format!("{}__{}", h.config.collection, prop))
 }
 
+/// Per-entity `_canonical` collection name. Mirrors how the ingest path
+/// (`Pipeline::semantic_collection`) derives it — `{base}__{_canonical}`,
+/// which renders with the literal triple underscore (e.g.
+/// `semantic_text___canonical`) — so the consolidated query searches the
+/// very collection the canonical embeddings were written to.
+fn canonical_collection_for(h: &SemanticTextHandler, prefix_index: Option<&str>) -> String {
+    with_prefix_index(
+        prefix_index,
+        &format!("{}__{}", h.config.collection, "_canonical"),
+    )
+}
+
+/// Build the combined query string for a consolidated
+/// [`TypedOp::EntitySearch`] from all the SemanticText filter terms on one
+/// entity alias.
+///
+/// When `field_aware` is set and every term carries a property name, the
+/// string mirrors the indexed `_canonical` document format
+/// (`crate::graph::canonical::build_canonical_text`) — `type: {label}`
+/// followed by `prop: value` lines in sorted order — so the cross-encoder
+/// sees the query and the documents in the same shape. Otherwise (or when
+/// a term has no property) it falls back to a values-only string
+/// `"{label}: v1 | v2"`, which is robust to the DSL model attributing a
+/// value to the wrong field.
+pub fn build_canonical_query(
+    label: &str,
+    terms: &[(Option<String>, String)],
+    field_aware: bool,
+) -> String {
+    let all_named = !terms.is_empty() && terms.iter().all(|(p, _)| p.is_some());
+    if field_aware && all_named {
+        let mut lines: Vec<(&str, &str)> = terms
+            .iter()
+            .map(|(p, v)| (p.as_deref().unwrap_or(""), v.as_str()))
+            .collect();
+        lines.sort_by(|a, b| a.0.cmp(b.0));
+        let mut out = format!("type: {label}");
+        for (p, v) in lines {
+            out.push('\n');
+            out.push_str(p);
+            out.push_str(": ");
+            out.push_str(v);
+        }
+        out
+    } else {
+        let values: Vec<&str> = terms.iter().map(|(_, v)| v.as_str()).collect();
+        format!("{label}: {}", values.join(" | "))
+    }
+}
+
 /// Fold an optional prefix into a Qdrant collection name. Empty
 /// prefixes are normalised to "no prefix" so call sites don't need to
 /// distinguish `Some("")` from `None`.
@@ -568,16 +695,22 @@ pub fn build_embed_insert_batch(
         return Err(SideEffectEmitError::InvalidKeyField(key_field));
     }
 
-    // Build the row payload. Each row is `{key: <pk>, vec: <embedding>}`.
+    // Build the row payload. Each row is `{key: <pk>, vec: <embedding>,
+    // text: <source text>}`. The text feeds `libqlink.insert_hybrid`,
+    // which derives the BM25 sparse vector from it and stores it in the
+    // point payload for reranking.
     let mut rows: Vec<Literal> = Vec::with_capacity(group.len());
     for (eff, vec) in group {
-        let SideEffect::EmbedAndStore { key_value, .. } = eff;
+        let SideEffect::EmbedAndStore {
+            key_value, text, ..
+        } = eff;
         let mut row: BTreeMap<String, Literal> = BTreeMap::new();
         row.insert("key".to_string(), key_value.clone());
         row.insert(
             "vec".to_string(),
             Literal::List(vec.iter().map(|f| Literal::Float(*f as f64)).collect()),
         );
+        row.insert("text".to_string(), Literal::String(text.clone()));
         rows.push(Literal::Object(row));
     }
 
@@ -585,12 +718,17 @@ pub fn build_embed_insert_batch(
     params.insert("coll".to_string(), Literal::String(collection));
     params.insert("rows".to_string(), Literal::List(rows));
 
-    let text = if let Some(plabel) = payload_label {
+    // Labeled inserts (every SemanticText field, including `_canonical`)
+    // go through `insert_hybrid` so the collection carries both a dense
+    // and a BM25 sparse vector plus the canonical text in its payload.
+    // The unlabeled fallback stays dense-only (`insert`) — no handler
+    // queues a label-less embedding today, so it never carries BM25.
+    let cypher = if let Some(plabel) = payload_label {
         params.insert("label".to_string(), Literal::String(plabel));
         format!(
             "UNWIND $rows AS row\n\
              MATCH (n:{label} {{{key_field}: row.key}})\n\
-             CALL libqlink.insert_labeled($coll, id(n), row.vec, $label) YIELD success\n\
+             CALL libqlink.insert_hybrid($coll, id(n), row.vec, row.text, $label) YIELD success\n\
              RETURN count(success) AS inserted",
         )
     } else {
@@ -601,7 +739,7 @@ pub fn build_embed_insert_batch(
              RETURN count(success) AS inserted",
         )
     };
-    Ok(crate::builder::CypherQuery::new(text, params))
+    Ok(crate::builder::CypherQuery::new(cypher, params))
 }
 
 fn is_valid_ident(s: &str) -> bool {
@@ -942,5 +1080,89 @@ mod tests {
             .order_by
             .iter()
             .any(|(k, _)| k.contains("c__exact + c__sem")));
+    }
+
+    #[test]
+    fn build_canonical_query_mirrors_canonical_when_field_aware() {
+        // Field-aware: mirrors `_canonical` — `type: <Label>` then sorted
+        // `prop: value` lines (address before name).
+        let terms = vec![
+            (Some("name".to_string()), "office".to_string()),
+            (Some("address".to_string()), "Астана мангелик".to_string()),
+        ];
+        assert_eq!(
+            build_canonical_query("Place", &terms, true),
+            "type: Place\naddress: Астана мангелик\nname: office"
+        );
+    }
+
+    #[test]
+    fn build_canonical_query_falls_back_to_values_only() {
+        // A term without a property name forces the values-only fallback,
+        // which is robust to the DSL model attributing a value to the
+        // wrong field.
+        let mixed = vec![
+            (None, "office".to_string()),
+            (Some("address".to_string()), "Астана".to_string()),
+        ];
+        assert_eq!(
+            build_canonical_query("Place", &mixed, true),
+            "Place: office | Астана"
+        );
+        // Disabling field_aware also yields values-only.
+        let named = vec![(Some("name".to_string()), "office".to_string())];
+        assert_eq!(
+            build_canonical_query("Place", &named, false),
+            "Place: office"
+        );
+    }
+
+    #[test]
+    fn lower_entity_search_targets_canonical_collection() {
+        let h = handler();
+        let field = pref("p", "name");
+        let value = serde_json::json!("type: Place\nname: office");
+        let mut ctx = lc(&field, TypedOp::EntitySearch, &value, "Place");
+        let pred = h.lower(&mut ctx).unwrap();
+        // EntitySearch searches the `_canonical` collection (triple
+        // underscore: base `test` + `_canonical`), not the per-field one.
+        assert_eq!(
+            pred.params.get("collection").unwrap(),
+            &Literal::String("test___canonical".into())
+        );
+        assert!(pred.params.contains_key("candidate_k"));
+        // The query string round-trips as `query_str` for the reranker.
+        assert_eq!(
+            pred.params.get("query_str").unwrap(),
+            &Literal::String("type: Place\nname: office".into())
+        );
+    }
+
+    #[test]
+    fn emit_entity_search_renders_hybrid_reranked_call() {
+        let h = handler();
+        let field = pref("p", "name");
+        let value = serde_json::json!("type: Place\nname: office");
+        let mut lower = lc(&field, TypedOp::EntitySearch, &value, "Place");
+        let pred = h.lower(&mut lower).unwrap();
+
+        let mut contrib = CypherContribution::default();
+        let mut binder = CountingBinder {
+            next: 0,
+            next_var: 0,
+            params: Default::default(),
+        };
+        let mut emit = EmitCtx::new(&mut contrib, &mut binder);
+        h.emit(&mut emit, &pred).unwrap();
+
+        let pre = contrib.pre_match.join("\n");
+        assert!(
+            pre.contains("CALL libqlink.search_hybrid_reranked("),
+            "pre_match should call search_hybrid_reranked; got {pre}"
+        );
+        assert!(pre.contains("YIELD id AS p__qid_0, score AS p__score_0"));
+        assert_eq!(contrib.where_inline.as_deref(), Some("id(p) = p__qid_0"));
+        assert_eq!(contrib.order_by.len(), 1);
+        assert_eq!(contrib.order_by[0].0, "p__score_0");
     }
 }

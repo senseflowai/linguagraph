@@ -29,7 +29,8 @@ pub use core::{
 };
 pub use datetime::{date_handler, timestamp_handler, DateTimeHandler};
 pub use semantic_text::{
-    build_embed_insert_batch, SemanticTextConfig, SemanticTextHandler, SideEffectEmitError,
+    build_canonical_query, build_embed_insert_batch, SemanticTextConfig, SemanticTextHandler,
+    SideEffectEmitError,
 };
 pub use text::{text_handler, TextHandler};
 

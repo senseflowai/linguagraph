@@ -56,6 +56,7 @@ pub enum Op {
     Search,
     SearchReranked,
     HybridSearch,
+    EntitySearch,
     Near,
 }
 
@@ -127,6 +128,7 @@ impl Op {
             TypedOp::Search => Op::Search,
             TypedOp::SearchReranked => Op::SearchReranked,
             TypedOp::HybridSearch => Op::HybridSearch,
+            TypedOp::EntitySearch => Op::EntitySearch,
             TypedOp::Near => Op::Near,
         }
     }
@@ -146,6 +148,7 @@ impl Op {
             Op::Search => TypedOp::Search,
             Op::SearchReranked => TypedOp::SearchReranked,
             Op::HybridSearch => TypedOp::HybridSearch,
+            Op::EntitySearch => TypedOp::EntitySearch,
             Op::Near => TypedOp::Near,
         }
     }

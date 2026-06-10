@@ -136,14 +136,14 @@ async fn semantic_ingest_runs_qlink_insert_after_memgraph_batches() {
     assert_eq!(summary.side_effect_rows, 2);
 
     let captured = client.captured.lock().unwrap();
-    // [0] = Company MERGE, [1] = one batched libqlink.insert_labeled.
+    // [0] = Company MERGE, [1] = one batched libqlink.insert_hybrid.
     assert_eq!(captured.len(), 2);
     let qlink_batch = &captured[1];
     assert!(
         qlink_batch
             .text
-            .contains("CALL libqlink.insert_labeled($coll, id(n), row.vec, $label)"),
-        "expected UNWIND-batched libqlink.insert_labeled; got:\n{}",
+            .contains("CALL libqlink.insert_hybrid($coll, id(n), row.vec, row.text, $label)"),
+        "expected UNWIND-batched libqlink.insert_hybrid; got:\n{}",
         qlink_batch.text
     );
     assert!(qlink_batch.text.contains("UNWIND $rows AS row"));
@@ -204,8 +204,10 @@ fn semantic_search_compiles_to_qlink_search_call() {
         .with_registry(registry)
         .with_embedder(embedder);
 
-    // `search_reranked` is the cross-encoder path that emits
-    // `libqlink.search_reranked` and binds the reranker threshold.
+    // A SemanticText `search_reranked` (like `eq`/`neq`/`contains`) is a
+    // "default rerank" op: the resolver consolidates it into a single
+    // per-entity hybrid search that emits `libqlink.search_hybrid_reranked`
+    // against the `_canonical` collection and binds the reranker threshold.
     // (`search` is the cheaper KNN path that goes through
     // `libqlink.search_labeled` — covered in unit tests.)
     let dsl_query = dsl::parse_str(
@@ -223,19 +225,19 @@ fn semantic_search_compiles_to_qlink_search_call() {
     .unwrap();
     let cypher = pipeline.compile(dsl_query).unwrap();
 
-    // Prelude must come before MATCH and call libqlink.search_reranked.
+    // Prelude must come before MATCH and call libqlink.search_hybrid_reranked.
     let lines: Vec<&str> = cypher.text.lines().collect();
     let qlink_idx = lines
         .iter()
-        .position(|l| l.contains("libqlink.search_reranked"))
-        .expect("expected libqlink.search_reranked in cypher");
+        .position(|l| l.contains("libqlink.search_hybrid_reranked"))
+        .expect("expected libqlink.search_hybrid_reranked in cypher");
     let match_idx = lines
         .iter()
         .position(|l| l.starts_with("MATCH"))
         .expect("expected MATCH");
     assert!(
         qlink_idx < match_idx,
-        "libqlink.search_reranked prelude must run before the MATCH; got:\n{}",
+        "libqlink.search_hybrid_reranked prelude must run before the MATCH; got:\n{}",
         cypher.text
     );
 
@@ -245,7 +247,7 @@ fn semantic_search_compiles_to_qlink_search_call() {
         "expected ORDER BY c__score_<n> DESC; got:\n{}",
         cypher.text
     );
-    // search_reranked filters internally — no extra `WHERE c__score >=` slip-in.
+    // qlink filters internally — no extra `WHERE c__score >=` slip-in.
     assert!(
         !cypher.text.contains("WHERE c__score"),
         "reranker handles filtering itself; we must not double-filter; got:\n{}",
@@ -263,15 +265,30 @@ fn semantic_search_compiles_to_qlink_search_call() {
         "embedding leaked into cypher text"
     );
 
-    // The natural-language query is bound as `query_str` for the
-    // reranker — it should round-trip the DSL `value` verbatim.
+    // The consolidated query string is bound for the reranker. It mirrors
+    // the `_canonical` document format — `type: <Label>` then `prop: value`
+    // lines — so the cross-encoder sees query and documents in the same
+    // shape. For a single `c.name = apple` term that's
+    // "type: Company\nname: apple".
     let has_query_str = cypher
         .params
         .values()
-        .any(|v| matches!(v, Literal::String(s) if s == "apple"));
+        .any(|v| matches!(v, Literal::String(s) if s == "type: Company\nname: apple"));
     assert!(
         has_query_str,
-        "expected 'apple' bound as query_str; params: {:?}",
+        "expected the canonical-mirrored query string bound as query_str; params: {:?}",
+        cypher.params
+    );
+
+    // The search targets the per-entity `_canonical` collection, not the
+    // per-field one.
+    let has_canonical_collection = cypher
+        .params
+        .values()
+        .any(|v| matches!(v, Literal::String(s) if s == "companies___canonical"));
+    assert!(
+        has_canonical_collection,
+        "expected the `companies___canonical` collection bound; params: {:?}",
         cypher.params
     );
     // Label flows through as a Qdrant payload filter.
@@ -286,9 +303,9 @@ fn semantic_search_compiles_to_qlink_search_call() {
     );
 
     // The reranker threshold (0.42) flows through as a bound Float
-    // param. The cosine `search_threshold` is not currently handed
-    // to libqlink.search_reranked (the call shape took a property
-    // name in that slot), so it stays in the predicate's internal
+    // param. The cosine `search_threshold` is not handed to
+    // libqlink.search_hybrid_reranked (its arg list takes candidate_k,
+    // not a cosine cutoff), so it stays in the predicate's internal
     // params but doesn't reach the bound Cypher params.
     let floats: Vec<f64> = cypher
         .params
@@ -308,13 +325,14 @@ fn semantic_search_compiles_to_qlink_search_call() {
     );
 }
 
-/// Regression: when a query carries two `SemanticText` filters on the
-/// same alias, each `libqlink.search_reranked` call must yield into
-/// distinct variables — Memgraph rejects `Redeclaring variable: c__qid`
-/// otherwise. We disambiguate by appending a fresh integer suffix
-/// allocated from the cursor's variable-name counter.
+/// Consolidation: when a query carries several `SemanticText` "default
+/// rerank" filters on the *same* alias, they collapse into a single
+/// per-entity hybrid search over `_canonical` — one `search_hybrid_reranked`
+/// call, one cross-encoder pass — instead of one call per field. The
+/// combined query string carries every term, field-agnostic, so the DSL
+/// model attributing a value to the "wrong" field no longer drops the hit.
 #[test]
-fn multiple_semantic_searches_on_same_alias_yield_distinct_variables() {
+fn multiple_semantic_filters_on_same_alias_consolidate_into_one_call() {
     let cfg = cfg_with_semantic_text();
     let (registry, embedder) = registry_and_embedder();
     let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg)
@@ -341,36 +359,37 @@ fn multiple_semantic_searches_on_same_alias_yield_distinct_variables() {
     .unwrap();
     let cypher = pipeline.compile(dsl_query).unwrap();
 
-    // Two `libqlink.search_reranked` calls, each yielding into its
-    // own pair of variables.
-    let qid_count = cypher.text.matches("AS c__qid_").count();
-    let score_count = cypher.text.matches("AS c__score_").count();
+    // Exactly ONE consolidated call, yielding into a single pair of vars.
     assert_eq!(
-        qid_count, 2,
-        "expected two distinct c__qid_<n> yields; got:\n{}",
+        cypher.text.matches("CALL libqlink.search_hybrid_reranked").count(),
+        1,
+        "the two same-alias filters must collapse into one call; got:\n{}",
         cypher.text
     );
     assert_eq!(
-        score_count, 2,
-        "expected two distinct c__score_<n> yields; got:\n{}",
+        cypher.text.matches("AS c__qid_").count(),
+        1,
+        "expected a single c__qid_<n> yield; got:\n{}",
         cypher.text
     );
 
-    // The bare `c__qid` / `c__score` names must NOT appear — they
-    // would collide if both calls used them.
+    // The combined query string mirrors `_canonical`: `type: Camera` then
+    // the two `prop: value` lines in sorted-key order (name before
+    // origin_place_description). Both values survive — that's the
+    // field-agnostic win.
+    let expected_query = "type: Camera\nname: TargetAI\norigin_place_description: Mangilik 55";
     assert!(
-        !cypher.text.contains("AS c__qid,") && !cypher.text.contains("AS c__qid\n"),
-        "bare c__qid collides across calls; got:\n{}",
-        cypher.text
+        cypher
+            .params
+            .values()
+            .any(|v| matches!(v, Literal::String(s) if s == expected_query)),
+        "expected combined canonical query string; params: {:?}",
+        cypher.params
     );
 
-    // WHERE references both qid variables.
+    // Joined by id and ordered by the single reranker score.
     assert!(cypher.text.contains("id(c) = c__qid_0"));
-    assert!(cypher.text.contains("id(c) = c__qid_1"));
-
-    // ORDER BY mentions both score variables.
     assert!(cypher.text.contains("c__score_0 DESC"));
-    assert!(cypher.text.contains("c__score_1 DESC"));
 }
 
 /// Regression: an aggregate query whose filters include a typed
@@ -411,9 +430,9 @@ fn aggregate_with_semantic_search_drops_handler_order_by() {
     .unwrap();
     let cypher = pipeline.compile(dsl_query).unwrap();
 
-    // The `libqlink.search_reranked` prelude is still emitted; only
+    // The `libqlink.search_hybrid_reranked` prelude is still emitted; only
     // the score-based ORDER BY is suppressed for aggregates.
-    assert!(cypher.text.contains("CALL libqlink.search_reranked"));
+    assert!(cypher.text.contains("CALL libqlink.search_hybrid_reranked"));
     assert!(
         !cypher.text.contains("ORDER BY p__score"),
         "aggregate queries must not order by an unprojected score column; \
@@ -696,14 +715,14 @@ fn explicit_dsl_type_overrides_ontology_catalog() {
     )
     .unwrap();
     // Compiles cleanly via the explicit SemanticText handler. The
-    // current handler routes `eq` (and `neq`/`contains`) through
-    // `libqlink.search_reranked` rather than emitting a plain
-    // `c.industry = $p0` WHERE clause, so the assertion is on the
-    // call site rather than the equality.
+    // resolver consolidates `eq` (and `neq`/`contains`/`search_reranked`)
+    // into the per-entity hybrid search, so it emits
+    // `libqlink.search_hybrid_reranked` rather than a plain
+    // `c.industry = $p0` WHERE clause — the assertion is on the call site.
     let cypher = pipeline.compile(dsl_query).unwrap();
     assert!(
-        cypher.text.contains("CALL libqlink.search_reranked"),
-        "explicit SemanticText `eq` should still route through search_reranked; got:\n{}",
+        cypher.text.contains("CALL libqlink.search_hybrid_reranked"),
+        "explicit SemanticText `eq` should route through search_hybrid_reranked; got:\n{}",
         cypher.text
     );
 }

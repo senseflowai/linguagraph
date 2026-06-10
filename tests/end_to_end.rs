@@ -176,7 +176,7 @@ async fn prefix_label_scopes_inserts_and_queries() {
 #[tokio::test]
 async fn prefix_index_scopes_embedding_collections() {
     // The pipeline's prefix_index must reach both the ingest-side
-    // embedding side effects (qlink.insert_labeled) and the read-side
+    // embedding side effects (qlink.insert_hybrid) and the read-side
     // collection parameter passed to qlink.search_*.
     use linguagraph::embeddings::MockEmbedder;
     use linguagraph::types::handlers::{SemanticTextConfig, SemanticTextHandler};
@@ -221,7 +221,7 @@ async fn prefix_index_scopes_embedding_collections() {
         // be the prefixed collection name.
         let insert = captured
             .iter()
-            .find(|c| c.text.contains("libqlink.insert_labeled"))
+            .find(|c| c.text.contains("libqlink.insert_hybrid"))
             .expect("expected a qlink insert batch");
         let coll = insert
             .params

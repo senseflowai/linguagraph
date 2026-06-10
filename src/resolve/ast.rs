@@ -13,6 +13,7 @@ use crate::ast::query::*;
 use crate::dsl::schema as d;
 use crate::graph::OntologyCatalog;
 use crate::types::context::{LowerCtx, RawTypedFilter};
+use crate::types::handlers::{build_canonical_query, SemanticTextHandler};
 use crate::types::{TypeError, TypeId, TypeRegistry, TypedOp};
 
 #[derive(Debug, Error)]
@@ -220,6 +221,25 @@ fn lower_direction(d: d::Direction) -> Direction {
     }
 }
 
+/// One entity alias's accumulated SemanticText filter terms, awaiting
+/// consolidation into a single [`TypedOp::EntitySearch`] predicate.
+struct SemGroup {
+    alias: String,
+    label: String,
+    terms: Vec<(Option<String>, String)>,
+}
+
+/// SemanticText ops that fold into the consolidated per-entity search —
+/// exactly the "default rerank" ops that historically each emitted their
+/// own `libqlink.search_reranked`. Explicit `search` (pure KNN) and
+/// `hybrid_search` keep their per-field semantics and are not folded.
+fn is_foldable_entity_op(op: TypedOp) -> bool {
+    matches!(
+        op,
+        TypedOp::Eq | TypedOp::Neq | TypedOp::Contains | TypedOp::SearchReranked
+    )
+}
+
 fn lower_filters(
     filters: &[d::Filter],
     bound: &HashMap<String, ()>,
@@ -232,6 +252,12 @@ fn lower_filters(
         return Ok(None);
     }
     let mut preds = Vec::with_capacity(filters.len());
+    // SemanticText "default rerank" filters that share an alias are
+    // consolidated into a single per-entity hybrid search (see the
+    // post-loop pass). We accumulate their terms here, grouped by alias
+    // in first-appearance order so the generated Cypher is deterministic.
+    let mut semantic_groups: Vec<SemGroup> = Vec::new();
+
     for f in filters {
         let field = resolve_property(&f.field, bound)?;
 
@@ -253,6 +279,34 @@ fn lower_filters(
             .field_type
             .clone()
             .or_else(|| infer_type(&field, alias_labels, catalog));
+
+        // ── Fold SemanticText default-rerank filters by alias. ──────────
+        // `eq`/`neq`/`contains`/`search_reranked` on a SemanticText field
+        // no longer emit their own per-field `search_reranked`; we gather
+        // them per entity and emit one consolidated, field-agnostic hybrid
+        // search over `_canonical` after the loop. A non-string value or a
+        // label we can't resolve falls through to the normal typed path,
+        // which validates and reports the error exactly as before.
+        if effective_type.as_deref() == Some(SemanticTextHandler::TYPE_ID) {
+            if let (Some(op), Some(value), Some(label)) = (
+                parse_typed_op(&f.op),
+                f.value.as_str(),
+                alias_labels.get(field.alias.as_str()),
+            ) {
+                if is_foldable_entity_op(op) {
+                    let alias = field.alias.as_str();
+                    match semantic_groups.iter_mut().find(|g| g.alias == alias) {
+                        Some(g) => g.terms.push((field.property.clone(), value.to_string())),
+                        None => semantic_groups.push(SemGroup {
+                            alias: alias.to_string(),
+                            label: label.clone(),
+                            terms: vec![(field.property.clone(), value.to_string())],
+                        }),
+                    }
+                    continue;
+                }
+            }
+        }
 
         match effective_type {
             // Plain (untyped) predicate: parse the op and convert the
@@ -296,6 +350,40 @@ fn lower_filters(
                 preds.push(FilterExpression::Typed(typed));
             }
         }
+    }
+
+    // ── Consolidated per-entity hybrid search. ─────────────────────────
+    // One synthetic `EntitySearch` typed predicate per alias: build the
+    // combined canonical-style query string (mirroring the `_canonical`
+    // document format), then let the SemanticText handler embed it once
+    // and target the `_canonical` collection. The handler is the one the
+    // registry already holds for `SemanticText`; an inferred type means it
+    // is registered, so `get` cannot miss here.
+    for group in semantic_groups {
+        let query_text = build_canonical_query(&group.label, &group.terms, true);
+        let value = serde_json::Value::String(query_text);
+        let field = PropertyRef {
+            alias: Alias::new(group.alias.as_str()),
+            property: None,
+        };
+        let type_id = TypeId::new(SemanticTextHandler::TYPE_ID);
+        let handler = registry.get(&type_id)?;
+        let mut ctx = LowerCtx {
+            raw: RawTypedFilter {
+                field: &field,
+                op: TypedOp::EntitySearch,
+                value: &value,
+            },
+            type_id: type_id.clone(),
+            field_label: Some(group.label.as_str()),
+            prefix_index,
+        };
+        let typed = handler.lower(&mut ctx)?;
+        preds.push(FilterExpression::Typed(typed));
+    }
+
+    if preds.is_empty() {
+        return Ok(None);
     }
     Ok(Some(if preds.len() == 1 {
         preds.pop().expect("len checked")

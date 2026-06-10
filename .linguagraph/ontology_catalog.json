@@ -507,5 +507,209 @@
       { "name": "REPORTED_IN", "description": "Grant outcomes are reported in the target grant report." },
       { "name": "ORGANISED_BY", "description": "Event is organised by a staff member, volunteer, or the organisation." }
     ]
+  },
+  "cameras": {
+    "entity_types": [
+      {
+        "name": "Camera",
+        "description": "The record of CCTV IP Camera.",
+        "properties": [
+          {
+            "name": "id",
+            "description": "Primary key.",
+            "property_type": "string",
+            "required": true
+          },
+          {
+            "name": "name",
+            "description": "The name assigned to the IP camera device.",
+            "property_type": "text",
+            "required": false
+          },
+          {
+            "name": "place_id",
+            "description": "The unique identifier of the place where the CCTV IP camera is installed.",
+            "property_type": "int",
+            "required": false
+          },
+          {
+            "name": "is_dvr",
+            "description": "Indicates whether the camera is associated with a digital video recorder.",
+            "property_type": "bool",
+            "required": false
+          },
+          {
+            "name": "scheduler_group",
+            "description": "The group name assigned to the camera's scheduling configuration.",
+            "property_type": "string",
+            "required": false
+          },
+          {
+            "name": "state",
+            "description": "Indicates whether the camera is currently operational or non-operational. The value only: 'active' or 'inactive'",
+            "property_type": "string",
+            "required": false
+          },
+          {
+            "name": "capacitygroup_token",
+            "description": "The unique keyword identifier for the capacity group to which the camera belongs.",
+            "property_type": "string",
+            "required": false
+          },
+          {
+            "name": "created_at",
+            "description": "The timestamp when the CCTV IP camera record was created in the system.",
+            "property_type": "datetime",
+            "required": false
+          },
+          {
+            "name": "updated_at",
+            "description": "The date and time when the camera record was last updated.",
+            "property_type": "datetime",
+            "required": false
+          },
+          {
+            "name": "video_streaming_storage_depth",
+            "description": "The number of days video streaming data is retained in storage.",
+            "property_type": "int",
+            "required": false
+          },
+          {
+            "name": "ptz",
+            "description": "Indicates whether the camera supports pan-tilt-zoom functionality.",
+            "property_type": "text",
+            "required": false
+          }
+        ]
+      },
+      {
+        "name": "Place",
+        "description": "Camera installation location.",
+        "properties": [
+          {
+            "name": "id",
+            "description": "Primary key.",
+            "property_type": "string",
+            "required": true
+          },
+          {
+            "name": "name",
+            "description": "The name of the camera installation location.",
+            "property_type": "text",
+            "required": false
+          },
+          {
+            "name": "description",
+            "description": "The physical address where the camera is installed.",
+            "property_type": "text",
+            "required": false
+          },
+          {
+            "name": "latitude",
+            "description": "The geographic coordinate indicating the north-south position of the camera installation location on Earth.",
+            "property_type": "int",
+            "required": false
+          },
+          {
+            "name": "longitude",
+            "description": "The geographic longitude coordinate of the camera installation location.",
+            "property_type": "int",
+            "required": false
+          },
+          {
+            "name": "created_at",
+            "description": "The date and time the camera installation location was created.",
+            "property_type": "datetime",
+            "required": false
+          },
+          {
+            "name": "category_name",
+            "description": "The name of the category to which the place belongs, such as a specific store or location identifier.",
+            "property_type": "string",
+            "required": false
+          },
+          {
+            "name": "kind_name",
+            "description": "The specific type or name of the place, such as mosque, school, or hospital.",
+            "property_type": "text",
+            "required": false
+          }
+        ]
+      },
+      {
+        "name": "Event",
+        "description": "Cameras events.",
+        "properties": [
+          {
+            "name": "event_id",
+            "description": "The unique identifier for a camera event record.",
+            "property_type": "text",
+            "required": false
+          },
+          {
+            "name": "event_type",
+            "description": "Specifies the category or classification of the camera event.",
+            "property_type": "text",
+            "required": false
+          },
+          {
+            "name": "ts",
+            "description": "The timestamp of the event in milliseconds since epoch.",
+            "property_type": "int",
+            "required": false
+          },
+          {
+            "name": "obsolete",
+            "description": "Indicates whether the camera event is no longer current or valid.",
+            "property_type": "bool",
+            "required": false
+          },
+          {
+            "name": "snapshot_url",
+            "description": "A URL pointing to a snapshot image captured during the event.",
+            "property_type": "text",
+            "required": false
+          },
+          {
+            "name": "event_age",
+            "description": "The age of the event in years.",
+            "property_type": "int",
+            "required": false
+          },
+          {
+            "name": "event_beard",
+            "description": "Whether the event involves a beard.",
+            "property_type": "int",
+            "required": false
+          },
+          {
+            "name": "event_gender",
+            "description": "The gender of the person involved in the camera event.",
+            "property_type": "int",
+            "required": false
+          },
+          {
+            "name": "event_glasses",
+            "description": "Number of glasses worn during the event.",
+            "property_type": "int",
+            "required": false
+          },
+          {
+            "name": "event_mask",
+            "description": "A bitmask indicating the types of camera events being monitored or triggered.",
+            "property_type": "int",
+            "required": false
+          }
+        ]
+      }
+    ],
+    "relation_types": [
+      {
+        "name": "LOCATED_AT"
+      },
+      {
+        "name": "CAPTURED_BY"
+      }
+    ]
   }
 }

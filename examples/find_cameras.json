@@ -1,21 +1,15 @@
 {
   "action": "find",
-  "start": { "label": "Camera", "alias": "c" },
+  "start": { "label": "Place", "alias": "p" },
   "traversals": [
-    {
-      "edge": { "label": "LOCATED_IN", "alias": "loc", "direction": "out" },
-      "target": { "label": "Place", "alias": "p" }
-    },
-    {
-      "edge": { "label": "LOCATED_IN", "alias": "loc2", "direction": "out" },
-      "target": { "label": "Location", "alias": "l" }
-    }
+
   ],
   "filters": [
-    { "field": "l.name", "op": "eq", "value": "Алмата" }
+    { "field": "p.description", "op": "eq", "value": "Атырау Баймуханова 70" }
   ],
   "return": [
-    { "field": "c.id", "alias": "camera_id" },
-    { "field": "c.name", "alias": "camera_name" }
+    { "field": "p.id", "alias": "id" },
+    { "field": "p.description", "alias": "description" },
+    { "field": "p.name", "alias": "name" }
   ]
 }

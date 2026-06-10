@@ -140,8 +140,12 @@ fn apply_type_handlers(
                     &raw,
                     effects,
                 );
+                // Canonicalize the mapping's type spelling (`Keyword`,
+                // `Text`, legacy `String`/`SemanticText`, …) to the
+                // registry handler id before lookup.
+                let handler_id = crate::graph::canonical_handler_id(&type_name);
                 let handler = registry
-                    .get(&TypeId::new(&type_name))
+                    .get(&TypeId::new(&handler_id))
                     .map_err(|e| IngestError::Type(e.to_string()))?;
                 handler
                     .on_ingest(&mut ctx)

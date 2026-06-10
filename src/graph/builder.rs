@@ -356,7 +356,7 @@ impl GraphBuilder {
             }
 
             if !entity.properties.contains_key("id") {
-                entity = entity.property("id", PropertyType::String, local_id.clone());
+                entity = entity.property("id", PropertyType::Keyword, local_id.clone());
             }
 
             // Knowledge-extraction payloads typically come without an
@@ -674,7 +674,7 @@ mod tests {
         let entity = EntityGraph::new("Person")
             .label("Human")
             .strict_primary_key("id")
-            .property("id", PropertyType::String, "person-1")
+            .property("id", PropertyType::Keyword, "person-1")
             .property("age", PropertyType::Number, 42);
 
         assert_eq!(entity.r#type, "Person");
@@ -692,7 +692,7 @@ mod tests {
             .entity("Person")
             .label("User")
             .strict_primary_key("id")
-            .property("id", PropertyType::String, "alice")
+            .property("id", PropertyType::Keyword, "alice")
             .property("name", PropertyType::Text, "Alice")
             .add();
 
@@ -700,7 +700,7 @@ mod tests {
             .entity("Person")
             .label("User")
             .strict_primary_key("id")
-            .property("id", PropertyType::String, "bob")
+            .property("id", PropertyType::Keyword, "bob")
             .property("name", PropertyType::Text, "Bob")
             .add();
 
@@ -775,12 +775,12 @@ mod tests {
         let alice = builder
             .entity("Person")
             .strict_primary_key("id")
-            .property("id", PropertyType::String, "alice")
+            .property("id", PropertyType::Keyword, "alice")
             .add();
         let bob = builder
             .entity("Person")
             .strict_primary_key("id")
-            .property("id", PropertyType::String, "bob")
+            .property("id", PropertyType::Keyword, "bob")
             .add();
 
         let graph = builder.build();
@@ -845,7 +845,7 @@ mod tests {
         builder
             .entity("Person")
             .strict_primary_key("id")
-            .property("id", PropertyType::String, "alice")
+            .property("id", PropertyType::Keyword, "alice")
             .add();
         let graph = builder.build();
         assert_eq!(graph.entities().len(), 1);
@@ -1030,7 +1030,7 @@ mod tests {
         let alice = builder
             .entity("Person")
             .strict_primary_key("id")
-            .property("id", PropertyType::String, "alice")
+            .property("id", PropertyType::Keyword, "alice")
             .add();
         let graph = builder.build();
 
@@ -1051,7 +1051,7 @@ mod tests {
         let alice = builder
             .entity("Person")
             .strict_primary_key("id")
-            .property("id", PropertyType::String, "alice")
+            .property("id", PropertyType::Keyword, "alice")
             .add();
         let graph = builder.build();
 
@@ -1071,7 +1071,7 @@ mod tests {
             .entity("Quote")
             .scope(Scope::Text)
             .strict_primary_key("id")
-            .property("id", PropertyType::String, "q1")
+            .property("id", PropertyType::Keyword, "q1")
             .add();
         let graph = builder.build();
 

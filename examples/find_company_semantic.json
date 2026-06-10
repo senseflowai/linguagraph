@@ -4,7 +4,7 @@
   "filters": [
     {
       "field": "c.name",
-      "type": "SemanticText",
+      "type": "Text",
       "op": "search",
       "value": "apple"
     }

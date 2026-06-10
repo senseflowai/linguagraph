@@ -15,14 +15,50 @@ use crate::graph::scope::Scope;
     strum::EnumString, strum::Display,
 )]
 pub enum PropertyType {
-    String,
+    /// Plain string, standard Cypher matching. `String` is the legacy
+    /// spelling, still accepted on input.
+    #[strum(serialize = "Keyword", serialize = "String")]
+    #[serde(alias = "String")]
+    Keyword,
+    /// Free-form text; always handled as `SemanticText` (embedded).
     #[strum(serialize = "Text", serialize = "SemanticText")]
+    #[serde(alias = "SemanticText")]
     Text,
     Number,
     Boolean,
     DateTime,
     #[strum(serialize = "Timestamp", serialize = "Date")]
     Timestamp,
+}
+
+impl PropertyType {
+    /// Registry handler id this storage type resolves to. This is the
+    /// single mapping from the mapping/storage vocabulary to the type
+    /// registry: `Keyword`→`Keyword`, `Text`→`SemanticText` (semantic),
+    /// numbers/bools/dates to their scalar handlers.
+    pub fn handler_id(self) -> &'static str {
+        use crate::types::BuiltinType;
+        match self {
+            Self::Keyword => BuiltinType::Keyword.id(),
+            Self::Text => BuiltinType::SemanticText.id(),
+            Self::Number => BuiltinType::Number.id(),
+            Self::Boolean => BuiltinType::Boolean.id(),
+            Self::DateTime | Self::Timestamp => BuiltinType::Timestamp.id(),
+        }
+    }
+}
+
+/// Canonicalize a property-type spelling from the mapping / DSL vocabulary
+/// to a registry handler id. This is the single trust-boundary translation
+/// that lets the contract names (`Keyword`, `Text`) and their legacy
+/// aliases (`String`, `SemanticText`, `Int`, `Date`, …) all resolve to the
+/// right registered handler. Spellings that aren't built-in property types
+/// (e.g. a custom registered type) pass through unchanged.
+pub fn canonical_handler_id(raw: &str) -> String {
+    use std::str::FromStr;
+    PropertyType::from_str(raw)
+        .map(|pt| pt.handler_id().to_string())
+        .unwrap_or_else(|_| raw.to_string())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

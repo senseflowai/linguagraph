@@ -172,10 +172,30 @@ Each field type owns its behaviour across four stages — *ingestion*,
 *DSL → AST lowering*, *AST → Cypher emission*, and *prompt advertisement*.
 Core modules never branch on type names; they go through a `TypeRegistry`.
 
-### Built-in type: `SemanticText`
+### Textual field types: `Keyword` vs `Text`
 
-Free-text fields searchable via embeddings + [qlink](https://github.com/senseflowai/qlink).
-Configure once in `config.toml`:
+There are exactly **two** textual property types, and the choice is the
+whole contract:
+
+- **`Keyword`** — a plain string stored **verbatim**. Cypher matches it with
+  the standard operators (`=`, `!=`, `<`, `>`, `=~` regex, `CONTAINS`,
+  `STARTS WITH`, `ENDS WITH`, `IN`). Use it for identifiers, codes, statuses,
+  and short categorical / enum-like labels — anything you match exactly,
+  filter, or compare. Never embedded.
+- **`Text`** — everything else textual (names, descriptions, summaries,
+  notes). On the linguagraph side it is **always** processed as
+  `SemanticText`: stored on the node *and* embedded for vector / hybrid
+  semantic search.
+
+The legacy spellings `String` (→ `Keyword`) and `SemanticText` (→ `Text`) are
+still accepted on input for backward compatibility, but new mappings and
+ontologies should use `Keyword` / `Text`.
+
+### `Text` under the hood: the `SemanticText` handler
+
+`Text` is backed by the `SemanticText` type handler — free-text search via
+embeddings + [qlink](https://github.com/senseflowai/qlink). Configure it once
+in `config.toml`:
 
 ```toml
 [types.SemanticText]
@@ -196,7 +216,7 @@ Tag a property in the mapping:
 {
   "name": "name",
   "source_path": "$.companies[*].name",
-  "type": "SemanticText"
+  "type": "Text"
 }
 ```
 
@@ -208,7 +228,7 @@ The DSL grows two new ops, `search` and `hybrid_search`:
   "action": "find",
   "start": { "label": "Company", "alias": "c" },
   "filters": [
-    { "field": "c.name", "type": "SemanticText", "op": "search", "value": "apple" }
+    { "field": "c.name", "type": "Text", "op": "search", "value": "apple" }
   ],
   "return": [{ "field": "c.name", "alias": "name" }],
   "limit": 5

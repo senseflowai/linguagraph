@@ -39,7 +39,7 @@ fn bundled_companies_input_yields_well_formed_prompt() {
         .iter()
         .map(|f| (f.name.as_str(), f.inferred_type))
         .collect();
-    assert_eq!(by_name["description"], InferredType::SemanticText);
+    assert_eq!(by_name["description"], InferredType::Text);
     assert_eq!(by_name["industry"], InferredType::Keyword);
     assert_eq!(by_name["founded_at"], InferredType::DateTime);
     assert_eq!(by_name["is_public"], InferredType::Boolean);
@@ -66,7 +66,7 @@ fn bundled_companies_input_yields_well_formed_prompt() {
     // Header for the inferred entity, with the path and sample count.
     assert!(prompt.contains("## Company (`$.companies[*]`, 3 samples)"));
     // Type recommendations bubble up correctly.
-    assert!(prompt.contains("`description` → **SemanticText**"));
+    assert!(prompt.contains("`description` → **Text**"));
     assert!(prompt.contains("`industry` → **Keyword**"));
     assert!(prompt.contains("`founded_at` → **DateTime**"));
     // Rules are present; few-shot example is on by default.
@@ -167,7 +167,7 @@ fn golden_invariants_for_companies_input() {
         "$.companies[*]",
         "$.companies[*].id",
         "$.companies[*].description",
-        "**SemanticText**",
+        "**Text**",
         "**Keyword**",
         "**DateTime**",
         "Now produce the mapping JSON for the input below.",

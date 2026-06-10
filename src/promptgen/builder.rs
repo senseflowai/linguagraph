@@ -90,7 +90,7 @@ impl PromptBuilder {
                 handlers.sort_by(|a, b| a.type_id().0.cmp(&b.type_id().0));
                 for h in handlers {
                     let hint = h.prompt_hint();
-                    let _ = writeln!(out, "- **{}**", hint.type_id);
+                    let _ = writeln!(out, "- **{}**", contract_type_name(&hint.type_id.0));
                     if let Some(doc) = hint.doc {
                         let _ = writeln!(out, "    {doc}");
                     }
@@ -99,13 +99,13 @@ impl PromptBuilder {
                         let _ = writeln!(out, "    ops: {}", ops.join(", "));
                     }
                 }
-                // Always also list the analyser's vocabulary so the
-                // LLM knows about Keyword/Number/etc. even when only
-                // SemanticText is registered as a handler.
+                // Always also list the analyser's vocabulary so the LLM
+                // knows the full set even when a handler isn't registered
+                // for every type in this deployment.
                 out.push_str(
-                    "\nThe following auxiliary types are recognised by the mapping \
-                     ingester even when no dedicated handler is registered: \
-                     `Keyword`, `Text`, `Number`, `Boolean`, `DateTime`.\n",
+                    "\nThe full field-type vocabulary is: `Keyword` (plain string, \
+                     exact / range / regex matching), `Text` (free-form text, \
+                     semantic search), `Number`, `Boolean`, `DateTime`.\n",
                 );
             }
             _ => out.push_str(template::DEFAULT_TYPES_CATALOGUE),
@@ -238,14 +238,24 @@ fn render_entity(out: &mut String, ent: &super::EntitySummary) {
 
 fn render_suggested_type(t: InferredType) -> &'static str {
     match t {
-        InferredType::SemanticText => "**SemanticText**",
         InferredType::Keyword => "**Keyword**",
+        InferredType::Text => "**Text**",
         InferredType::DateTime => "**DateTime**",
         InferredType::Number => "Number",
         InferredType::Boolean => "Boolean",
-        InferredType::Text => "Text",
         InferredType::Identifier => "Identifier",
         InferredType::Unknown => "Text *(uncertain — confirm)*",
+    }
+}
+
+/// Map a registry handler id to the contract-facing type name shown to
+/// the LLM. The semantic handler is registered under `SemanticText`, but
+/// the contract exposes it as `Text` (everything textual that isn't a
+/// `Keyword`).
+fn contract_type_name(handler_id: &str) -> &str {
+    match handler_id {
+        "SemanticText" => "Text",
+        other => other,
     }
 }
 
@@ -317,8 +327,8 @@ mod tests {
         assert!(out.contains("## Company (`$.companies[*]`"));
         assert!(out.contains("primary_key: `$.companies[*].id`"));
         // Description is short here so length-only would miss it; the
-        // name hint kicks in.
-        assert!(out.contains("`description` → **SemanticText**"));
+        // name hint kicks in → the semantic `Text` type.
+        assert!(out.contains("`description` → **Text**"));
         assert!(out.contains("`industry` → **Keyword**"));
     }
 
@@ -335,13 +345,13 @@ mod tests {
     fn domain_hints_and_preferred_types_render() {
         let mut opts = PromptGenOptions::default();
         opts.domain_hints = vec!["this is a CRM dataset".into()];
-        opts.preferred_types = vec!["SemanticText".into(), "Keyword".into()];
+        opts.preferred_types = vec!["Text".into(), "Keyword".into()];
         opts.constraints = vec!["entity names must be in English".into()];
         let out = render(json!({"x": 1}), opts);
         assert!(out.contains("# Domain hints"));
         assert!(out.contains("this is a CRM dataset"));
         assert!(out.contains("# Preferred types"));
-        assert!(out.contains("SemanticText, Keyword"));
+        assert!(out.contains("Text, Keyword"));
         assert!(out.contains("# Constraints"));
         assert!(out.contains("entity names must be in English"));
     }
@@ -377,9 +387,11 @@ mod tests {
         opts.registry = Some(registry);
         let out = render(json!({"x": 1}), opts);
         assert!(out.contains("# Available field types"));
-        assert!(out.contains("**SemanticText**"));
-        // The auxiliary-types fallback line is still rendered so the
-        // analyser's vocabulary stays available.
+        // The semantic handler is registered as `SemanticText` but shown
+        // to the LLM under the contract name `Text`.
+        assert!(out.contains("**Text**"));
+        assert!(!out.contains("**SemanticText**"));
+        // The full-vocabulary line keeps `Keyword` available too.
         assert!(out.contains("Keyword"));
     }
 }

@@ -109,7 +109,7 @@ fn graph_from_extracted(
 
             properties
                 .entry(ent.primary_key_field.clone())
-                .or_insert_with(|| (PropertyType::String, literal_to_json(&row.id)));
+                .or_insert_with(|| (PropertyType::Keyword, literal_to_json(&row.id)));
         }
 
         for id in order {
@@ -209,7 +209,7 @@ fn graph_from_extracted(
                                     .strict_primary_key(to_pk_field.clone())
                                     .property(
                                         to_pk_field.clone(),
-                                        PropertyType::String,
+                                        PropertyType::Keyword,
                                         literal_to_json(value),
                                     );
                                 builder.add_reference_entity(stub)
@@ -300,7 +300,7 @@ fn catalog_from_mapping(mapping: &Mapping, domain: &str) -> Result<OntologyCatal
             props.push(PropertySpec {
                 name: pk_name,
                 description: Some("Primary key.".into()),
-                property_type: OntologyPropertyType::String,
+                property_type: OntologyPropertyType::Keyword,
                 required: true,
             });
         }
@@ -509,7 +509,7 @@ mod tests {
                 .get_property("Company", "id")
                 .unwrap()
                 .property_type,
-            OntologyPropertyType::String
+            OntologyPropertyType::Keyword
         );
     }
 

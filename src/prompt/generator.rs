@@ -325,7 +325,7 @@ fn render_props(
             });
             // Property header shape:
             //   <name>: <scalar-ty>                       (untyped, undocumented)
-            //   <name>: <scalar-ty> @<FieldType>           (typed, e.g. SemanticText)
+            //   <name>: <scalar-ty> @<FieldType>           (typed, e.g. Text)
             //   <name>: <scalar-ty> /* description */      (documented only)
             //   <name>: <scalar-ty> @<FieldType> /* … */   (both)
             let mut base = format!("{}: {}", p.name, format_ty(p.ty));
@@ -351,7 +351,7 @@ fn render_props(
 
 fn field_type_marker(spec: &PropertySpec) -> Option<&'static str> {
     match spec.property_type {
-        OntologyPropertyType::Text => Some("SemanticText"),
+        OntologyPropertyType::Text => Some("Text"),
         _ => None,
     }
 }
@@ -359,7 +359,7 @@ fn field_type_marker(spec: &PropertySpec) -> Option<&'static str> {
 fn format_ty(t: super::schema::PropertyType) -> &'static str {
     use super::schema::PropertyType::*;
     match t {
-        String => "string",
+        String => "keyword",
         Int => "int",
         Float => "float",
         Bool => "bool",
@@ -492,7 +492,7 @@ mod tests {
         };
         let prompt = generate_system_prompt(&schema, &PromptOptions::default());
         assert!(prompt.contains("Person"));
-        assert!(prompt.contains("name: string"));
+        assert!(prompt.contains("name: keyword"));
         assert!(prompt.contains("(Person)-[:KNOWS]->(Person)"));
         assert!(prompt.contains("\"action\": \"find\""));
     }
@@ -531,7 +531,7 @@ mod tests {
                     properties: vec![crate::graph::PropertySpec {
                         name: "state".into(),
                         description: Some("active or inactive".into()),
-                        property_type: crate::graph::OntologyPropertyType::String,
+                        property_type: crate::graph::OntologyPropertyType::Keyword,
                         required: false,
                     }],
                     embedding: None,
@@ -548,9 +548,9 @@ mod tests {
             },
         );
         assert!(prompt.contains("Camera — An IP surveillance camera"));
-        assert!(prompt.contains("state: string /* active or inactive */"));
-        assert!(prompt.contains("id: string"));
-        assert!(!prompt.contains("id: string /*"));
+        assert!(prompt.contains("state: keyword /* active or inactive */"));
+        assert!(prompt.contains("id: keyword"));
+        assert!(!prompt.contains("id: keyword /*"));
     }
 
     #[test]
@@ -790,7 +790,7 @@ mod tests {
         let prompt = generate_query_prompt("find people", &schema, &PromptOptions::default());
 
         assert!(prompt.contains("Person"));
-        assert!(prompt.contains("name: string"));
+        assert!(prompt.contains("name: keyword"));
         assert!(
             !prompt.contains("_canonical"),
             "_canonical must not be rendered as an entity property"

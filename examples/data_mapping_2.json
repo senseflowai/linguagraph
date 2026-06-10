@@ -7,25 +7,25 @@
       "properties": [
         {
           "name": "id",
-          "type": "Text",
+          "type": "Keyword",
           "source_path": "$.cameras[*].id",
           "description": "Unique identifier for the camera."
         },
         {
           "name": "name",
-          "type": "SemanticText",
+          "type": "Text",
           "source_path": "$.cameras[*].name",
           "description": "Human-readable name of the camera."
         },
         {
           "name": "state",
-          "type": "Text",
+          "type": "Keyword",
           "source_path": "$.cameras[*].state",
           "description": "Current operational state of the camera (e.g., active, inactive)."
         },
         {
           "name": "state_reason",
-          "type": "Text",
+          "type": "Keyword",
           "source_path": "$.cameras[*].state_reason",
           "description": "Reason for the current state."
         },
@@ -43,7 +43,7 @@
         },
         {
           "name": "capacity_group_token",
-          "type": "Text",
+          "type": "Keyword",
           "source_path": "$.cameras[*].capacitygroup_token",
           "description": "Token identifying the capacity group this camera belongs to."
         },
@@ -61,13 +61,13 @@
         },
         {
           "name": "snapshot_url",
-          "type": "Text",
+          "type": "Keyword",
           "source_path": "$.cameras[*].snapshot_url",
           "description": "URL to the latest snapshot image of the camera."
         },
         {
           "name": "video_modules",
-          "type": "Text",
+          "type": "Keyword",
           "source_path": "$.cameras[*].video_modules",
           "description": "List of active video analytics module codes."
         }
@@ -81,13 +81,13 @@
       "properties": [
         {
           "name": "url",
-          "type": "Text",
+          "type": "Keyword",
           "source_path": "$.cameras[*].source.url",
           "description": "Full RTSP URL for the video stream."
         },
         {
           "name": "host",
-          "type": "Text",
+          "type": "Keyword",
           "source_path": "$.cameras[*].source.body.host",
           "description": "IP address or hostname of the camera."
         },
@@ -99,25 +99,25 @@
         },
         {
           "name": "protocol",
-          "type": "Text",
+          "type": "Keyword",
           "source_path": "$.cameras[*].source.body.protocol",
           "description": "Protocol used (e.g., rtsp)."
         },
         {
           "name": "username",
-          "type": "Text",
+          "type": "Keyword",
           "source_path": "$.cameras[*].source.body.username",
           "description": "Username for authentication."
         },
         {
           "name": "password",
-          "type": "Text",
+          "type": "Keyword",
           "source_path": "$.cameras[*].source.body.password",
           "description": "Password for authentication."
         },
         {
           "name": "path",
-          "type": "Text",
+          "type": "Keyword",
           "source_path": "$.cameras[*].source.body.path",
           "description": "Stream path on the server."
         },
@@ -137,7 +137,7 @@
       "properties": [
         {
           "name": "host",
-          "type": "Text",
+          "type": "Keyword",
           "source_path": "$.cameras[*].onvif_host",
           "description": "ONVIF host IP."
         },
@@ -149,13 +149,13 @@
         },
         {
           "name": "username",
-          "type": "Text",
+          "type": "Keyword",
           "source_path": "$.cameras[*].onvif_login",
           "description": "ONVIF username."
         },
         {
           "name": "password",
-          "type": "Text",
+          "type": "Keyword",
           "source_path": "$.cameras[*].onvif_password",
           "description": "ONVIF password."
         }
@@ -189,7 +189,7 @@
       "properties": [
         {
           "name": "name",
-          "type": "SemanticText",
+          "type": "Text",
           "source_path": "$.cameras[*].video_analytics.modules[*].module",
           "description": "Name of the analytics module."
         }
@@ -203,31 +203,31 @@
       "properties": [
         {
           "name": "id",
-          "type": "Text",
+          "type": "Keyword",
           "source_path": "$.cameras[*].video_analytics.modules[*].config.roi[*].id",
           "description": "Unique ID of the ROI."
         },
         {
           "name": "name",
-          "type": "SemanticText",
+          "type": "Text",
           "source_path": "$.cameras[*].video_analytics.modules[*].config.roi[*].name",
           "description": "Name of the ROI."
         },
         {
           "name": "polygon",
-          "type": "Text",
+          "type": "Keyword",
           "source_path": "$.cameras[*].video_analytics.modules[*].config.roi[*].polygon",
           "description": "Coordinates defining the polygon shape."
         },
         {
           "name": "obj_class_type",
-          "type": "Text",
+          "type": "Keyword",
           "source_path": "$.cameras[*].video_analytics.modules[*].config.roi[*].obj_class_type",
           "description": "Type of object class monitored."
         },
         {
           "name": "situation_id",
-          "type": "Text",
+          "type": "Keyword",
           "source_path": "$.cameras[*].video_analytics.modules[*].config.roi[*].situation_id",
           "description": "ID of the situation associated with this ROI."
         },
@@ -259,31 +259,31 @@
       "properties": [
         {
           "name": "id",
-          "type": "Text",
+          "type": "Keyword",
           "source_path": "$.cameras[*].video_analytics.modules[*].config.lines[*].id",
           "description": "Unique ID of the line."
         },
         {
           "name": "name",
-          "type": "SemanticText",
+          "type": "Text",
           "source_path": "$.cameras[*].video_analytics.modules[*].config.lines[*].name",
           "description": "Name of the line."
         },
         {
           "name": "coords",
-          "type": "Text",
+          "type": "Keyword",
           "source_path": "$.cameras[*].video_analytics.modules[*].config.lines[*].coords",
           "description": "Coordinates of the line."
         },
         {
           "name": "direction",
-          "type": "Text",
+          "type": "Keyword",
           "source_path": "$.cameras[*].video_analytics.modules[*].config.lines[*].direction",
           "description": "Direction of detection."
         },
         {
           "name": "obj_classes",
-          "type": "Text",
+          "type": "Keyword",
           "source_path": "$.cameras[*].video_analytics.modules[*].config.lines[*].obj_classes",
           "description": "List of object classes monitored by this line."
         }
@@ -298,7 +298,7 @@
       "properties": [
         {
           "name": "id",
-          "type": "Text",
+          "type": "Keyword",
 
       "description": "A physical location where a camera is installed.",
       "properties": [
@@ -311,7 +311,7 @@
         {
           "name": "name",
 
-          "type": "SemanticText",
+          "type": "Text",
 
           "source_path": "$.cameras[*].origin.place_name",
           "description": "Name of the place."
@@ -319,7 +319,7 @@
         {
 
           "name": "address",
-          "type": "SemanticText",
+          "type": "Text",
           "source_path": "$.cameras[*].origin.place_description",
           "description": "Address of the place."
         },
@@ -345,7 +345,7 @@
         },
         {
           "name": "group_id",
-          "type": "Text",
+          "type": "Keyword",
           "source_path": "$.cameras[*].origin.group_id",
           "description": "ID of the group this place belongs to."
         }
@@ -359,13 +359,13 @@
       "properties": [
         {
           "name": "id",
-          "type": "Text",
+          "type": "Keyword",
           "source_path": "$.cameras[*].tags[*].id",
           "description": "Unique ID of the tag."
         },
         {
           "name": "name",
-          "type": "SemanticText",
+          "type": "Text",
           "source_path": "$.cameras[*].tags[*].name",
           "description": "Name of the tag."
         }

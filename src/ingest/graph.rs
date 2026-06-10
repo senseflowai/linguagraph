@@ -381,7 +381,7 @@ fn lower_relation_property(
 
 fn node_type_id(property_type: PropertyType) -> &'static str {
     match property_type {
-        PropertyType::String => BuiltinType::Text.id(),
+        PropertyType::Keyword => BuiltinType::Keyword.id(),
         PropertyType::Text => SemanticTextHandler::TYPE_ID,
         PropertyType::Number => BuiltinType::Number.id(),
         PropertyType::Boolean => BuiltinType::Boolean.id(),
@@ -391,7 +391,9 @@ fn node_type_id(property_type: PropertyType) -> &'static str {
 
 fn relation_type_id(property_type: PropertyType) -> &'static str {
     match property_type {
-        PropertyType::String | PropertyType::Text => BuiltinType::Text.id(),
+        // Relationship properties are stored plainly — never embedded —
+        // so both textual types resolve to the Keyword handler here.
+        PropertyType::Keyword | PropertyType::Text => BuiltinType::Keyword.id(),
         PropertyType::Number => BuiltinType::Number.id(),
         PropertyType::Boolean => BuiltinType::Boolean.id(),
         PropertyType::DateTime | PropertyType::Timestamp => BuiltinType::Timestamp.id(),
@@ -416,7 +418,7 @@ fn literal_from_json_as_type(
     property_type: PropertyType,
 ) -> Result<Literal, IngestError> {
     match property_type {
-        PropertyType::String | PropertyType::Text => Ok(Literal::String(json_to_string(value))),
+        PropertyType::Keyword | PropertyType::Text => Ok(Literal::String(json_to_string(value))),
         PropertyType::Number => json_to_number(value, property_name),
         PropertyType::Boolean => json_to_bool(value, property_name).map(Literal::Bool),
         PropertyType::DateTime | PropertyType::Timestamp => match value {
@@ -586,13 +588,13 @@ mod tests {
         let alice = graph
             .entity("Person")
             .strict_primary_key("id")
-            .property("id", PropertyType::String, "a")
+            .property("id", PropertyType::Keyword, "a")
             .property("name", PropertyType::Text, "Alice")
             .add();
         let bob = graph
             .entity("Person")
             .strict_primary_key("id")
-            .property("id", PropertyType::String, "b")
+            .property("id", PropertyType::Keyword, "b")
             .property("name", PropertyType::Text, "Bob")
             .add();
         graph
@@ -632,7 +634,7 @@ mod tests {
         graph
             .entity("Person")
             .strict_primary_key("id")
-            .property("id", PropertyType::String, "alice")
+            .property("id", PropertyType::Keyword, "alice")
             .property("name", PropertyType::Text, "Alice")
             .add();
         graph.chunk("Alice met Bob.").add().unwrap();
@@ -674,12 +676,12 @@ mod tests {
         let a = graph
             .entity("Person")
             .strict_primary_key("id")
-            .property("id", PropertyType::String, "a")
+            .property("id", PropertyType::Keyword, "a")
             .add();
         let b = graph
             .entity("Person")
             .strict_primary_key("id")
-            .property("id", PropertyType::String, "b")
+            .property("id", PropertyType::Keyword, "b")
             .add();
         graph.relationship(a, "KNOWS", b).add().unwrap();
 
@@ -711,7 +713,7 @@ mod tests {
         graph
             .entity("Person")
             .strict_primary_key("id")
-            .property("id", PropertyType::String, "a")
+            .property("id", PropertyType::Keyword, "a")
             .property("name", PropertyType::Text, "Alice")
             .add();
 
@@ -743,7 +745,7 @@ mod tests {
         graph
             .entity("Person")
             .strict_primary_key("id")
-            .property("id", PropertyType::String, "a")
+            .property("id", PropertyType::Keyword, "a")
             .add();
 
         let insert = plan_graph_with_registry_and_prefix(
@@ -782,7 +784,7 @@ mod tests {
         graph
             .entity("Person")
             .strict_primary_key("id")
-            .property("id", PropertyType::String, 100)
+            .property("id", PropertyType::Keyword, 100)
             .add();
 
         let insert = plan_graph_with_registry(
@@ -810,7 +812,7 @@ mod tests {
             Literal::Bool(true)
         );
         assert_eq!(
-            literal_from_json(&json!(["a", 1]), "label", Some(PropertyType::String)).unwrap(),
+            literal_from_json(&json!(["a", 1]), "label", Some(PropertyType::Keyword)).unwrap(),
             Literal::String(r#"["a",1]"#.into())
         );
     }
@@ -822,13 +824,13 @@ mod tests {
             .entity("Person")
             .scope(Scope::Text)
             .strict_primary_key("id")
-            .property("id", PropertyType::String, "a")
+            .property("id", PropertyType::Keyword, "a")
             .add();
         graph
             .entity("Person")
             .scope(Scope::Text)
             .strict_primary_key("id")
-            .property("id", PropertyType::String, "b")
+            .property("id", PropertyType::Keyword, "b")
             .add();
 
         let insert = plan_graph_with_registry(
@@ -852,13 +854,13 @@ mod tests {
             .entity("Person")
             .scope(Scope::Text)
             .strict_primary_key("id")
-            .property("id", PropertyType::String, "a")
+            .property("id", PropertyType::Keyword, "a")
             .add();
         graph
             .entity("Person")
             .scope(Scope::Structured)
             .strict_primary_key("id")
-            .property("id", PropertyType::String, "b")
+            .property("id", PropertyType::Keyword, "b")
             .add();
 
         let insert = plan_graph_with_registry(
@@ -892,7 +894,7 @@ mod tests {
         graph
             .entity("Person")
             .strict_primary_key("id")
-            .property("id", PropertyType::String, "a")
+            .property("id", PropertyType::Keyword, "a")
             .add();
 
         let insert = plan_graph_with_registry(
@@ -916,7 +918,7 @@ mod tests {
             .entity("Person")
             .scopes([Scope::Structured, Scope::Text])
             .strict_primary_key("id")
-            .property("id", PropertyType::String, "a")
+            .property("id", PropertyType::Keyword, "a")
             .add();
 
         let insert = plan_graph_with_registry(

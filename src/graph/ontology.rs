@@ -19,9 +19,14 @@ use crate::types::BuiltinType;
 /// Type of a property defined in the ontology.
 ///
 /// Covers both the lexical vocabulary the LLM emits during knowledge
-/// extraction and the storage shape ingested into the graph. `Text` is
-/// the semantic-text variant: properties of this type are routed
-/// through the `SemanticTextHandler` (embedded + vector-searchable).
+/// extraction and the storage shape ingested into the graph. There are
+/// exactly two textual types:
+///
+/// * `Keyword` — a plain string matched by standard Cypher operators
+///   (`=`, `!=`, `<`, `>`, `=~`, `CONTAINS`, …); identifiers, codes,
+///   statuses, categorical labels.
+/// * `Text` — everything else textual; always routed through the
+///   `SemanticTextHandler` (embedded + vector-searchable).
 ///
 /// Two string representations co-exist by design:
 ///
@@ -37,8 +42,13 @@ use crate::types::BuiltinType;
 #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum OntologyPropertyType {
-    String,
+    /// Plain string, standard Cypher matching (`=`, `<`, `>`, `=~`, …).
+    /// `string` is the legacy serialized spelling, still accepted.
+    #[strum(serialize = "Keyword", serialize = "String")]
+    #[serde(alias = "string")]
+    Keyword,
     #[strum(serialize = "Text", serialize = "SemanticText")]
+    #[serde(alias = "semantictext")]
     Text,
     #[strum(serialize = "Int", serialize = "Number")]
     Int,
@@ -57,7 +67,7 @@ impl OntologyPropertyType {
     /// single definition; `List` has no handler and is a pseudo-type.
     pub fn type_id(self) -> &'static str {
         match self {
-            Self::String => BuiltinType::Text.id(),
+            Self::Keyword => BuiltinType::Keyword.id(),
             Self::Text => BuiltinType::SemanticText.id(),
             Self::Int | Self::Float => BuiltinType::Number.id(),
             Self::Bool => BuiltinType::Boolean.id(),
@@ -72,7 +82,7 @@ impl OntologyPropertyType {
     pub fn query_type_id(self) -> Option<&'static str> {
         match self {
             Self::Text => Some(BuiltinType::SemanticText.id()),
-            Self::String | Self::Date | Self::Datetime => Some(self.type_id()),
+            Self::Keyword | Self::Date | Self::Datetime => Some(self.type_id()),
             Self::Int | Self::Float | Self::Bool | Self::List => None,
         }
     }
@@ -655,7 +665,7 @@ mod tests {
                 PropertySpec {
                     name: "first_name".to_string(),
                     description: None,
-                    property_type: OntologyPropertyType::String,
+                    property_type: OntologyPropertyType::Keyword,
                     required: true,
                 },
                 PropertySpec {

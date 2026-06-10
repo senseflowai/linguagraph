@@ -24,6 +24,9 @@ pub enum TypedOp {
     Contains,
     StartsWith,
     EndsWith,
+    /// Regular-expression match, lowered to Cypher `=~`.
+    #[serde(alias = "regex", alias = "matches_regex")]
+    Matches,
     // ── Semantic / hybrid / geo ─────────────────────────────────────
     /// Pure vector search: `qlink.search` with the input embedded.
     Search,

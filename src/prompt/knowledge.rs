@@ -79,7 +79,7 @@ pub fn render_knowledge_extract_prompt(domain: &str, ontology: &DomainOntology) 
 /// vocabulary the LLM is asked to use in the ontology-suggest prompt.
 pub fn property_type_label(t: OntologyPropertyType) -> &'static str {
     match t {
-        OntologyPropertyType::String => "string",
+        OntologyPropertyType::Keyword => "keyword",
         OntologyPropertyType::Text => "text",
         OntologyPropertyType::Int => "int",
         OntologyPropertyType::Float => "float",
@@ -298,7 +298,8 @@ Use ONLY property names declared for the entity's type in the ontology
 
 Match the declared type exactly:
 
-* `string` / `text` → `\"...\"`
+* `keyword` / `text` → a JSON string `\"...\"` (both are emitted the same way;
+  the difference is only how the graph indexes them)
 * `int` → integer (no quotes), e.g. `42`
 * `float` → number (no quotes), e.g. `3.14`
 * `bool` → `true` or `false` (no quotes)
@@ -451,7 +452,7 @@ mod tests {
                     PropertySpec {
                         name: "first_name".to_string(),
                         description: None,
-                        property_type: OntologyPropertyType::String,
+                        property_type: OntologyPropertyType::Keyword,
                         required: true,
                     },
                     PropertySpec {
@@ -467,7 +468,7 @@ mod tests {
         };
         let p = render_knowledge_extract_prompt("demo", &onto);
         assert!(p.contains("* `Person`"));
-        assert!(p.contains("* `first_name` (string) (required)"));
+        assert!(p.contains("* `first_name` (keyword) (required)"));
         assert!(p.contains("* `age` (int) (optional) — Age in years."));
     }
 

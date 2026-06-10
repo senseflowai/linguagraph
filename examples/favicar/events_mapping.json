@@ -21,7 +21,7 @@
       "properties": [
         {
           "name": "id",
-          "type": "String",
+          "type": "Keyword",
           "source_path": "$[*].id"
         },
         {
@@ -44,7 +44,7 @@
         },
         {
           "name": "client_concerns",
-          "type": "SemanticText",
+          "type": "Text",
           "source_path": "$[*].customerWork",
           "description": "Description of the customer's request."
         }
@@ -58,7 +58,7 @@
       "properties": [
         {
           "name": "Name",
-          "type": "SemanticText",
+          "type": "Text",
           "source_path": "$[*].stationWorks[*].displayName",
           "description": "Work name."
         },

@@ -8,17 +8,17 @@
         {
           "name": "id",
           "source_path": "$.cameras[*].id",
-          "type": "Text"
+          "type": "Keyword"
         },
         {
           "name": "name",
           "source_path": "$.cameras[*].name",
-          "type": "Text"
+          "type": "Keyword"
         },
         {
           "name": "state",
           "source_path": "$.cameras[*].state",
-          "type": "Text",
+          "type": "Keyword",
           "description": "The camera's status can be active/inactive"
         },
         {
@@ -64,12 +64,12 @@
         {
           "name": "name",
           "source_path": "$.cameras[*].origin.place_name",
-          "type": "Text"
+          "type": "Keyword"
         },
         {
           "name": "address",
           "source_path": "$.cameras[*].origin.place_description",
-          "type": "Text",
+          "type": "Keyword",
           "description": "Camera installation address"
         }
       ],
@@ -103,7 +103,7 @@
         {
           "name": "url",
           "source_path": "$.cameras[*].source.url",
-          "type": "Text"
+          "type": "Keyword"
         }
       ],
       "primary_key": "$.cameras[*].id"

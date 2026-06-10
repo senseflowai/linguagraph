@@ -8,7 +8,7 @@
 //! ## Built-in catalogue
 //!
 //! Every registry produced by [`register_default`] / [`core_registry`]
-//! contains the five scalar types `Text`, `Number`, `Boolean`, `Date`,
+//! contains the five scalar types `Keyword`, `Number`, `Boolean`, `Date`,
 //! `Timestamp`. They are responsible for validating and converting raw
 //! JSON values during ingestion (string `"50%"` → `0.5`, integer epoch
 //! → ISO-8601 string, …) and they are *always* registered — a mapping
@@ -20,19 +20,19 @@
 
 pub mod core;
 pub mod datetime;
+pub mod keyword;
 pub mod semantic_text;
-pub mod text;
 
 pub use core::{
-    boolean_handler, number_handler, BooleanParser, DateParser, NumberParser, ScalarParser,
-    ScalarTypeHandler, TextParser, TimestampParser,
+    boolean_handler, number_handler, BooleanParser, DateParser, KeywordParser, NumberParser,
+    ScalarParser, ScalarTypeHandler, TimestampParser,
 };
 pub use datetime::{date_handler, timestamp_handler, DateTimeHandler};
+pub use keyword::{keyword_handler, KeywordHandler};
 pub use semantic_text::{
     build_canonical_query, build_embed_insert_batch, SemanticTextConfig, SemanticTextHandler,
     SideEffectEmitError,
 };
-pub use text::{text_handler, TextHandler};
 
 use std::sync::Arc;
 
@@ -42,7 +42,7 @@ use crate::embeddings::SharedEmbedder;
 
 /// Build the default registry from `config` and a shared embedder.
 ///
-/// Always registers the built-in scalar types (Text, Number, Boolean,
+/// Always registers the built-in scalar types (Keyword, Number, Boolean,
 /// Date, Timestamp) plus any optional handlers whose configuration is
 /// present:
 ///
@@ -75,7 +75,7 @@ pub fn core_registry() -> TypeRegistry {
 /// types in one line.
 pub fn register_core(builder: RegistryBuilder) -> RegistryBuilder {
     builder
-        .register(text_handler())
+        .register(keyword_handler())
         .register(number_handler())
         .register(boolean_handler())
         .register(date_handler())

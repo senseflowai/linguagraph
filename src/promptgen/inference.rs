@@ -12,9 +12,9 @@ use crate::types::BuiltinType;
 /// A type guess emitted by [`infer`].
 ///
 /// The string identifiers match what the prompt asks the LLM to use
-/// in the resulting mapping (`"type": "SemanticText"` etc.). Variant
-/// names are the strings verbatim, so `strum` derives `as_str` /
-/// `Display` with no `match` to maintain.
+/// in the resulting mapping (`"type": "Keyword"` / `"type": "Text"`).
+/// Variant names are the strings verbatim, so `strum` derives `as_str`
+/// / `Display` with no `match` to maintain.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
     strum::Display, strum::IntoStaticStr,
@@ -23,17 +23,15 @@ pub enum InferredType {
     /// Used for the entity's primary key — surfaced as a hint, not as
     /// a `type` tag in the output mapping.
     Identifier,
-    /// Long natural-language string. Maps to `SemanticText` in the
-    /// rendered prompt.
-    SemanticText,
-    /// Short categorical / enum-like string. Maps to `Keyword`.
+    /// Short categorical / enum-like string (status, role, code). Maps to
+    /// `Keyword` — matched verbatim with standard Cypher operators.
     Keyword,
+    /// Any other textual value (names, descriptions, free-form prose).
+    /// Maps to `Text`, which is always processed as `SemanticText`
+    /// (embedded + vector-searchable) on the linguagraph side.
+    Text,
     /// ISO-8601-shaped string. Maps to `DateTime`.
     DateTime,
-    /// Free-form short string with high cardinality but no obvious
-    /// "categorical" pattern — kept distinct from Keyword so the
-    /// prompt can suggest the LLM verify.
-    Text,
     Number,
     Boolean,
     /// Catch-all when the analyzer couldn't decide.
@@ -47,17 +45,17 @@ impl InferredType {
     }
 
     /// The registered [`BuiltinType`] this guess corresponds to, when
-    /// any. Inference-only hints (`Identifier`, `Keyword`, `Unknown`)
-    /// and `SemanticText` (registered conditionally, not a core scalar)
-    /// have no core scalar counterpart and return `None`.
+    /// any. Inference-only hints (`Identifier`, `Unknown`) have no
+    /// counterpart and return `None`. `Text` maps to the conditionally
+    /// registered `SemanticText` handler.
     pub fn to_builtin(self) -> Option<BuiltinType> {
         match self {
-            Self::Text => Some(BuiltinType::Text),
+            Self::Keyword => Some(BuiltinType::Keyword),
+            Self::Text => Some(BuiltinType::SemanticText),
             Self::Number => Some(BuiltinType::Number),
             Self::Boolean => Some(BuiltinType::Boolean),
             Self::DateTime => Some(BuiltinType::Timestamp),
-            Self::SemanticText => Some(BuiltinType::SemanticText),
-            Self::Identifier | Self::Keyword | Self::Unknown => None,
+            Self::Identifier | Self::Unknown => None,
         }
     }
 }
@@ -271,13 +269,13 @@ pub fn infer(name: &str, stats: &LeafStats) -> InferredType {
         return InferredType::DateTime;
     }
     if name_matches_any(name, PROSE_NAMES) {
-        return InferredType::SemanticText;
+        return InferredType::Text;
     }
     if name_matches_any(name, KEYWORD_NAMES) {
         return InferredType::Keyword;
     }
     if stats.mean_str_len >= SEMANTIC_TEXT_LEN_THRESHOLD {
-        return InferredType::SemanticText;
+        return InferredType::Text;
     }
     // Categorical heuristic: a small distinct set that repeats. We
     // don't gate on ratio strictly (a very small dataset can have a
@@ -323,13 +321,15 @@ mod tests {
             json!("Lorem ipsum dolor sit amet consectetur adipiscing elit."),
             json!("Quite a verbose description of something."),
         ]);
-        assert_eq!(infer("blurb", &s), InferredType::SemanticText);
+        // Long, free-form strings are the semantic `Text` type.
+        assert_eq!(infer("blurb", &s), InferredType::Text);
     }
 
     #[test]
     fn name_hint_overrides_length() {
         let s = stats_with(&[json!("ok"), json!("ok"), json!("err")]);
-        assert_eq!(infer("description", &s), InferredType::SemanticText);
+        // A prose-y field name resolves to `Text` even for short samples.
+        assert_eq!(infer("description", &s), InferredType::Text);
     }
 
     #[test]

@@ -5,9 +5,9 @@
 //! each other so a registry can compose any subset without coupling.
 //!
 //! The handlers are deliberately local: they don't queue side effects and
-//! they don't need an embedder. `Text` participates in query lowering so it
-//! can normalize comparison values the same way it normalizes stored values;
-//! the remaining scalar handlers are ingestion-only.
+//! they don't need an embedder. `Keyword` participates in query lowering so
+//! it can render the full set of standard Cypher comparisons; the remaining
+//! scalar handlers are ingestion-only.
 //!
 //! Adding a new scalar type follows a recipe:
 //!
@@ -17,9 +17,9 @@
 //! 3. Register the handler via [`super::register_default`] (or an
 //!    explicit `RegistryBuilder::register(...)` for tests).
 //!
-//! The handler's [`TypeHandler::on_ingest`] delegates to its parser. `Text`
-//! implements query stages directly; other scalar query stages keep the
-//! generic loud-failure implementation.
+//! The handler's [`TypeHandler::on_ingest`] delegates to its parser.
+//! `Keyword` implements query stages directly; other scalar query stages
+//! keep the generic loud-failure implementation.
 
 use crate::ast::query::Literal;
 use crate::types::context::{EmitCtx, IngestCtx, LowerCtx};
@@ -128,34 +128,21 @@ impl TypeHandler for ScalarTypeHandler {
 
 // ─── Built-in parsers ───────────────────────────────────────────────────
 
-/// `Text` — store the value as a string.
+/// `Keyword` — store the value as a plain string, verbatim.
 ///
-/// Accepts strings as-is and stringifies bools and finite numbers so
-/// authors can lift mixed-typed JSON fields without a custom converter.
+/// Accepts strings as-is (no normalization — the raw value is what Cypher
+/// matches against) and stringifies bools and finite numbers so authors
+/// can lift mixed-typed JSON fields without a custom converter.
 #[derive(Debug, Default)]
-pub struct TextParser;
+pub struct KeywordParser;
 
-impl TextParser {
-    /// Normalize text for storage and query comparisons.
-    ///
-    /// Keeps letters and numbers, removes whitespace/punctuation/symbols,
-    /// and lowercases with Unicode-aware case conversion.
-    pub fn normalize(value: &str) -> String {
-        value
-            .chars()
-            .filter(|ch| ch.is_alphanumeric())
-            .flat_map(char::to_lowercase)
-            .collect()
-    }
-}
-
-impl ScalarParser for TextParser {
+impl ScalarParser for KeywordParser {
     fn parse(&self, raw: &Value) -> Result<Option<Literal>, TypeError> {
         match raw {
             Value::Null => Ok(None),
-            Value::String(s) => Ok(Some(Literal::String(Self::normalize(s)))),
-            Value::Bool(b) => Ok(Some(Literal::String(Self::normalize(&b.to_string())))),
-            Value::Number(n) => Ok(Some(Literal::String(Self::normalize(&n.to_string())))),
+            Value::String(s) => Ok(Some(Literal::String(s.clone()))),
+            Value::Bool(b) => Ok(Some(Literal::String(b.to_string()))),
+            Value::Number(n) => Ok(Some(Literal::String(n.to_string()))),
             Value::Array(items) => {
                 let lits = items
                     .iter()
@@ -167,8 +154,8 @@ impl ScalarParser for TextParser {
                 Ok(Some(Literal::List(lits)))
             }
             Value::Object(_) => Err(TypeError::InvalidValue {
-                ty: "Text".into(),
-                reason: "objects cannot be stored as Text".into(),
+                ty: "Keyword".into(),
+                reason: "objects cannot be stored as Keyword".into(),
             }),
         }
     }
@@ -671,11 +658,12 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn text_parses_strings_numbers_bools_and_arrays() {
-        let p = TextParser;
+    fn keyword_parses_strings_numbers_bools_and_arrays_verbatim() {
+        let p = KeywordParser;
+        // No normalization — the raw value is stored as-is.
         assert_eq!(
             p.parse(&json!("Hello, World!")).unwrap(),
-            Some(Literal::String("helloworld".into()))
+            Some(Literal::String("Hello, World!".into()))
         );
         assert_eq!(
             p.parse(&json!(42)).unwrap(),
@@ -699,8 +687,8 @@ mod tests {
     }
 
     #[test]
-    fn text_rejects_objects() {
-        let err = TextParser.parse(&json!({"k": 1})).unwrap_err();
+    fn keyword_rejects_objects() {
+        let err = KeywordParser.parse(&json!({"k": 1})).unwrap_err();
         assert!(matches!(err, TypeError::InvalidValue { .. }));
     }
 

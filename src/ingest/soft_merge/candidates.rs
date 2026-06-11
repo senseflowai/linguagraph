@@ -295,7 +295,7 @@ mod tests {
         b.add_entity(
             EntityGraph::new("Person")
                 .strict_primary_key("id")
-                .property("id", PropertyType::String, "p1"),
+                .property("id", PropertyType::Keyword, "p1"),
         );
         let graph = b.build();
 

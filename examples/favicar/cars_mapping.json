@@ -15,24 +15,24 @@
       "properties": [
         {
           "name": "id",
-          "type": "String",
+          "type": "Keyword",
           "source_path": "$.ArrayOfExportCar.ExportCar[*].Id"
         },
         {
           "name": "license_plate_number",
-          "type": "SemanticText",
+          "type": "Text",
           "source_path": "$.ArrayOfExportCar.ExportCar[*].RegNo",
           "description": "This car's registration number."
         },
         {
           "name": "vin",
-          "type": "String",
+          "type": "Keyword",
           "source_path": "$.ArrayOfExportCar.ExportCar[*].BodyNo",
           "description": "VIN number of this car."
         },
         {
           "name": "name",
-          "type": "SemanticText",
+          "type": "Text",
           "source_path": "$.ArrayOfExportCar.ExportCar[*].DisplayName",
           "description": "Car name, make and model, for example: VOLVO  S80 (2.4), HONDA CIVIC X FC (1.5)."
         },

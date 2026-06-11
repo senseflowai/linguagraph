@@ -23,6 +23,8 @@ pub use ontology_storage::{
     InMemoryOntologyCatalogStorage, JsonFileOntologyCatalogStorage, OntologyCatalogStorage,
     SharedOntologyCatalogStorage, DEFAULT_ONTOLOGY_CATALOG_CACHE_PATH,
 };
-pub use schema::{EntityGraph, PrimaryKey, Property, PropertyType, RelationGraph};
+pub use schema::{
+    canonical_handler_id, EntityGraph, PrimaryKey, Property, PropertyType, RelationGraph,
+};
 pub use scope::{Scope, SCOPE_LABELS};
 pub use types::{EntityRef, GraphBuildError, RelationRef};

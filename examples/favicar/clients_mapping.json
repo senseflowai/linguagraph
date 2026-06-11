@@ -9,30 +9,30 @@
       "properties": [
         {
           "name": "id",
-          "type": "Text",
+          "type": "Keyword",
           "source_path": "$.ArrayOfExportClient.ExportClient[*].Id"
         },
         {
           "name": "type",
-          "type": "Text",
+          "type": "Keyword",
           "source_path": "$.ArrayOfExportClient.ExportClient[*].ClientTypeCode",
           "description": "The client type can only be \"Individual\" or \"Organization\"."
         },
         {
           "name": "full_name",
-          "type": "SemanticText",
+          "type": "Text",
           "source_path": "$.ArrayOfExportClient.ExportClient[*].DisplayName",
           "description": "The customer's full name."
         },
         {
           "name": "address",
-          "type": "SemanticText",
+          "type": "Text",
           "source_path": "$.ArrayOfExportClient.ExportClient[*].StreetAddress",
           "description": "The customer's residential address."
         },
         {
           "name": "phone",
-          "type": "Text",
+          "type": "Keyword",
           "source_path": "$.ArrayOfExportClient.ExportClient[*].Contacts.ClientContact.Phone",
           "description": "The customer's phone number in international format."
         },

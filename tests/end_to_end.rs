@@ -119,12 +119,12 @@ async fn prefix_label_scopes_inserts_and_queries() {
     let a = g
         .entity("Person")
         .strict_primary_key("id")
-        .property("id", PropertyType::String, "a")
+        .property("id", PropertyType::Keyword, "a")
         .add();
     let b = g
         .entity("Person")
         .strict_primary_key("id")
-        .property("id", PropertyType::String, "b")
+        .property("id", PropertyType::Keyword, "b")
         .add();
     g.relationship(a, "KNOWS", b).add().unwrap();
     let summary = pipeline.ingest(&g.build()).await.unwrap();
@@ -210,7 +210,7 @@ async fn prefix_index_scopes_embedding_collections() {
     let mut g = GraphBuilder::new();
     g.entity("Person")
         .strict_primary_key("id")
-        .property("id", PropertyType::String, "a")
+        .property("id", PropertyType::Keyword, "a")
         .property("name", PropertyType::Text, "Alice")
         .add();
     pipeline.ingest(&g.build()).await.unwrap();
@@ -360,7 +360,7 @@ async fn soft_merge_rewrites_primary_key_to_existing_canonical() {
     });
 
     // Use a raw `name` string so type inference picks
-    // `PropertyType::String` and the test doesn't depend on a
+    // `PropertyType::Keyword` and the test doesn't depend on a
     // registered SemanticText handler. Soft-merge is orthogonal to
     // SemanticText: the resolver embeds the property text itself
     // and only consults Qdrant for the lookup; the on-node value

@@ -272,7 +272,7 @@ mod tests {
     fn props_with(pairs: Vec<(&str, serde_json::Value)>) -> HashMap<String, Property> {
         pairs
             .into_iter()
-            .map(|(k, v)| (k.to_string(), Property::new(k, PropertyType::String, v)))
+            .map(|(k, v)| (k.to_string(), Property::new(k, PropertyType::Keyword, v)))
             .collect()
     }
 

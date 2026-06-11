@@ -278,7 +278,10 @@ fn lower_filters(
         let effective_type = f
             .field_type
             .clone()
-            .or_else(|| infer_type(&field, alias_labels, catalog));
+            .or_else(|| infer_type(&field, alias_labels, catalog))
+            // Canonicalize contract / legacy spellings (`Text`, `String`,
+            // `SemanticText`, …) to the registry handler id.
+            .map(|t| crate::graph::canonical_handler_id(&t));
 
         // ── Fold SemanticText default-rerank filters by alias. ──────────
         // `eq`/`neq`/`contains`/`search_reranked` on a SemanticText field
@@ -442,6 +445,7 @@ fn parse_typed_op(s: &str) -> Option<TypedOp> {
         "contains" => TypedOp::Contains,
         "starts_with" => TypedOp::StartsWith,
         "ends_with" => TypedOp::EndsWith,
+        "matches" | "regex" => TypedOp::Matches,
         "search" => TypedOp::Search,
         "search_reranked" => TypedOp::SearchReranked,
         "hybrid_search" | "hybrid" => TypedOp::HybridSearch,

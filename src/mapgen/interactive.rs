@@ -45,9 +45,8 @@ pub fn select_collections(items: &[CollectionInfo]) -> Result<Vec<String>, MapGe
 
 /// Field-type vocabulary offered when (re)typing a property.
 const FIELD_TYPES: &[&str] = &[
-    "SemanticText",
-    "Text",
     "Keyword",
+    "Text",
     "Number",
     "Boolean",
     "DateTime",
@@ -300,7 +299,6 @@ pub fn refine_interactively(
 
 fn inferred_to_field_type(t: InferredType) -> &'static str {
     match t {
-        InferredType::SemanticText => "SemanticText",
         InferredType::Keyword => "Keyword",
         InferredType::DateTime => "DateTime",
         InferredType::Number => "Number",

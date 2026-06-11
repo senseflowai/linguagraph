@@ -53,6 +53,8 @@ pub enum Op {
     StartsWith,
     EndsWith,
     // ── Handler-dispatched ops ───────────────────────────────────
+    /// Regular-expression match (`=~`), handled by the Keyword type.
+    Matches,
     Search,
     SearchReranked,
     HybridSearch,
@@ -125,6 +127,7 @@ impl Op {
             TypedOp::Contains => Op::Contains,
             TypedOp::StartsWith => Op::StartsWith,
             TypedOp::EndsWith => Op::EndsWith,
+            TypedOp::Matches => Op::Matches,
             TypedOp::Search => Op::Search,
             TypedOp::SearchReranked => Op::SearchReranked,
             TypedOp::HybridSearch => Op::HybridSearch,
@@ -145,6 +148,7 @@ impl Op {
             Op::Contains => TypedOp::Contains,
             Op::StartsWith => TypedOp::StartsWith,
             Op::EndsWith => TypedOp::EndsWith,
+            Op::Matches => TypedOp::Matches,
             Op::Search => TypedOp::Search,
             Op::SearchReranked => TypedOp::SearchReranked,
             Op::HybridSearch => TypedOp::HybridSearch,

@@ -124,7 +124,7 @@ async fn resolver_no_candidates_does_not_touch_client_or_embedder() {
     b.add_entity(
         EntityGraph::new("Person")
             .strict_primary_key("id")
-            .property("id", PropertyType::String, "p1"),
+            .property("id", PropertyType::Keyword, "p1"),
     );
     let mut graph = b.build();
 
@@ -449,13 +449,13 @@ async fn in_batch_hard_conflict_blocks_collapse() {
         EntityGraph::new("Person")
             .soft_primary_key()
             .property("name", PropertyType::Text, "Alice")
-            .property("email", PropertyType::String, "alice.a@example.com"),
+            .property("email", PropertyType::Keyword, "alice.a@example.com"),
     );
     b.add_entity(
         EntityGraph::new("Person")
             .soft_primary_key()
             .property("name", PropertyType::Text, "Alice")
-            .property("email", PropertyType::String, "alice.b@example.com"),
+            .property("email", PropertyType::Keyword, "alice.b@example.com"),
     );
     let mut graph = b.build();
 
@@ -613,7 +613,7 @@ async fn hard_conflict_on_email_blocks_automerge() {
         EntityGraph::new("Person")
             .soft_primary_key()
             .property("name", PropertyType::Text, "Alice Smith")
-            .property("email", PropertyType::String, "alice.a@example.com"),
+            .property("email", PropertyType::Keyword, "alice.a@example.com"),
     );
     let mut graph = b.build();
 

@@ -111,10 +111,11 @@ fn render_ontology_section(out: &mut String, ontology: &DomainOntology) {
     out.push('\n');
     out.push_str(
         "In each property's mapping `type`, use the field-type vocabulary from \
-         \"# Available field types\" — NOT the ontology type labels above. Translate: \
-         ontology `text` → `SemanticText`; `string` → `Text` (or `Keyword` for short \
-         categorical values); `int`/`float` → `Number`; `bool` → `Boolean`; \
-         `date`/`datetime` → `DateTime`; `list` → `List`.\n\n",
+         \"# Available field types\". The ontology and mapping vocabularies are the \
+         same — no translation needed: `keyword` → `Keyword` (plain string, exact / \
+         range / regex matching: ids, codes, statuses, categorical labels), `text` → \
+         `Text` (free-form text, semantic search), `int`/`float` → `Number`, `bool` → \
+         `Boolean`, `date`/`datetime` → `DateTime`, `list` → `List`.\n\n",
     );
 
     out.push_str("# Relation types\n\n");
@@ -188,7 +189,7 @@ fn render_schema_section(out: &mut String, schema: &GraphSchema) {
 
 fn property_type_label(ty: PropertyType) -> &'static str {
     match ty {
-        PropertyType::String => "string",
+        PropertyType::String => "keyword",
         PropertyType::Int => "int",
         PropertyType::Float => "float",
         PropertyType::Bool => "bool",
@@ -338,7 +339,7 @@ mod tests {
         );
         assert!(system.contains("# Existing graph schema"));
         assert!(system.contains("- `Company`"));
-        assert!(system.contains("- `name`: string"));
+        assert!(system.contains("- `name`: keyword"));
         assert!(system.contains("- `OWNS` (Person → Company)"));
     }
 }

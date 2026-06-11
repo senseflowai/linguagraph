@@ -114,13 +114,13 @@ async fn semantic_ingest_runs_qlink_insert_after_memgraph_batches() {
     graph
         .entity("Company")
         .strict_primary_key("id")
-        .property("id", GraphPropertyType::String, "c1")
+        .property("id", GraphPropertyType::Keyword, "c1")
         .property("name", GraphPropertyType::Text, "Apple Inc.")
         .add();
     graph
         .entity("Company")
         .strict_primary_key("id")
-        .property("id", GraphPropertyType::String, "c2")
+        .property("id", GraphPropertyType::Keyword, "c2")
         .property("name", GraphPropertyType::Text, "Banana Republic")
         .add();
 
@@ -187,7 +187,7 @@ async fn ingest_without_embedder_fails_loudly_when_side_effects_arise() {
     graph
         .entity("Company")
         .strict_primary_key("id")
-        .property("id", GraphPropertyType::String, "c1")
+        .property("id", GraphPropertyType::Keyword, "c1")
         .property("name", GraphPropertyType::Text, "Apple Inc.")
         .add();
 
@@ -574,7 +574,7 @@ fn ontology_catalog_round_trips_field_types() {
             .and_then(|p| p.description.as_deref()),
         Some("the company name")
     );
-    assert_eq!(catalog.get_query_type("Company", "industry"), Some("Text"));
+    assert_eq!(catalog.get_query_type("Company", "industry"), Some("Keyword"));
 }
 
 fn semantic_catalog() -> OntologyCatalog {
@@ -586,9 +586,9 @@ fn semantic_catalog() -> OntologyCatalog {
                 name: "Company".into(),
                 description: None,
                 properties: vec![
-                    prop("id", OntologyPropertyType::String, None),
+                    prop("id", OntologyPropertyType::Keyword, None),
                     prop("name", OntologyPropertyType::Text, Some("the company name")),
-                    prop("industry", OntologyPropertyType::String, None),
+                    prop("industry", OntologyPropertyType::Keyword, None),
                 ],
                 embedding: None,
             }],
@@ -644,7 +644,7 @@ fn untyped_datetime_filter_auto_resolves_and_expands_eq_to_a_day_range() {
                 name: "ServiceVisit".into(),
                 description: None,
                 properties: vec![
-                    prop("id", OntologyPropertyType::String, None),
+                    prop("id", OntologyPropertyType::Keyword, None),
                     prop(
                         "work_start",
                         OntologyPropertyType::Datetime,
@@ -754,7 +754,7 @@ fn untyped_field_without_ontology_catalog_stays_plain() {
 }
 
 #[test]
-fn string_property_from_ontology_catalog_auto_resolves_to_text_handler() {
+fn keyword_property_from_ontology_catalog_auto_resolves_to_keyword_handler() {
     let cfg = cfg_with_semantic_text();
     let (registry, embedder) = registry_and_embedder();
     let catalog = Arc::new(semantic_catalog());
@@ -776,9 +776,10 @@ fn string_property_from_ontology_catalog_auto_resolves_to_text_handler() {
     .unwrap();
     let cypher = pipeline.compile(dsl_query).unwrap();
     assert!(cypher.text.contains("WHERE c.industry = $p0"));
+    // Keyword stores/compares the value verbatim — no normalization.
     assert_eq!(
         cypher.params.get("p0"),
-        Some(&Literal::String("fintech".into()))
+        Some(&Literal::String(" Fin-Tech ".into()))
     );
     assert!(!cypher.text.contains("qlink"));
 }
@@ -927,7 +928,7 @@ fn prompt_surfaces_field_type_marker() {
         },
     );
     assert!(
-        prompt.contains("name: string @SemanticText /* the company name */"),
+        prompt.contains("name: keyword @Text /* the company name */"),
         "prompt should annotate typed properties; got:\n{prompt}"
     );
 }

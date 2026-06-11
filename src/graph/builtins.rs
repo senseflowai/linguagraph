@@ -63,7 +63,7 @@ pub fn new_v4_id() -> String {
 pub fn new_source(name: impl Into<String>) -> EntityGraph {
     EntityGraph::new(SOURCE_LABEL)
         .strict_primary_key("name")
-        .property("id", PropertyType::String, new_v4_id())
+        .property("id", PropertyType::Keyword, new_v4_id())
         .property("name", PropertyType::Text, name.into())
 }
 
@@ -74,7 +74,7 @@ pub fn new_source(name: impl Into<String>) -> EntityGraph {
 pub fn new_chunk(text: impl Into<String>) -> EntityGraph {
     EntityGraph::new(CHUNK_LABEL)
         .strict_primary_key("id")
-        .property("id", PropertyType::String, new_v4_id())
+        .property("id", PropertyType::Keyword, new_v4_id())
         .property("text", PropertyType::Text, text.into())
 }
 

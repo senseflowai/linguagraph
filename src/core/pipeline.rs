@@ -2085,8 +2085,8 @@ mod tests {
         graph
             .entity("Camera")
             .strict_primary_key("id")
-            .property("id", PropertyType::String, "c1")
-            .property("state", PropertyType::String, "active")
+            .property("id", PropertyType::Keyword, "c1")
+            .property("state", PropertyType::Keyword, "active")
             .add();
 
         let summary = pipeline.ingest(&graph.build()).await.unwrap();
@@ -2473,7 +2473,7 @@ mod tests {
         graph
             .entity("X")
             .strict_primary_key("id")
-            .property("id", PropertyType::String, "a")
+            .property("id", PropertyType::Keyword, "a")
             .add();
 
         pipeline.ingest(&graph.build()).await.unwrap();

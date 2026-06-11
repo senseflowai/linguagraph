@@ -53,17 +53,18 @@ Output a single JSON object of this exact shape:
 /// Matches what linguagraph ships out of the box.
 pub const DEFAULT_TYPES_CATALOGUE: &str = r#"# Available field types
 
-- **SemanticText** — long natural-language fields (descriptions, bios,
-  reviews, free-form notes). Stored on the node and additionally
-  embedded for vector / hybrid search.
-- **Keyword** — short categorical / enum-like values (status,
-  industry, role). Use when the value-set is small and bounded.
-- **DateTime** — ISO-8601 timestamps.
+There are exactly two textual types — pick one:
+
+- **Keyword** — a plain string matched by standard Cypher operators
+  (`=`, `!=`, `<`, `>`, `=~` regex, `CONTAINS`, …). Use it for identifiers,
+  codes, statuses, and short categorical / enum-like labels — anything you
+  would match exactly or filter on. Stored verbatim; never embedded.
+- **Text** — free-form, natural-language text (names, descriptions,
+  summaries, reviews, notes). Stored on the node and embedded for vector /
+  hybrid semantic search. The default for any text that isn't a Keyword.
 - **Number** — integers, floats.
 - **Boolean** — true/false.
-- **Text** — short free-form strings that are not categorical and
-  not long enough to warrant SemanticText. The default for ambiguous
-  fields.
+- **DateTime** — ISO-8601 dates / timestamps.
 "#;
 
 /// Strict output rules. Repeated towards the end so a long prompt
@@ -78,12 +79,13 @@ pub const RULES: &str = r#"# Rules
    field (`id`, `_id`, `uuid`, `<thing>_id`). Without one, choose the
    field that is most likely unique and document the choice in the
    property's name only — never invent values.
-5. **Prefer `SemanticText`** for any field that is natural-language
-   prose (descriptions, summaries, reviews). Only use `Text` when the
-   field is short *and* clearly not categorical.
-6. **Prefer `Keyword`** for short, low-cardinality strings (status,
-   industry, role). Don't make Keyword the default for free-form
-   strings.
+5. **Use `Text`** for any natural-language / free-form field (names,
+   descriptions, summaries, reviews). It is embedded for semantic search.
+   `Text` is the default for textual fields that aren't keywords.
+6. **Use `Keyword`** for identifiers, codes, statuses, and short
+   categorical / enum-like values (status, industry, role) — anything you
+   would match exactly, filter, or compare. Keywords are stored verbatim
+   and never embedded.
 7. **PascalCase, singular** for entity `type`; **SCREAMING_SNAKE_CASE**
    for relationship `type`.
 8. **Don't duplicate entities.** If the same array path appears twice,
@@ -131,10 +133,10 @@ Expected output:
       "source_path": "$.companies[*]",
       "primary_key": "$.companies[*].id",
       "properties": [
-        { "name": "name",        "type": "Text",         "source_path": "$.companies[*].name" },
-        { "name": "description", "type": "SemanticText", "source_path": "$.companies[*].description" },
-        { "name": "industry",    "type": "Keyword",      "source_path": "$.companies[*].industry" },
-        { "name": "founded_at",  "type": "DateTime",     "source_path": "$.companies[*].founded_at" }
+        { "name": "name",        "type": "Text",     "source_path": "$.companies[*].name" },
+        { "name": "description", "type": "Text",     "source_path": "$.companies[*].description" },
+        { "name": "industry",    "type": "Keyword",  "source_path": "$.companies[*].industry" },
+        { "name": "founded_at",  "type": "DateTime", "source_path": "$.companies[*].founded_at" }
       ]
     }
   ],

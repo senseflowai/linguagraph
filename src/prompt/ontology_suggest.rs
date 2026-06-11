@@ -143,7 +143,7 @@ mod tests {
                     properties: vec![PropertySpec {
                         name: "full_name".to_string(),
                         description: None,
-                        property_type: OntologyPropertyType::String,
+                        property_type: OntologyPropertyType::Keyword,
                         required: true,
                     }],
                     embedding: None,
@@ -165,7 +165,7 @@ mod tests {
     fn prompt_lists_existing_properties_to_avoid_dup() {
         let p = render_schema_suggest_prompt("any", "core_business", &sample_ontology());
         assert!(p.contains("Existing properties"));
-        assert!(p.contains("* `full_name` (string) (required)"));
+        assert!(p.contains("* `full_name` (keyword) (required)"));
     }
 
     #[test]

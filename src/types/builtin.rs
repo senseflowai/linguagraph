@@ -24,8 +24,11 @@ use super::TypeId;
     EnumIter, serde::Serialize, serde::Deserialize,
 )]
 pub enum BuiltinType {
-    /// Plain, normalized text (exact / contains matching).
-    Text,
+    /// Plain string — matched by Cypher with standard operators
+    /// (`=`, `!=`, `<`, `>`, `=~`, `CONTAINS`, …). Stored and compared as
+    /// the raw value (no normalization). This is the "keyword" type:
+    /// identifiers, codes, statuses, categorical labels.
+    Keyword,
     /// Integer or float.
     Number,
     /// Boolean.
@@ -58,7 +61,7 @@ mod tests {
     #[test]
     fn id_matches_variant_name() {
         assert_eq!(BuiltinType::SemanticText.id(), "SemanticText");
-        assert_eq!(BuiltinType::Text.id(), "Text");
+        assert_eq!(BuiltinType::Keyword.id(), "Keyword");
         assert_eq!(BuiltinType::Number.id(), "Number");
     }
 

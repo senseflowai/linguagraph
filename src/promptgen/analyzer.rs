@@ -520,13 +520,11 @@ mod tests {
             e.fields.iter().map(|f| (f.name.as_str(), f)).collect();
         // `id` was promoted to primary_key, so it's not in fields.
         assert!(!by_name.contains_key("id"));
-        assert_eq!(
-            by_name["description"].inferred_type,
-            InferredType::SemanticText
-        );
+        // `description` is prose → the semantic `Text` type.
+        assert_eq!(by_name["description"].inferred_type, InferredType::Text);
         assert_eq!(by_name["industry"].inferred_type, InferredType::Keyword);
-        // `name` is short and not in any name-hint list — stays as
-        // Text rather than SemanticText.
+        // `name` is short and not in any name-hint list — also `Text`
+        // (everything textual that isn't a Keyword is `Text`).
         assert_eq!(by_name["name"].inferred_type, InferredType::Text);
     }
 

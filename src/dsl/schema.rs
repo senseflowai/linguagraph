@@ -43,6 +43,145 @@ pub struct DslQuery {
     pub prefix_index: Option<String>,
 }
 
+impl DslQuery {
+    /// Render a concise, human-readable natural-language summary of what
+    /// this query selects and returns. Intended for downstream LLM context
+    /// so a synthesizer can be told the rows it sees are already filtered.
+    ///
+    /// This is purely descriptive — it is NOT Cypher and does not
+    /// round-trip back into a [`DslQuery`].
+    ///
+    /// Example: `Selecting Camera entities where state = "active"; returning: name.`
+    pub fn describe(&self) -> String {
+        let mut out = format!("Selecting {} entities", self.start.label);
+
+        if !self.filters.is_empty() {
+            out.push_str(" where ");
+            let parts: Vec<String> = self.filters.iter().map(describe_filter).collect();
+            out.push_str(&parts.join(" and "));
+        }
+
+        for traversal in &self.traversals {
+            out.push_str(&format!(
+                "; traversing: {}→{}",
+                traversal.edge.label, traversal.target.label
+            ));
+        }
+
+        if !self.return_.is_empty() {
+            out.push_str("; returning: ");
+            let parts: Vec<String> = self.return_.iter().map(describe_return_item).collect();
+            out.push_str(&parts.join(", "));
+        }
+
+        if let Some(limit) = self.limit {
+            out.push_str(&format!("; limit {limit}"));
+        }
+
+        out.push('.');
+        out
+    }
+}
+
+/// One filter predicate as `{field} {op} {value}`. Typed filters (and any
+/// op the plain [`FilterOp`] parser doesn't recognise) degrade to a
+/// neutral `matches` phrasing rather than inventing an operator symbol.
+fn describe_filter(filter: &Filter) -> String {
+    let field = strip_alias_prefix(&filter.field);
+    let value = describe_value(&filter.value);
+    match (filter.field_type.as_deref(), FilterOp::parse(&filter.op)) {
+        (None, Some(op)) => format!("{} {} {}", field, describe_op(op), value),
+        (field_type, _) => {
+            let mut s = format!("{field} matches {value}");
+            if let Some(ft) = field_type {
+                s.push_str(&format!(" (typed: {ft})"));
+            }
+            s
+        }
+    }
+}
+
+fn describe_op(op: FilterOp) -> &'static str {
+    match op {
+        FilterOp::Eq => "=",
+        FilterOp::Neq => "≠",
+        FilterOp::Gt => ">",
+        FilterOp::Gte => "≥",
+        FilterOp::Lt => "<",
+        FilterOp::Lte => "≤",
+        FilterOp::In => "in",
+        FilterOp::Contains => "contains",
+        FilterOp::StartsWith => "starts with",
+        FilterOp::EndsWith => "ends with",
+    }
+}
+
+/// Human-readable rendering of a JSON filter value: strings quoted,
+/// scalars verbatim, arrays comma-joined in brackets, objects as compact
+/// JSON.
+fn describe_value(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(s) => format!("\"{s}\""),
+        serde_json::Value::Array(items) => {
+            let parts: Vec<String> = items.iter().map(describe_value).collect();
+            format!("[{}]", parts.join(", "))
+        }
+        serde_json::Value::Null => "null".to_string(),
+        serde_json::Value::Object(_) => value.to_string(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Number(n) => n.to_string(),
+    }
+}
+
+/// Short label for one projected column. Plain fields are stripped of
+/// their alias prefix (`c.name` → `name`); aggregates and date-parts keep
+/// a function-call shape.
+fn describe_return_item(item: &ReturnItem) -> String {
+    match item {
+        ReturnItem::Field { field, alias } => alias
+            .clone()
+            .unwrap_or_else(|| strip_alias_prefix(field).to_string()),
+        ReturnItem::Aggregate {
+            aggregate,
+            field,
+            alias,
+        } => alias
+            .clone()
+            .unwrap_or_else(|| format!("{}({})", aggregate_name(*aggregate), field)),
+        ReturnItem::DatePart {
+            field,
+            date_part,
+            alias,
+        } => alias
+            .clone()
+            .unwrap_or_else(|| format!("{}({})", date_part_name(*date_part), field)),
+    }
+}
+
+fn strip_alias_prefix(field: &str) -> &str {
+    field.rsplit('.').next().unwrap_or(field)
+}
+
+fn aggregate_name(f: AggregateFn) -> &'static str {
+    match f {
+        AggregateFn::Count => "count",
+        AggregateFn::Sum => "sum",
+        AggregateFn::Avg => "avg",
+        AggregateFn::Min => "min",
+        AggregateFn::Max => "max",
+    }
+}
+
+fn date_part_name(d: DatePart) -> &'static str {
+    match d {
+        DatePart::Year => "year",
+        DatePart::Quarter => "quarter",
+        DatePart::Month => "month",
+        DatePart::Day => "day",
+        DatePart::Hour => "hour",
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Action {
@@ -361,6 +500,159 @@ impl TraversalQuery {
             .map(|e| e.trim().to_string())
             .filter(|e| !e.is_empty())
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod describe_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn camera_filter() -> Filter {
+        Filter {
+            field: "c.state".into(),
+            op: "eq".into(),
+            value: json!("active"),
+            field_type: None,
+        }
+    }
+
+    fn start(label: &str, alias: &str) -> NodePattern {
+        NodePattern {
+            label: label.into(),
+            alias: alias.into(),
+        }
+    }
+
+    fn field_return(field: &str) -> ReturnItem {
+        ReturnItem::Field {
+            field: field.into(),
+            alias: None,
+        }
+    }
+
+    #[test]
+    fn describe_eq_filter_and_single_field() {
+        let q = DslQuery {
+            action: Action::Find,
+            start: start("Camera", "c"),
+            traversals: vec![],
+            filters: vec![camera_filter()],
+            return_: vec![field_return("c.name")],
+            group_by: vec![],
+            sort: vec![],
+            limit: None,
+            prefix_label: None,
+            prefix_index: None,
+        };
+        assert_eq!(
+            q.describe(),
+            "Selecting Camera entities where state = \"active\"; returning: name."
+        );
+    }
+
+    #[test]
+    fn describe_multiple_filters_joined_with_and() {
+        let q = DslQuery {
+            action: Action::Find,
+            start: start("Order", "o"),
+            traversals: vec![],
+            filters: vec![
+                Filter {
+                    field: "o.status".into(),
+                    op: "eq".into(),
+                    value: json!("completed"),
+                    field_type: None,
+                },
+                Filter {
+                    field: "o.total".into(),
+                    op: "gte".into(),
+                    value: json!(100),
+                    field_type: None,
+                },
+            ],
+            return_: vec![field_return("o.id")],
+            group_by: vec![],
+            sort: vec![],
+            limit: None,
+            prefix_label: None,
+            prefix_index: None,
+        };
+        assert_eq!(
+            q.describe(),
+            "Selecting Order entities where status = \"completed\" and total ≥ 100; returning: id."
+        );
+    }
+
+    #[test]
+    fn describe_typed_filter_uses_matches_branch() {
+        let q = DslQuery {
+            action: Action::Find,
+            start: start("Document", "d"),
+            traversals: vec![],
+            filters: vec![Filter {
+                field: "d.body".into(),
+                op: "search".into(),
+                value: json!("invoice"),
+                field_type: Some("SemanticText".into()),
+            }],
+            return_: vec![field_return("d.title")],
+            group_by: vec![],
+            sort: vec![],
+            limit: None,
+            prefix_label: None,
+            prefix_index: None,
+        };
+        assert_eq!(
+            q.describe(),
+            "Selecting Document entities where body matches \"invoice\" (typed: SemanticText); returning: title."
+        );
+    }
+
+    #[test]
+    fn describe_aggregate_projection() {
+        let q = DslQuery {
+            action: Action::Aggregate,
+            start: start("Customer", "c"),
+            traversals: vec![],
+            filters: vec![],
+            return_: vec![ReturnItem::Aggregate {
+                aggregate: AggregateFn::Count,
+                field: "o".into(),
+                alias: None,
+            }],
+            group_by: vec![],
+            sort: vec![],
+            limit: None,
+            prefix_label: None,
+            prefix_index: None,
+        };
+        assert_eq!(
+            q.describe(),
+            "Selecting Customer entities; returning: count(o)."
+        );
+    }
+
+    #[test]
+    fn describe_without_filters_omits_where() {
+        let q = DslQuery {
+            action: Action::Find,
+            start: start("Camera", "c"),
+            traversals: vec![],
+            filters: vec![],
+            return_: vec![field_return("c.name")],
+            group_by: vec![],
+            sort: vec![],
+            limit: Some(10),
+            prefix_label: None,
+            prefix_index: None,
+        };
+        let described = q.describe();
+        assert!(!described.contains("where"));
+        assert_eq!(
+            described,
+            "Selecting Camera entities; returning: name; limit 10."
+        );
     }
 }
 

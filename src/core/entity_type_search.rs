@@ -11,11 +11,13 @@
 //! Two complementary signals feed the result:
 //!
 //! 1. **Vector search** — embeds the user text once and fans it out
-//!    over every Qdrant collection populated by the SemanticText
-//!    handler (`…__name`, `…__text`, `…___canonical`, plus one per
-//!    `Text` property of every entity type in the ontology). The hits
-//!    are resolved to nodes via `labels(n)` and aggregated by entity
-//!    type. This is what actually exists in the graph.
+//!    over the two Qdrant collections the SemanticText handler
+//!    populates: `…___canonical` (every entity's whole-entity document)
+//!    and `…__text` (chunk fragments). Because every Text property is
+//!    folded into `_canonical`, those two collections reach every node
+//!    without a per-field fan-out. The hits are resolved to nodes via
+//!    `labels(n)` and aggregated by entity type. This is what actually
+//!    exists in the graph.
 //! 2. **Ontology catalog** — `OntologyCatalog::find` ranks the
 //!    embeddings cached on every `EntityTypeSpec` against the same
 //!    user text. This tells us which types are *appropriate* by their

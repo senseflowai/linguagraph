@@ -9,10 +9,12 @@
 //!   drains the queue into a `qlink.insert` Cypher batch after the
 //!   Memgraph batches succeed.
 //! * **Semantic query compilation** — DSL filters tagged with
-//!   `"type": "SemanticText"` and `"op": "search"` lower into Cypher
-//!   that calls `qlink.search`.
-//! * **Hybrid query compilation** — `"op": "hybrid_search"` lowers into
-//!   Cypher that combines an exact-match score with `qlink.score_batch_node`.
+//!   `"type": "SemanticText"` and a semantic op (`search` /
+//!   `search_reranked` / `hybrid_search`) lower into one per-entity
+//!   hybrid search via `qlink.search_hybrid_reranked` over `_canonical`.
+//! * **Exact query compilation** — `eq` / `neq` / `contains` on a
+//!   SemanticText field lower into plain Cypher (`=` / `<>` /
+//!   `CONTAINS`) against the raw value, never a vector search.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -165,10 +167,12 @@ async fn semantic_ingest_runs_qlink_insert_after_memgraph_batches() {
     assert!(keys.contains(&&Literal::String("c1".into())));
     assert!(keys.contains(&&Literal::String("c2".into())));
     // Collection + label live in scalar params (not per-row), so a
-    // single bucket has a single $coll / $label binding.
+    // single bucket has a single $coll / $label binding. Only the
+    // per-entity `_canonical` document is embedded (the `name` value
+    // already lives inside it), so the collection is `companies___canonical`.
     assert_eq!(
         qlink_batch.params.get("coll"),
-        Some(&Literal::String("companies__name".into())),
+        Some(&Literal::String("companies___canonical".into())),
     );
     assert_eq!(
         qlink_batch.params.get("label"),
@@ -204,12 +208,11 @@ fn semantic_search_compiles_to_qlink_search_call() {
         .with_registry(registry)
         .with_embedder(embedder);
 
-    // A SemanticText `search_reranked` (like `eq`/`neq`/`contains`) is a
-    // "default rerank" op: the resolver consolidates it into a single
-    // per-entity hybrid search that emits `libqlink.search_hybrid_reranked`
-    // against the `_canonical` collection and binds the reranker threshold.
-    // (`search` is the cheaper KNN path that goes through
-    // `libqlink.search_labeled` — covered in unit tests.)
+    // A SemanticText `search_reranked` is a semantic op: the resolver
+    // consolidates it into a single per-entity hybrid search that emits
+    // `libqlink.search_hybrid_reranked` against the `_canonical`
+    // collection and binds the reranker threshold. (Plain `search` folds
+    // the same way; exact `eq`/`neq`/`contains` route to plain Cypher.)
     let dsl_query = dsl::parse_str(
         r#"{
             "action": "find",
@@ -325,12 +328,12 @@ fn semantic_search_compiles_to_qlink_search_call() {
     );
 }
 
-/// Consolidation: when a query carries several `SemanticText` "default
-/// rerank" filters on the *same* alias, they collapse into a single
-/// per-entity hybrid search over `_canonical` — one `search_hybrid_reranked`
-/// call, one cross-encoder pass — instead of one call per field. The
-/// combined query string carries every term, field-agnostic, so the DSL
-/// model attributing a value to the "wrong" field no longer drops the hit.
+/// Consolidation: when a query carries several `SemanticText` semantic
+/// filters on the *same* alias, they collapse into a single per-entity
+/// hybrid search over `_canonical` — one `search_hybrid_reranked` call,
+/// one cross-encoder pass — instead of one call per field. The combined
+/// query string carries every term, field-agnostic, so the DSL model
+/// attributing a value to the "wrong" field no longer drops the hit.
 #[test]
 fn multiple_semantic_filters_on_same_alias_consolidate_into_one_call() {
     let cfg = cfg_with_semantic_text();
@@ -345,9 +348,9 @@ fn multiple_semantic_filters_on_same_alias_consolidate_into_one_call() {
             "start": { "label": "Camera", "alias": "c" },
             "filters": [
                 { "field": "c.origin_place_description", "type": "SemanticText",
-                  "op": "contains", "value": "Mangilik 55" },
+                  "op": "search", "value": "Mangilik 55" },
                 { "field": "c.name", "type": "SemanticText",
-                  "op": "contains", "value": "TargetAI" }
+                  "op": "search", "value": "TargetAI" }
             ],
             "return": [
                 { "field": "c.name", "alias": "name" },
@@ -408,8 +411,7 @@ fn aggregate_with_semantic_search_drops_handler_order_by() {
 
     // "How many cameras are at each Place that semantically matches
     // 'office'?" — find Places via the cross-encoder reranker
-    // (`search_reranked`), traverse to Camera, count. The `search`
-    // op is the plain KNN variant (covered separately).
+    // (`search_reranked`), traverse to Camera, count.
     let dsl_query = dsl::parse_str(
         r#"{
             "action": "aggregate",
@@ -443,7 +445,12 @@ fn aggregate_with_semantic_search_drops_handler_order_by() {
 }
 
 #[test]
-fn hybrid_search_combines_exact_and_semantic_signals() {
+fn hybrid_search_routes_to_canonical_hybrid_retrieval() {
+    // `hybrid_search` is now an alias for the unified semantic path: it
+    // compiles to one `search_hybrid_reranked` over `_canonical` (dense ⊕
+    // BM25 + rerank), not the old inline exact + `score_batch_node`
+    // scheme. The keyword signal now comes from BM25 inside qlink rather
+    // than a separate Cypher equality column.
     let cfg = cfg_with_semantic_text();
     let (registry, embedder) = registry_and_embedder();
     let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg)
@@ -464,13 +471,13 @@ fn hybrid_search_combines_exact_and_semantic_signals() {
     .unwrap();
     let cypher = pipeline.compile(dsl_query).unwrap();
     assert!(
-        cypher.text.contains("qlink.score_batch_node"),
-        "hybrid should call score_batch_node; got:\n{}",
+        cypher.text.contains("CALL libqlink.search_hybrid_reranked"),
+        "hybrid_search should compile to the canonical hybrid call; got:\n{}",
         cypher.text
     );
     assert!(
-        cypher.text.contains("c__exact"),
-        "hybrid should expose the exact-match signal; got:\n{}",
+        !cypher.text.contains("score_batch_node"),
+        "hybrid_search must no longer emit score_batch_node; got:\n{}",
         cypher.text
     );
     assert!(cypher.text.contains("ORDER BY"));
@@ -714,15 +721,18 @@ fn explicit_dsl_type_overrides_ontology_catalog() {
         }"#,
     )
     .unwrap();
-    // Compiles cleanly via the explicit SemanticText handler. The
-    // resolver consolidates `eq` (and `neq`/`contains`/`search_reranked`)
-    // into the per-entity hybrid search, so it emits
-    // `libqlink.search_hybrid_reranked` rather than a plain
-    // `c.industry = $p0` WHERE clause — the assertion is on the call site.
+    // Compiles cleanly via the explicit SemanticText handler. `eq` is an
+    // exact op, so it lowers to a plain `c.industry = $p0` WHERE clause
+    // against the raw value — precise, never a fuzzy vector search.
     let cypher = pipeline.compile(dsl_query).unwrap();
     assert!(
-        cypher.text.contains("CALL libqlink.search_hybrid_reranked"),
-        "explicit SemanticText `eq` should route through search_hybrid_reranked; got:\n{}",
+        cypher.text.contains("WHERE c.industry = $p0"),
+        "explicit SemanticText `eq` should be an exact WHERE clause; got:\n{}",
+        cypher.text
+    );
+    assert!(
+        !cypher.text.contains("qlink"),
+        "exact SemanticText `eq` must not touch qlink; got:\n{}",
         cypher.text
     );
 }

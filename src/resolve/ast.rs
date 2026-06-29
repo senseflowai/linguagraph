@@ -229,15 +229,13 @@ struct SemGroup {
     terms: Vec<(Option<String>, String)>,
 }
 
-/// SemanticText ops that fold into the consolidated per-entity search —
-/// exactly the "default rerank" ops that historically each emitted their
-/// own `libqlink.search_reranked`. Explicit `search` (pure KNN) and
-/// `hybrid_search` keep their per-field semantics and are not folded.
+/// SemanticText *semantic* ops that fold into one consolidated per-entity
+/// hybrid search over `_canonical`. Only the natural-language ops fold:
+/// `eq`/`neq`/`contains` are exact matches and must stay precise, so they
+/// route through the normal typed path (plain Cypher), never into a fuzzy
+/// vector search.
 fn is_foldable_entity_op(op: TypedOp) -> bool {
-    matches!(
-        op,
-        TypedOp::Eq | TypedOp::Neq | TypedOp::Contains | TypedOp::SearchReranked
-    )
+    matches!(op, TypedOp::Search | TypedOp::SearchReranked)
 }
 
 fn lower_filters(
@@ -283,13 +281,13 @@ fn lower_filters(
             // `SemanticText`, …) to the registry handler id.
             .map(|t| crate::graph::canonical_handler_id(&t));
 
-        // ── Fold SemanticText default-rerank filters by alias. ──────────
-        // `eq`/`neq`/`contains`/`search_reranked` on a SemanticText field
-        // no longer emit their own per-field `search_reranked`; we gather
-        // them per entity and emit one consolidated, field-agnostic hybrid
-        // search over `_canonical` after the loop. A non-string value or a
-        // label we can't resolve falls through to the normal typed path,
-        // which validates and reports the error exactly as before.
+        // ── Fold SemanticText semantic filters by alias. ───────────────
+        // `search`/`search_reranked` on a SemanticText field are gathered
+        // per entity and emitted as one consolidated, field-agnostic
+        // hybrid search over `_canonical` after the loop. Exact ops
+        // (`eq`/`neq`/`contains`), a non-string value, or a label we can't
+        // resolve fall through to the normal typed path, which keeps exact
+        // matches precise and reports errors exactly as before.
         if effective_type.as_deref() == Some(SemanticTextHandler::TYPE_ID) {
             if let (Some(op), Some(value), Some(label)) = (
                 parse_typed_op(&f.op),

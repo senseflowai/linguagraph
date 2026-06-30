@@ -705,11 +705,41 @@ async fn cmd_run(
     if let Some(e) = embedder {
         pipeline = pipeline.with_embedder(e);
     }
+    // When a cross-encoder reranker model is configured for SemanticText,
+    // attach it so semantic search reranks candidates in-process instead
+    // of inside Memgraph (`libqlink.search_hybrid_reranked`).
+    if let Some(reranker) = build_semantic_text_reranker(&cfg)? {
+        pipeline = pipeline.with_reranker(reranker);
+    }
     pipeline.load_ontology_catalog().await?;
     let dsl_query = dsl::parse(&path).await?;
     let result = pipeline.run(dsl_query).await?;
     print_query_result_table(&result);
     Ok(())
+}
+
+/// Build the SemanticText cross-encoder reranker from
+/// `[types.SemanticText].reranking_model`, or `None` when unset (the
+/// pipeline then defers reranking to qlink's `search_hybrid_reranked`).
+fn build_semantic_text_reranker(cfg: &Config) -> Result<Option<embeddings::SharedReranker>> {
+    let Some(model) = cfg
+        .types
+        .get("SemanticText")
+        .and_then(|t| t.reranking_model.clone())
+    else {
+        return Ok(None);
+    };
+    let dim = cfg
+        .types
+        .get("SemanticText")
+        .and_then(|t| t.embedding_dim)
+        .unwrap_or(384);
+    let reranker = embeddings::default_reranker(Some(&model), dim).map_err(|e| {
+        crate::error::Error::Ingest(crate::ingest::IngestError::Type(format!(
+            "SemanticText reranker init: {e}"
+        )))
+    })?;
+    Ok(Some(reranker))
 }
 
 async fn cmd_traversal(

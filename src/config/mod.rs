@@ -359,6 +359,13 @@ pub struct TypeConfig {
     /// embedding model, available to others as needed).
     #[serde(default)]
     pub embedding_model: Option<String>,
+    /// Path to a GGUF cross-encoder reranker model. When set, the CLI
+    /// attaches a reranker to the pipeline (`Pipeline::with_reranker`),
+    /// so SemanticText semantic search reranks candidates in-process
+    /// instead of deferring to `libqlink.search_hybrid_reranked`. A
+    /// cross-encoder is a *different* model from `embedding_model`.
+    #[serde(default)]
+    pub reranking_model: Option<String>,
     /// Default qlink/Qdrant collection name.
     #[serde(default)]
     pub collection: Option<String>,

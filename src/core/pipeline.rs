@@ -406,11 +406,140 @@ impl Pipeline {
         Ok(())
     }
 
+    /// Move SemanticText reranking into this process when a cross-encoder
+    /// reranker is attached (`Pipeline::with_reranker`).
+    ///
+    /// For each semantic SemanticText predicate, fetch hybrid-recall
+    /// candidates from qlink (`libqlink.search_hybrid` — no rerank model
+    /// in Memgraph), rerank their canonical text locally, drop hits below
+    /// `reranker_threshold`, and stash the surviving `{id, score}` pairs
+    /// (rerank order) in the predicate's `reranked_hits` param. `emit`
+    /// then `UNWIND`s them instead of calling
+    /// `libqlink.search_hybrid_reranked`.
+    ///
+    /// No-op when no reranker is configured — the compiled query keeps the
+    /// qlink-side rerank path unchanged.
+    async fn rerank_semantic_predicates(&self, ast: &mut ReadQuery) -> Result<()> {
+        let Some(reranker) = self.reranker.as_ref() else {
+            return Ok(());
+        };
+
+        let mut by_type: std::collections::HashMap<
+            crate::types::TypeId,
+            Vec<&mut crate::types::TypedPredicate>,
+        > = std::collections::HashMap::new();
+        if let Some(expr) = ast.filter.as_mut() {
+            collect_typed_predicates_mut(expr, &mut by_type);
+        }
+        let sem_id = crate::types::TypeId::new(handlers::SemanticTextHandler::TYPE_ID);
+        let Some(preds) = by_type.get_mut(&sem_id) else {
+            return Ok(());
+        };
+
+        for pred in preds.iter_mut() {
+            // Only the semantic ops carry an `embedding` param; exact ops
+            // (`eq`/`neq`) never reach the rerank path.
+            let Some(embedding) = pred.params.get("embedding").cloned() else {
+                continue;
+            };
+            let (Some(collection), Some(query_str), Some(label)) = (
+                pred.params.get("collection").cloned(),
+                pred.params.get("query_str").cloned(),
+                pred.params.get("label").cloned(),
+            ) else {
+                continue;
+            };
+            let candidate_k = pred
+                .params
+                .get("candidate_k")
+                .cloned()
+                .unwrap_or(Literal::Int(handlers::semantic_text::DEFAULT_CANDIDATE_K));
+            let Literal::String(query_text) = query_str.clone() else {
+                continue;
+            };
+
+            // 1. Recall candidates from qlink (no model in Memgraph).
+            let cypher = handlers::semantic_text::build_hybrid_candidates_query(
+                collection,
+                query_str,
+                embedding,
+                label,
+                candidate_k,
+            );
+            let result = self.client.execute(&cypher).await?;
+
+            let mut ids: Vec<i64> = Vec::with_capacity(result.rows.len());
+            let mut texts: Vec<String> = Vec::with_capacity(result.rows.len());
+            for row in &result.rows {
+                let Some(id) = row.fields.get("id").and_then(db_value_as_i64) else {
+                    continue;
+                };
+                let text = row
+                    .fields
+                    .get("text")
+                    .and_then(db_value_as_string)
+                    .unwrap_or_default();
+                ids.push(id);
+                texts.push(text);
+            }
+
+            // 2. Rerank locally, drop sub-threshold hits, sort desc.
+            let mut hits: Vec<(i64, f64)> = Vec::new();
+            if !ids.is_empty() {
+                let scores = reranker.rerank(&query_text, &texts).map_err(|e| {
+                    crate::error::Error::Ingest(IngestError::Type(format!(
+                        "SemanticText reranker failed: {e}"
+                    )))
+                })?;
+                if scores.len() != ids.len() {
+                    return Err(crate::error::Error::Ingest(IngestError::Type(format!(
+                        "SemanticText reranker returned {} scores for {} candidates",
+                        scores.len(),
+                        ids.len()
+                    ))));
+                }
+                hits = ids
+                    .iter()
+                    .copied()
+                    .zip(scores)
+                    .filter(|(_, s)| *s >= self.reranker_threshold)
+                    .collect();
+                hits.sort_by(|a, b| b.1.total_cmp(&a.1));
+            }
+
+            // 3. Stash for emit() to UNWIND. An empty list yields no
+            //    matches — i.e. nothing survived the threshold.
+            let hit_list: Vec<Literal> = hits
+                .into_iter()
+                .map(|(id, score)| {
+                    let mut m: BTreeMap<String, Literal> = BTreeMap::new();
+                    m.insert("id".to_string(), Literal::Int(id));
+                    m.insert("score".to_string(), Literal::Float(score));
+                    Literal::Object(m)
+                })
+                .collect();
+            pred.params
+                .insert("reranked_hits".to_string(), Literal::List(hit_list));
+        }
+
+        Ok(())
+    }
+
     /// Compile and execute against the configured graph client.
     pub async fn run(&self, dsl: DslQuery) -> Result<QueryResult> {
         let mut dsl = dsl;
         self.validate_dsl_relationship_directions(&mut dsl).await?;
-        let cypher = self.compile(dsl)?;
+        let cypher = if self.reranker.is_some() {
+            // Reranker attached: lower, rerank SemanticText candidates
+            // in-process, then build. Mirrors `compile` with the extra
+            // async pre-pass spliced between `lower` and `prepare`.
+            let mut ast = self.lower(dsl)?;
+            self.rerank_semantic_predicates(&mut ast).await?;
+            self.prepare(&mut ast)?;
+            builder::build_read_with(&ast, &self.registry)?
+        } else {
+            self.compile(dsl)?
+        };
         Ok(self.client.execute(&cypher).await?)
     }
 

@@ -515,8 +515,8 @@ async fn entity_type_search_returns_unique_types_with_domains_and_scopes() {
             ]),
         }],
     });
-    // Vector leg: one Person hit from semantic_text__name with a high
-    // score and scope_text.
+    // Vector leg: one Person hit from semantic_text___canonical with a
+    // high score and scope_text.
     mock.enqueue(QueryResult {
         columns: vec![
             "nid".into(),
@@ -534,7 +534,7 @@ async fn entity_type_search_returns_unique_types_with_domains_and_scopes() {
                 ("score".to_string(), Value::Json(serde_json::json!(0.82))),
                 (
                     "coll".to_string(),
-                    Value::Json(serde_json::json!("semantic_text__name")),
+                    Value::Json(serde_json::json!("semantic_text___canonical")),
                 ),
             ]),
         }],
@@ -561,7 +561,7 @@ async fn entity_type_search_returns_unique_types_with_domains_and_scopes() {
         matches!(s, linguagraph::graph::Scope::Text)
     }));
     assert_eq!(
-        person.per_collection.get("semantic_text__name"),
+        person.per_collection.get("semantic_text___canonical"),
         Some(&0.82_f32)
     );
     assert_eq!(person.sample_node_ids, vec![7]);
@@ -577,13 +577,11 @@ async fn entity_type_search_returns_unique_types_with_domains_and_scopes() {
     assert!(company.vector_score.is_none());
     assert!(company.per_collection.is_empty());
 
-    // The vector leg fans out over every known SemanticText field
-    // (name, text, _canonical, bio) → 4 collections.
-    assert!(result.collections_searched.len() >= 4);
-    assert!(result
-        .collections_searched
-        .iter()
-        .any(|c| c == "semantic_text__name"));
+    // The vector leg searches just the two collections that back every
+    // node: `_canonical` (whole-entity documents) and `text` (chunks).
+    // Per-field fan-out is gone — `_canonical` already covers every Text
+    // property, so `…__name` / `…__bio` are no longer separate indexes.
+    assert_eq!(result.collections_searched.len(), 2);
     assert!(result
         .collections_searched
         .iter()
@@ -591,7 +589,7 @@ async fn entity_type_search_returns_unique_types_with_domains_and_scopes() {
     assert!(result
         .collections_searched
         .iter()
-        .any(|c| c == "semantic_text__bio"));
+        .any(|c| c == "semantic_text__text"));
 
     // Cypher inspection: the vector leg should be one UNION ALL'd
     // batch of libqlink.search_labeled calls plus the neighbour leg.

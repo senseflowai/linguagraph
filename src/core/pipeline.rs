@@ -1721,16 +1721,22 @@ pub use crate::embeddings::Embedder as _Embedder;
 // ── Entity-type search helpers ──────────────────────────────────────────────
 
 /// Resolve the list of Qdrant collections to search.
+///
+/// Every entity's Text properties are embedded into its `_canonical`
+/// document, and chunks embed their `text`; nothing else is embedded
+/// per-field. So discovery only needs to fan out over those two
+/// collections — searching `_canonical` reaches every entity type
+/// regardless of which property carried the matching text.
 fn resolve_collections(
     q: &EntityTypeSearchQuery,
-    catalog: Option<&OntologyCatalog>,
+    _catalog: Option<&OntologyCatalog>,
     prefix_index: Option<&str>,
     semantic_collection: &str,
 ) -> Vec<String> {
     if let Some(explicit) = &q.collections {
         return explicit.clone();
     }
-    let mut field_names = crate::ingest::delete::text_field_names(catalog);
+    let mut field_names: Vec<String> = vec!["_canonical".to_string(), "text".to_string()];
     if let Some(filter) = &q.fields {
         let allowed: BTreeSet<&str> = filter.iter().map(String::as_str).collect();
         field_names.retain(|name| allowed.contains(name.as_str()));

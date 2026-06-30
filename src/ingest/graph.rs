@@ -665,8 +665,10 @@ mod tests {
         assert!(rel_types.contains(&MENTION_REL));
         assert!(rel_types.contains(&PART_OF_REL));
 
-        // 3 PropertyType::Text fields → 3 embedding side effects:
-        // Source.name, Person.name, Chunk.text.
+        // One embedding per entity: Source and Person embed their
+        // `_canonical` document; the Chunk embeds its `text`. Other Text
+        // fields (e.g. Person.name) keep their value on the node but
+        // aren't embedded separately — `_canonical` already covers them.
         assert_eq!(effects.len(), 3);
     }
 

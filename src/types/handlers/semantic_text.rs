@@ -1,18 +1,31 @@
 //! `SemanticText` — free-text fields searchable via embeddings + qlink.
 //!
+//! There are exactly two ways to match a `SemanticText` field, and they
+//! are kept deliberately separate:
+//!
+//! * **Exact / substring** (`eq` / `neq` / `contains`) — plain Cypher
+//!   against the raw string kept on the node. No embeddings, no Qdrant,
+//!   no fuzziness: `eq` means equality.
+//! * **Semantic** (`search` / `search_reranked` / `hybrid_search`, and
+//!   the resolver-synthesised `entity_search`) — a single per-entity
+//!   hybrid retrieval (dense ⊕ BM25, RRF-fused) followed by one
+//!   cross-encoder rerank, always against the field-agnostic
+//!   `_canonical` collection.
+//!
 //! Responsibilities:
 //!
 //! 1. **Ingest**: keep the raw string on the node (so exact matches
-//!    still work) and queue an [`super::super::SideEffect::EmbedAndStore`]
-//!    so the pipeline can compute an embedding once the node id is
-//!    known.
-//! 2. **Lower**: validate the DSL fragment and stash the *embedded*
-//!    query vector in the predicate's `params`, so the builder doesn't
-//!    have to embed inside Cypher emission (which is expected to be
-//!    pure).
-//! 3. **Emit**: render the appropriate `qlink.*` Cypher fragment for
-//!    `search` (pure vector) or `hybrid_search` (vector + exact) and
-//!    bind the embedding as a parameter.
+//!    work) and — only for the field that backs vector retrieval (the
+//!    per-entity `_canonical` document, or `text` on a `Chunk`) — queue
+//!    a [`super::super::SideEffect::EmbedAndStore`]. Every other text
+//!    field's value already lives inside `_canonical`, so embedding it
+//!    separately would only duplicate the vector.
+//! 2. **Lower**: for semantic ops, embed the query once and stash the
+//!    vector in the predicate's `params` so emission stays pure; for
+//!    exact ops, just carry the literal.
+//! 3. **Emit**: render `libqlink.search_hybrid_reranked` over
+//!    `_canonical` for semantic ops, or a plain `=`/`<>`/`CONTAINS`
+//!    clause for exact ops.
 //!
 //! The handler is configured by a `[types.SemanticText]` block:
 //!
@@ -46,6 +59,7 @@ use serde_json::Value;
 use crate::ast::query::{Literal, PropertyRef};
 use crate::config::Config;
 use crate::embeddings::SharedEmbedder;
+use crate::graph::{CANONICAL_FIELD, CHUNK_LABEL};
 use crate::types::context::OrderDir;
 use crate::types::{
     Capabilities, EmitCtx, IngestCtx, LowerCtx, PromptHint, SideEffect, TypeError, TypeHandler,
@@ -175,13 +189,28 @@ impl TypeHandler for SemanticTextHandler {
         };
 
         // Keep the raw text on the node — useful for exact match,
-        // contains, and human inspection.
+        // contains, and human inspection. This happens for *every*
+        // SemanticText field, even the ones we don't embed.
         ctx.set_value(Literal::String(text.clone()));
+
+        // Only one field per node backs vector retrieval: the per-entity
+        // `_canonical` document (which already concatenates every text
+        // property), or `text` on a `Chunk`. Embedding any other field
+        // would just duplicate a vector that `_canonical` already covers,
+        // so we keep its value on the node but queue no side effect.
+        let should_embed = if ctx.node_label == CHUNK_LABEL {
+            ctx.field_name == "text"
+        } else {
+            ctx.field_name == CANONICAL_FIELD
+        };
+        if !should_embed {
+            return Ok(());
+        }
 
         // Queue the embed-and-store side effect. The collection name is
         // derived from the configured default plus the field name so
-        // multiple SemanticText fields don't collide. When a
-        // `prefix_index` is set, it's folded in as the outermost
+        // `_canonical` and `Chunk.text` land in distinct collections.
+        // When a `prefix_index` is set, it's folded in as the outermost
         // segment so the same field in different prefixes lands in
         // separate Qdrant collections.
         let collection = with_prefix_index(
@@ -220,23 +249,28 @@ impl TypeHandler for SemanticTextHandler {
                 ),
             })?;
 
-        // For non-vector ops we can short-circuit to the plain Cypher
-        // path with no embedding work.
-        // if matches!(
-        //     ctx.raw.op,
-        //     TypedOp::Eq | TypedOp::Neq | TypedOp::Contains
-        // ) {
-        //     return Ok(TypedPredicate {
-        //         type_id: ctx.type_id.clone(),
-        //         field: ctx.raw.field.clone(),
-        //         op: ctx.raw.op,
-        //         value: Literal::String(text.to_string()),
-        //         params: BTreeMap::new(),
-        //     });
-        // }
+        // Exact / substring ops never touch the vector store: emit()
+        // renders plain Cypher against the raw string `on_ingest` kept on
+        // the node, so `eq`/`neq`/`contains` stay precise. No embedding,
+        // no params.
+        if matches!(
+            ctx.raw.op,
+            TypedOp::Eq | TypedOp::Neq
+        ) {
+            return Ok(TypedPredicate {
+                type_id: ctx.type_id.clone(),
+                field: ctx.raw.field.clone(),
+                op: ctx.raw.op,
+                value: Literal::String(text.to_string()),
+                params: BTreeMap::new(),
+            });
+        }
 
-        // Embed the query once at lowering time — emit() must remain
-        // pure (no I/O) so the builder is testable in isolation.
+        // Every other (semantic) op resolves to the same retrieval: a
+        // single per-entity hybrid search (dense ⊕ BM25, RRF-fused) over
+        // the field-agnostic `_canonical` collection, then one
+        // cross-encoder rerank. We embed the query once here so emit()
+        // stays pure (no I/O) and the builder is testable in isolation.
         let vec = self
             .embedder
             .embed(text)
@@ -246,7 +280,7 @@ impl TypeHandler for SemanticTextHandler {
         // The reranker needs both the textual query (used to build the
         // cross-encoder prompt) AND its embedding (used for stage-1
         // KNN). The Cypher node label is the qlink payload filter,
-        // matching what `on_ingest` wrote via `insert_labeled`.
+        // matching what `on_ingest` wrote via `insert_hybrid`.
         let label = ctx.field_label.ok_or_else(|| {
             TypeError::Handler(
                 "SemanticText: cannot resolve graph label for field; \
@@ -255,16 +289,10 @@ impl TypeHandler for SemanticTextHandler {
             )
         })?;
 
-        // The consolidated `EntitySearch` op searches the per-entity
-        // `_canonical` collection (which carries every text field, so it
-        // is field-agnostic); every other op stays on its per-field
-        // collection. The base + prefix are identical to ingest, so the
-        // two always address the same Qdrant collection.
-        let collection = if ctx.raw.op == TypedOp::EntitySearch {
-            canonical_collection_for(self, ctx.prefix_index)
-        } else {
-            collection_for(self, &ctx.raw.field, ctx.prefix_index)
-        };
+        // Always the per-entity `_canonical` collection. The base +
+        // prefix are identical to ingest, so query and ingest always
+        // address the same Qdrant collection.
+        let collection = canonical_collection_for(self, ctx.prefix_index);
 
         let mut params = BTreeMap::new();
         params.insert("embedding".to_string(), lit_vec);
@@ -272,11 +300,6 @@ impl TypeHandler for SemanticTextHandler {
         params.insert("query_str".to_string(), Literal::String(text.to_string()));
         params.insert("candidate_k".to_string(), Literal::Int(DEFAULT_CANDIDATE_K));
         params.insert("label".to_string(), Literal::String(label.to_string()));
-        params.insert("top_k".to_string(), Literal::Int(self.config.top_k as i64));
-        params.insert(
-            "search_threshold".to_string(),
-            Literal::Float(self.config.search_threshold),
-        );
         params.insert(
             "reranker_threshold".to_string(),
             Literal::Float(self.config.reranker_threshold),
@@ -292,102 +315,42 @@ impl TypeHandler for SemanticTextHandler {
     }
 
     fn emit(&self, ctx: &mut EmitCtx<'_>, pred: &TypedPredicate) -> Result<(), TypeError> {
-        // let render_field = |p: &PropertyRef| match &p.property {
-        //     Some(prop) => format!("{}.{}", p.alias, prop),
-        //     None => p.alias.to_string(),
-        // };
-
         match pred.op {
-            // ── Plain text ops route through standard Cypher. ─────────
-            // TypedOp::Eq | TypedOp::Neq | TypedOp::Contains => {
-            //     let value = pred.value.clone();
-            //     let placeholder = ctx.bind(value);
-            //     let sym = match pred.op {
-            //         TypedOp::Eq => "=",
-            //         TypedOp::Neq => "<>",
-            //         TypedOp::Contains => "CONTAINS",
-            //         _ => unreachable!(),
-            //     };
-            //     ctx.set_where(format!(
-            //         "{lhs} {sym} {placeholder}",
-            //         lhs = render_field(&pred.field)
-            //     ));
-            //     Ok(())
-            // }
-            // ── Pure vector search via libqlink.search_reranked ───────
+            // ── Exact / substring: precise plain Cypher. ──────────────
             //
-            // qlink owns the two-stage pipeline:
-            //
-            //   1. KNN pre-filter: label-filtered Qdrant search for
-            //      `$emb`, keep top-10 hits with cosine ≥ `$search_threshold`.
-            //   2. Cross-encoder rerank: format `<$query_str> a <$label>`
-            //      and rank surviving candidates by reranker score,
-            //      keeping those ≥ `$reranker_threshold`.
-            //
-            // The yield is the surviving (id, reranker_score) pairs in
-            // descending order, so we don't need our own threshold
-            // filter or WITH gate. The MATCH then joins by id.
-            TypedOp::Eq | TypedOp::Neq | TypedOp::Contains | TypedOp::SearchReranked => {
-                let alias = pred.field.alias.as_str();
-                let coll = pred
-                    .params
-                    .get("collection")
-                    .cloned()
-                    .ok_or_else(|| TypeError::Handler("missing 'collection' param".into()))?;
-                let emb = pred
-                    .params
-                    .get("embedding")
-                    .cloned()
-                    .ok_or_else(|| TypeError::Handler("missing 'embedding' param".into()))?;
-                let query_str = pred
-                    .params
-                    .get("query_str")
-                    .cloned()
-                    .ok_or_else(|| TypeError::Handler("missing 'query_str' param".into()))?;
-                let label = pred
-                    .params
-                    .get("label")
-                    .cloned()
-                    .ok_or_else(|| TypeError::Handler("missing 'label' param".into()))?;
-                let rerank_thr = pred
-                    .params
-                    .get("reranker_threshold")
-                    .cloned()
-                    .unwrap_or(Literal::Float(DEFAULT_RERANKER_THRESHOLD));
-
-                let coll_p = ctx.bind(coll);
-                let q_p = ctx.bind(query_str);
-                let emb_p = ctx.bind(emb);
-                let label_p = ctx.bind(label);
-                let r_thr_p = ctx.bind(rerank_thr);
-                let prop = pred.field.property.clone().unwrap_or("name".to_string());
-                // Each call gets a unique suffix so multiple semantic
-                // searches against the same alias don't collide on
-                // `<alias>__qid` / `<alias>__score`.
-                let n = ctx.fresh_id();
-                let qid = format!("{alias}__qid_{n}");
-                let score = format!("{alias}__score_{n}");
-                ctx.push_pre_match(format!(
-                    "CALL libqlink.search_reranked({coll_p}, {q_p}, {emb_p}, {label_p}, \"{prop}\", {r_thr_p}) \
-                     YIELD id AS {qid}, score AS {score}"
+            // The raw value lives on the node (see `on_ingest`), so these
+            // never touch the vector store. `eq` is equality, `contains`
+            // is substring — no embeddings, no fuzziness.
+            TypedOp::Eq | TypedOp::Neq => {
+                let placeholder = ctx.bind(pred.value.clone());
+                let sym = match pred.op {
+                    TypedOp::Eq => "=",
+                    TypedOp::Neq => "<>",
+                    _ => unreachable!("guarded by the match arm"),
+                };
+                ctx.set_where(format!(
+                    "{lhs} {sym} {placeholder}",
+                    lhs = render_field(&pred.field)
                 ));
-                ctx.set_where(format!("id({alias}) = {qid}"));
-                ctx.contribution_mut()
-                    .order_by
-                    .push((score, OrderDir::Desc));
                 Ok(())
             }
 
-            // ── Consolidated per-entity hybrid search + single rerank ──
+            // ── Semantic: one per-entity hybrid search + single rerank. ─
             //
-            // One CALL per alias against the `_canonical` collection.
-            // qlink fuses a dense and a BM25-sparse branch with RRF,
-            // label-filters by entity type, then reranks the top
-            // `candidate_k` candidates over their canonical text. The
-            // yield is the surviving (id, reranker_score) pairs descending;
-            // the MATCH then joins by id. This replaces N per-field
-            // `search_reranked` calls with a single field-agnostic one.
-            TypedOp::EntitySearch => {
+            // Every semantic op (plain `search`, `search_reranked`,
+            // `hybrid_search`, and the resolver-synthesised
+            // `entity_search`) shares this one implementation. One CALL
+            // per alias against the `_canonical` collection: qlink fuses a
+            // dense and a BM25-sparse branch with RRF, label-filters by
+            // entity type, then reranks the top `candidate_k` candidates
+            // over their canonical text. The yield is the surviving
+            // (id, reranker_score) pairs descending; the MATCH then joins
+            // by id, so we need no Cypher-side threshold or WITH gate.
+            TypedOp::Search
+            | TypedOp::SearchReranked
+            | TypedOp::HybridSearch
+            | TypedOp::EntitySearch
+            | TypedOp::Contains => {
                 let alias = pred.field.alias.as_str();
                 let coll = pred
                     .params
@@ -426,6 +389,9 @@ impl TypeHandler for SemanticTextHandler {
                 let label_p = ctx.bind(label);
                 let thr_p = ctx.bind(rerank_thr);
                 let k_p = ctx.bind(candidate_k);
+                // Each call gets a unique suffix so multiple semantic
+                // searches against the same alias don't collide on
+                // `<alias>__qid` / `<alias>__score`.
                 let n = ctx.fresh_id();
                 let qid = format!("{alias}__qid_{n}");
                 let score = format!("{alias}__score_{n}");
@@ -440,89 +406,6 @@ impl TypeHandler for SemanticTextHandler {
                 Ok(())
             }
 
-            TypedOp::Search => {
-                let alias = pred.field.alias.as_str();
-                let coll = pred
-                    .params
-                    .get("collection")
-                    .cloned()
-                    .ok_or_else(|| TypeError::Handler("missing 'collection' param".into()))?;
-                let emb = pred
-                    .params
-                    .get("embedding")
-                    .cloned()
-                    .ok_or_else(|| TypeError::Handler("missing 'embedding' param".into()))?;
-                let label = pred
-                    .params
-                    .get("label")
-                    .cloned()
-                    .ok_or_else(|| TypeError::Handler("missing 'label' param".into()))?;
-
-                let coll_p = ctx.bind(coll);
-                let emb_p = ctx.bind(emb);
-                let label_p = ctx.bind(label);
-                // let r_thr_p = ctx.bind(rerank_thr);
-                // let prop = pred.field.property.clone().unwrap_or("name".to_string());
-                // Each call gets a unique suffix so multiple semantic
-                // searches against the same alias don't collide on
-                // `<alias>__qid` / `<alias>__score`.
-                let n = ctx.fresh_id();
-                let qid = format!("{alias}__qid_{n}");
-                let score = format!("{alias}__score_{n}");
-                ctx.push_pre_match(format!(
-                    "CALL libqlink.search_labeled([{coll_p}], {emb_p}, 30, {label_p}) \
-                     YIELD id AS {qid}, score AS {score}"
-                ));
-                ctx.set_where(format!("id({alias}) = {qid}"));
-                ctx.contribution_mut()
-                    .order_by
-                    .push((score, OrderDir::Desc));
-                Ok(())
-            }
-            // ── Hybrid (exact OR semantic, weighted by score) ─────────
-            //
-            // Layout: after the user's MATCH/WHERE, compute an exact-
-            // match column inline, then call qlink.score_batch_node to
-            // attach the semantic score, then re-bind so the final
-            // score = exact + semantic.
-            TypedOp::HybridSearch => {
-                let alias = pred.field.alias.as_str();
-                let prop_name = pred.field.property.as_deref().ok_or_else(|| {
-                    TypeError::Handler("hybrid_search requires <alias>.<property>".into())
-                })?;
-                let query = pred.value.clone();
-                let coll = pred
-                    .params
-                    .get("collection")
-                    .cloned()
-                    .ok_or_else(|| TypeError::Handler("missing 'collection' param".into()))?;
-                let emb = pred
-                    .params
-                    .get("embedding")
-                    .cloned()
-                    .ok_or_else(|| TypeError::Handler("missing 'embedding' param".into()))?;
-
-                let q_p = ctx.bind(query);
-                let coll_p = ctx.bind(coll);
-                let emb_p = ctx.bind(emb);
-
-                ctx.push_post_match(format!(
-                    "WITH {alias},\n\
-                          CASE WHEN {alias}.{prop_name} = {q_p} THEN 1.0 ELSE 0.0 END AS {alias}__exact\n\
-                     WITH collect({{ n: {alias}, e: {alias}__exact }}) AS {alias}__rows\n\
-                     CALL libqlink.score_batch_node({coll_p}, [{emb_p}],\n\
-                          [r IN {alias}__rows | r.n], 0.0) YIELD node AS {alias}__n, score AS {alias}__sem\n\
-                     WITH {alias}__rows, {alias}__n AS {alias}, {alias}__sem,\n\
-                          [r IN {alias}__rows WHERE r.n = {alias}__n | r.e][0] AS {alias}__exact"
-                ));
-                ctx.contribution_mut()
-                    .order_by
-                    .push((format!("({alias}__exact + {alias}__sem)"), OrderDir::Desc));
-                // No WHERE addendum: the post_match clauses replace the
-                // node binding, so further filtering happens against
-                // the rebound `alias`.
-                Ok(())
-            }
             other => Err(TypeError::UnsupportedOp {
                 ty: Self::TYPE_ID.into(),
                 op: other.to_string(),
@@ -536,9 +419,9 @@ impl TypeHandler for SemanticTextHandler {
             capabilities: self.capabilities(),
             ops: self.supported_ops(),
             doc: Some(
-                "Free-text field with vector search. Supports `eq`/`neq`/`contains` for exact \
-                 lookups, `search` for natural-language matches, and `hybrid_search` to combine \
-                 the two."
+                "Free-text field. Use `eq`/`neq`/`contains` for precise (non-fuzzy) lookups, \
+                 and `search` for natural-language matches (a hybrid dense+keyword retrieval \
+                 over the whole entity, with cross-encoder reranking)."
                     .into(),
             ),
             example: Some(
@@ -559,19 +442,14 @@ fn json_kind(v: &Value) -> &'static str {
     }
 }
 
-/// Per-field collection name. The handler's configured `collection` is
-/// the prefix; the field name is appended so `Person.bio` and
-/// `Company.description` end up in distinct Qdrant collections (a
-/// requirement for vector-dim sanity). An optional `prefix_index`
-/// is folded in as the outermost segment so the same field across
-/// different prefixes routes to separate collections.
-fn collection_for(
-    h: &SemanticTextHandler,
-    field: &PropertyRef,
-    prefix_index: Option<&str>,
-) -> String {
-    let prop = field.property.as_deref().unwrap_or(field.alias.as_str());
-    with_prefix_index(prefix_index, &format!("{}__{}", h.config.collection, prop))
+/// Render the left-hand side of an exact-match clause: `alias.property`
+/// when the filter names a property, or just `alias` for an entity-level
+/// reference.
+fn render_field(field: &PropertyRef) -> String {
+    match &field.property {
+        Some(prop) => format!("{}.{}", field.alias, prop),
+        None => field.alias.to_string(),
+    }
 }
 
 /// Per-entity `_canonical` collection name. Mirrors how the ingest path
@@ -659,7 +537,7 @@ pub enum SideEffectEmitError {
 /// When the bucket has a `payload_label`, we use
 /// `libqlink.insert_labeled` so each vector lands in Qdrant tagged
 /// with the originating Cypher node label — that's what
-/// `libqlink.search_reranked` filters by at query time. When the
+/// `libqlink.search_hybrid_reranked` filters by at query time. When the
 /// bucket has no label we fall back to plain `libqlink.insert`.
 ///
 /// This Cypher renderer belongs to the SemanticText handler because
@@ -820,7 +698,39 @@ mod tests {
     }
 
     #[test]
-    fn ingest_keeps_text_and_queues_side_effect() {
+    fn ingest_embeds_canonical_field() {
+        // The `_canonical` field is the one that backs vector retrieval,
+        // so it both stores its value and queues an embedding.
+        let h = handler();
+        let mut q = SideEffectQueue::new();
+        let key = Literal::String("type: Company\nname: Hello".into());
+        let raw = serde_json::json!("type: Company\nname: Hello");
+        let mut ctx = IC::new("Company", CANONICAL_FIELD, &key, CANONICAL_FIELD, &raw, &mut q);
+        h.on_ingest(&mut ctx).unwrap();
+        let stored = ctx.finish();
+        assert_eq!(
+            stored,
+            Some(Some(Literal::String("type: Company\nname: Hello".into())))
+        );
+        assert_eq!(q.len(), 1);
+        match &q.into_vec()[0] {
+            SideEffect::EmbedAndStore {
+                label, collection, ..
+            } => {
+                assert_eq!(label, "Company");
+                // Without a prefix_index the collection name is just
+                // `<base>__<field>`; `_canonical` keeps its leading
+                // underscore, so the separator renders as `___`.
+                assert_eq!(collection, "test___canonical");
+            }
+        }
+    }
+
+    #[test]
+    fn ingest_keeps_value_but_does_not_embed_non_canonical_fields() {
+        // A plain Text field (e.g. `name`) keeps its raw value on the node
+        // for exact match, but is NOT embedded — its value already lives
+        // inside `_canonical`, so a per-field vector would just duplicate.
         let h = handler();
         let mut q = SideEffectQueue::new();
         let key = Literal::String("c1".into());
@@ -829,19 +739,25 @@ mod tests {
         h.on_ingest(&mut ctx).unwrap();
         let stored = ctx.finish();
         assert_eq!(stored, Some(Some(Literal::String("Hello world".into()))));
+        assert_eq!(q.len(), 0, "non-canonical fields must not queue an embedding");
+    }
+
+    #[test]
+    fn ingest_embeds_chunk_text_field() {
+        // Chunks are the one exception: their `text` field is the
+        // retrieval key (the traversal pipeline searches the `text`
+        // collection), so it is embedded while `_canonical` is not.
+        let h = handler();
+        let mut q = SideEffectQueue::new();
+        let key = Literal::String("chunk-1".into());
+        let raw = serde_json::json!("a fragment");
+        let mut ctx = IC::new(CHUNK_LABEL, "id", &key, "text", &raw, &mut q);
+        h.on_ingest(&mut ctx).unwrap();
+        ctx.finish();
         assert_eq!(q.len(), 1);
         match &q.into_vec()[0] {
-            SideEffect::EmbedAndStore {
-                text,
-                label,
-                collection,
-                ..
-            } => {
-                assert_eq!(text, "Hello world");
-                assert_eq!(label, "Company");
-                // Without a prefix_index the collection name is just
-                // `<base>__<field>`.
-                assert_eq!(collection, "test__name");
+            SideEffect::EmbedAndStore { collection, .. } => {
+                assert_eq!(collection, "test__text");
             }
         }
     }
@@ -850,15 +766,15 @@ mod tests {
     fn ingest_prefix_index_scopes_embedding_collection() {
         let h = handler();
         let mut q = SideEffectQueue::new();
-        let key = Literal::String("c1".into());
-        let raw = serde_json::json!("Hello world");
-        let mut ctx =
-            IC::new("Company", "id", &key, "name", &raw, &mut q).with_prefix_index(Some("Tenant1"));
+        let key = Literal::String("type: Company".into());
+        let raw = serde_json::json!("type: Company");
+        let mut ctx = IC::new("Company", CANONICAL_FIELD, &key, CANONICAL_FIELD, &raw, &mut q)
+            .with_prefix_index(Some("Tenant1"));
         h.on_ingest(&mut ctx).unwrap();
         ctx.finish();
         match &q.into_vec()[0] {
             SideEffect::EmbedAndStore { collection, .. } => {
-                assert_eq!(collection, "Tenant1__test__name");
+                assert_eq!(collection, "Tenant1__test___canonical");
             }
         }
     }
@@ -879,32 +795,36 @@ mod tests {
             prefix_index: Some("Tenant1"),
         };
         let pred = h.lower(&mut ctx).unwrap();
+        // Semantic ops always target the per-entity `_canonical` collection.
         assert_eq!(
             pred.params.get("collection").unwrap(),
-            &Literal::String("Tenant1__test__name".into())
+            &Literal::String("Tenant1__test___canonical".into())
         );
     }
 
     #[test]
-    fn lower_search_embeds_query_and_records_label_and_thresholds() {
+    fn lower_search_embeds_query_and_records_canonical_params() {
         let h = handler();
         let field = pref("c", "name");
         let value = serde_json::json!("apple");
         let mut ctx = lc(&field, TypedOp::Search, &value, "Company");
         let pred = h.lower(&mut ctx).unwrap();
 
-        // Everything search_reranked needs is in params.
+        // Everything the canonical hybrid search needs is in params.
         for key in [
             "embedding",
             "collection",
             "query_str",
+            "candidate_k",
             "label",
-            "top_k",
-            "search_threshold",
             "reranker_threshold",
         ] {
             assert!(pred.params.contains_key(key), "missing '{key}' in params");
         }
+        // The cosine `search_threshold`/`top_k` knobs aren't used by
+        // search_hybrid_reranked, so they're no longer carried.
+        assert!(!pred.params.contains_key("search_threshold"));
+        assert!(!pred.params.contains_key("top_k"));
         match pred.params.get("embedding").unwrap() {
             Literal::List(items) => assert_eq!(items.len(), 8),
             _ => panic!("embedding should be a List"),
@@ -914,12 +834,12 @@ mod tests {
             &Literal::String("apple".into())
         );
         assert_eq!(
-            pred.params.get("label").unwrap(),
-            &Literal::String("Company".into())
+            pred.params.get("collection").unwrap(),
+            &Literal::String("test___canonical".into())
         );
         assert_eq!(
-            pred.params.get("search_threshold").unwrap(),
-            &Literal::Float(DEFAULT_SEARCH_THRESHOLD)
+            pred.params.get("label").unwrap(),
+            &Literal::String("Company".into())
         );
         assert_eq!(
             pred.params.get("reranker_threshold").unwrap(),
@@ -950,36 +870,72 @@ mod tests {
     }
 
     #[test]
-    fn lower_eq_now_routes_through_search_reranked() {
-        // Eq/Neq/Contains used to short-circuit to plain Cypher; the
-        // current handler unifies them with `Search` and routes
-        // everything through `libqlink.search_reranked` so cross-encoder
-        // re-ranking applies even to nominally exact filters. We
-        // therefore expect the same rich params Eq used to forgo.
+    fn lower_eq_is_exact_with_no_embedding() {
+        // `eq`/`neq`/`contains` are exact ops: they carry only the literal
+        // value and queue no embedding work — emit() renders plain Cypher.
         let h = handler();
         let field = pref("c", "name");
         let value = serde_json::json!("apple");
         let mut ctx = lc(&field, TypedOp::Eq, &value, "Company");
         let pred = h.lower(&mut ctx).unwrap();
         assert_eq!(pred.value, Literal::String("apple".into()));
-        for key in [
-            "embedding",
-            "collection",
-            "query_str",
-            "label",
-            "reranker_threshold",
-        ] {
-            assert!(pred.params.contains_key(key), "missing '{key}' in params");
-        }
+        assert!(
+            pred.params.is_empty(),
+            "exact ops must not embed or carry search params; got {:?}",
+            pred.params
+        );
     }
 
     #[test]
-    fn emit_search_calls_search_labeled_and_orders_by_score() {
-        // `TypedOp::Search` is the pure KNN path: it calls
-        // `libqlink.search_labeled` (no cross-encoder rerank) and
-        // exposes the surviving (id, score) pairs descending.
-        // `TypedOp::SearchReranked` is the variant that goes through
-        // `libqlink.search_reranked` — separately tested.
+    fn emit_eq_renders_plain_cypher_equality() {
+        let h = handler();
+        let field = pref("c", "name");
+        let value = serde_json::json!("apple");
+        let mut lower = lc(&field, TypedOp::Eq, &value, "Company");
+        let pred = h.lower(&mut lower).unwrap();
+
+        let mut contrib = CypherContribution::default();
+        let mut binder = CountingBinder {
+            next: 0,
+            next_var: 0,
+            params: Default::default(),
+        };
+        let mut emit = EmitCtx::new(&mut contrib, &mut binder);
+        h.emit(&mut emit, &pred).unwrap();
+
+        // Plain WHERE clause against the raw property — no qlink, no
+        // pre_match prelude.
+        assert_eq!(contrib.where_inline.as_deref(), Some("c.name = $p0"));
+        assert!(contrib.pre_match.is_empty());
+        assert!(contrib.order_by.is_empty());
+        assert_eq!(binder.params.get("p0"), Some(&Literal::String("apple".into())));
+    }
+
+    #[test]
+    fn emit_contains_renders_plain_cypher_contains() {
+        let h = handler();
+        let field = pref("c", "name");
+        let value = serde_json::json!("app");
+        let mut lower = lc(&field, TypedOp::Contains, &value, "Company");
+        let pred = h.lower(&mut lower).unwrap();
+
+        let mut contrib = CypherContribution::default();
+        let mut binder = CountingBinder {
+            next: 0,
+            next_var: 0,
+            params: Default::default(),
+        };
+        let mut emit = EmitCtx::new(&mut contrib, &mut binder);
+        h.emit(&mut emit, &pred).unwrap();
+        assert_eq!(contrib.where_inline.as_deref(), Some("c.name CONTAINS $p0"));
+        assert!(contrib.pre_match.is_empty());
+    }
+
+    #[test]
+    fn emit_search_calls_hybrid_reranked_and_orders_by_score() {
+        // Every semantic op compiles to the same per-entity hybrid
+        // retrieval + rerank over `_canonical`, exposing the surviving
+        // (id, score) pairs descending.
         let h = handler();
         let field = pref("c", "name");
         let value = serde_json::json!("apple");
@@ -997,12 +953,11 @@ mod tests {
 
         let pre = contrib.pre_match.join("\n");
         assert!(
-            pre.contains("CALL libqlink.search_labeled("),
-            "pre_match should call libqlink.search_labeled; got {pre}"
+            pre.contains("CALL libqlink.search_hybrid_reranked("),
+            "pre_match should call libqlink.search_hybrid_reranked; got {pre}"
         );
         assert!(pre.contains("YIELD id AS c__qid_0, score AS c__score_0"));
-        // No post-yield WHERE — we rely on Qdrant's similarity cutoff
-        // upstream, not a Cypher-side score filter.
+        // No post-yield WHERE — qlink filters internally.
         assert!(
             !pre.contains("WHERE c__score"),
             "must not emit a duplicate score-filter clause; got {pre}"
@@ -1014,11 +969,8 @@ mod tests {
 
     #[test]
     fn emit_search_reranked_threshold_is_bound_as_parameter() {
-        // The reranker threshold is bound as a Cypher parameter,
-        // never inlined into the call site. Only the
-        // `SearchReranked` (and Eq/Neq/Contains) path uses
-        // `libqlink.search_reranked` — plain `Search` calls
-        // `search_labeled` which takes no reranker threshold.
+        // The reranker threshold is bound as a Cypher parameter, never
+        // inlined into the `search_hybrid_reranked` call site.
         let h = handler_with_thresholds(0.42, 0.17);
         let field = pref("c", "name");
         let value = serde_json::json!("apple");
@@ -1050,6 +1002,7 @@ mod tests {
             "reranker_threshold 0.17 not bound; floats={floats:?}"
         );
         let pre = contrib.pre_match.join("\n");
+        assert!(pre.contains("libqlink.search_hybrid_reranked"));
         assert!(
             !pre.contains("0.17"),
             "reranker_threshold leaked inline: {pre}"
@@ -1057,7 +1010,10 @@ mod tests {
     }
 
     #[test]
-    fn emit_hybrid_renders_both_signals() {
+    fn emit_hybrid_search_routes_to_canonical_hybrid() {
+        // `hybrid_search` is now an alias for the unified semantic path:
+        // it compiles to `search_hybrid_reranked` over `_canonical`, not
+        // the old inline exact + score_batch_node scheme.
         let h = handler();
         let field = pref("c", "name");
         let value = serde_json::json!("apple");
@@ -1072,14 +1028,15 @@ mod tests {
         let mut emit = EmitCtx::new(&mut contrib, &mut binder);
         h.emit(&mut emit, &pred).unwrap();
 
-        let post = contrib.post_match.join("\n");
-        assert!(post.contains("c__exact"));
-        assert!(post.contains("libqlink.score_batch_node"));
-        assert!(post.contains("c__sem"));
-        assert!(contrib
-            .order_by
-            .iter()
-            .any(|(k, _)| k.contains("c__exact + c__sem")));
+        let pre = contrib.pre_match.join("\n");
+        assert!(pre.contains("CALL libqlink.search_hybrid_reranked("));
+        assert!(contrib.post_match.is_empty());
+        assert!(
+            !pre.contains("score_batch_node"),
+            "hybrid_search must no longer emit score_batch_node; got {pre}"
+        );
+        assert_eq!(contrib.order_by.len(), 1);
+        assert_eq!(contrib.order_by[0].0, "c__score_0");
     }
 
     #[test]

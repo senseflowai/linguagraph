@@ -76,10 +76,11 @@ Around that core it can also:
   compact `{entities, relations}` document directly. Both run through the same
   planner, which emits deterministic, idempotent `MERGE` batches.
 - **Search semantically.** The pluggable type system ships a `SemanticText`
-  type that integrates with [qlink](https://github.com/senseflowai/qlink) for
-  vector and hybrid (vector + exact) search. Text properties are embedded on
-  ingestion and become searchable through two extra DSL operators, `search` and
-  `hybrid_search`.
+  type that integrates with [qlink](https://github.com/senseflowai/qlink). Each
+  entity's text is embedded once into a per-entity `_canonical` document; the
+  `search` operator runs a hybrid (dense + BM25) retrieval over it with
+  cross-encoder reranking, while `eq` / `neq` / `contains` stay exact (plain
+  Cypher against the raw value).
 - **Retrieve for RAG.** A traversal retrieval pipeline searches text chunks by
   goal and by mentioned entities, then merges and ranks unique chunks — the
   building block for retrieval-augmented generation over a graph.
@@ -184,7 +185,8 @@ whole contract:
   filter, or compare. Never embedded.
 - **`Text`** — everything else textual (names, descriptions, summaries,
   notes). On the linguagraph side it is **always** processed as
-  `SemanticText`: stored on the node *and* embedded for vector / hybrid
+  `SemanticText`: stored on the node (so `eq` / `contains` stay exact) and
+  folded into the entity's `_canonical` document, which is embedded once for
   semantic search.
 
 The legacy spellings `String` (→ `Keyword`) and `SemanticText` (→ `Text`) are
@@ -220,8 +222,9 @@ Tag a property in the mapping:
 }
 ```
 
-Now the field is exact-match searchable *and* embedded into qlink/Qdrant.
-The DSL grows two new ops, `search` and `hybrid_search`:
+The field's raw value stays on the node (so `eq` / `neq` / `contains` are
+exact), and its text is folded into the entity's `_canonical` document, which
+is embedded into qlink/Qdrant. The `search` op runs a semantic match:
 
 ```json
 {
@@ -235,19 +238,23 @@ The DSL grows two new ops, `search` and `hybrid_search`:
 }
 ```
 
-compiles to:
+compiles to a single per-entity hybrid retrieval (dense ⊕ BM25, RRF-fused)
+followed by a cross-encoder rerank, against the `_canonical` collection:
 
 ```cypher
-CALL qlink.search([$p0], $p1, $p2) YIELD id AS c__qid, score AS c__score
+CALL libqlink.search_hybrid_reranked($p0, $p1, $p2, $p3, $p4, $p5)
+  YIELD id AS c__qid_0, score AS c__score_0
 MATCH (c:Company)
-WHERE id(c) = c__qid
+WHERE id(c) = c__qid_0
 RETURN c.name AS name
-ORDER BY c__score DESC
+ORDER BY c__score_0 DESC
 LIMIT 5
 ```
 
-`hybrid_search` adds an exact-match score to the vector score and orders
-by their sum. See `examples/find_company_*.json` for both shapes.
+`search_reranked` and `hybrid_search` are aliases for the same semantic path.
+Several semantic filters on one alias collapse into a single call. For exact
+matching, use `eq` / `neq` / `contains`, which compile to a plain
+`WHERE c.name = $p0` (no qlink). See `examples/find_company_*.json`.
 
 ### Adding a new type
 
@@ -811,11 +818,12 @@ graph that's actually loaded.
 
 The query has two complementary channels:
 
-- **Vector** — embeds the user text once with BGE-M3, fans the same
-  vector across every Qdrant collection populated by ingest
-  (`…__name`, `…__text`, `…___canonical`, plus one per
-  `OntologyPropertyType::Text` field declared in the ontology),
-  resolves each hit to its node labels, and rolls everything up by
+- **Vector** — embeds the user text once with BGE-M3 and fans the same
+  vector across the two Qdrant collections ingest populates:
+  `…___canonical` (every entity's whole-entity document) and `…__text`
+  (chunk fragments). Because every Text property is folded into
+  `_canonical`, those two collections reach every node — no per-field
+  fan-out. Each hit is resolved to its node labels and rolled up by
   unique entity type. `vector_score` is the max cosine across
   collections; `per_collection` carries the breakdown.
 - **Catalog** — runs the same text through `OntologyCatalog::find`,
@@ -857,8 +865,7 @@ The command prints the result as pretty-printed JSON:
       "scopes": ["structured", "text"],
       "vector_score": 0.81,
       "per_collection": {
-        "semantic_text__name": 0.81,
-        "semantic_text___canonical": 0.74
+        "semantic_text___canonical": 0.81
       },
       "catalog_score": 0.62,
       "sample_node_ids": [12, 47]

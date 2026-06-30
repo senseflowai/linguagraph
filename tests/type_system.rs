@@ -42,6 +42,7 @@ fn cfg_with_semantic_text() -> Config {
         "SemanticText".to_string(),
         TypeConfig {
             embedding_model: None,
+            reranking_model: None,
             collection: Some("companies".into()),
             top_k: Some(10),
             // Pin both thresholds to recognisable values so the
@@ -326,6 +327,128 @@ fn semantic_search_compiles_to_qlink_search_call() {
         "expected configured reranker_threshold 0.42; params: {:?}",
         cypher.params
     );
+}
+
+/// When a cross-encoder reranker is attached to the pipeline, semantic
+/// search reranks **in this process**: `run` first fetches recall
+/// candidates from `libqlink.search_hybrid` (no model in Memgraph),
+/// reranks their text, drops sub-threshold hits, and folds the survivors
+/// into the main query as an `UNWIND` of precomputed `{id, score}` pairs
+/// — never calling `libqlink.search_hybrid_reranked`.
+#[tokio::test]
+async fn semantic_search_reranks_in_process_when_reranker_attached() {
+    use linguagraph::db::{QueryResult, Row, Value as DbValue};
+    use linguagraph::embeddings::{EmbedError, Reranker};
+
+    #[derive(Debug)]
+    struct FixedReranker {
+        scores: Vec<f64>,
+    }
+    impl Reranker for FixedReranker {
+        fn rerank(
+            &self,
+            _query: &str,
+            documents: &[String],
+        ) -> std::result::Result<Vec<f64>, EmbedError> {
+            assert_eq!(documents.len(), self.scores.len());
+            Ok(self.scores.clone())
+        }
+    }
+
+    fn row_id_text(id: i64, text: &str) -> Row {
+        let mut fields = BTreeMap::new();
+        fields.insert("id".to_string(), DbValue::Int(id));
+        fields.insert("text".to_string(), DbValue::String(text.to_string()));
+        Row { fields }
+    }
+
+    let cfg = cfg_with_semantic_text();
+    let (registry, embedder) = registry_and_embedder();
+    let client = Arc::new(MockClient::new());
+    // MockClient pops LIFO, so enqueue in reverse execution order: the
+    // main-query result first, the candidate-recall result last.
+    client.enqueue(QueryResult {
+        columns: vec![],
+        rows: vec![],
+    });
+    client.enqueue(QueryResult {
+        columns: vec![],
+        rows: vec![
+            row_id_text(10, "type: Company\nname: Apple"),
+            row_id_text(20, "type: Company\nname: Banana"),
+            row_id_text(30, "type: Company\nname: Cherry"),
+        ],
+    });
+
+    let pipeline = Pipeline::new(client.clone(), &cfg)
+        .with_registry(registry)
+        .with_embedder(embedder)
+        .with_reranker(Arc::new(FixedReranker {
+            scores: vec![0.9, 0.1, 0.7],
+        }))
+        .with_reranker_threshold(0.5);
+
+    let dsl_query = dsl::parse_str(
+        r#"{
+            "action": "find",
+            "start": { "label": "Company", "alias": "c" },
+            "filters": [
+                { "field": "c.name", "type": "SemanticText",
+                  "op": "search", "value": "apple" }
+            ],
+            "return": [{ "field": "c.name", "alias": "name" }],
+            "limit": 5
+        }"#,
+    )
+    .unwrap();
+
+    pipeline.run(dsl_query).await.unwrap();
+
+    let captured = client.captured.lock().unwrap();
+    assert_eq!(
+        captured.len(),
+        2,
+        "expected a candidate-recall query then the main query; got {} queries",
+        captured.len()
+    );
+    // [0] recall: the model-free `search_hybrid`, not the reranked variant.
+    assert!(
+        captured[0].text.contains("CALL libqlink.search_hybrid("),
+        "first query should be the recall-only candidate fetch; got:\n{}",
+        captured[0].text
+    );
+    assert!(!captured[0].text.contains("search_hybrid_reranked"));
+    // [1] main query: UNWIND of precomputed hits, no qlink rerank call.
+    assert!(
+        captured[1].text.contains("UNWIND"),
+        "main query should UNWIND precomputed hits; got:\n{}",
+        captured[1].text
+    );
+    assert!(!captured[1].text.contains("search_hybrid_reranked"));
+    // Only the two ids scoring >= 0.5 survive, ordered by rerank score.
+    let hits = captured[1]
+        .params
+        .values()
+        .find_map(|v| match v {
+            Literal::List(items)
+                if items.iter().all(|i| matches!(i, Literal::Object(_))) && !items.is_empty() =>
+            {
+                Some(items.clone())
+            }
+            _ => None,
+        })
+        .expect("expected a bound reranked_hits list");
+    let ids: Vec<i64> = hits
+        .iter()
+        .filter_map(|h| match h {
+            Literal::Object(m) => match m.get("id") {
+                Some(Literal::Int(i)) => Some(*i),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ids, vec![10, 30], "survivors must be rerank-ordered 10 then 30");
 }
 
 /// Consolidation: when a query carries several `SemanticText` semantic

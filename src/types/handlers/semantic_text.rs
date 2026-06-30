@@ -255,7 +255,7 @@ impl TypeHandler for SemanticTextHandler {
         // no params.
         if matches!(
             ctx.raw.op,
-            TypedOp::Eq | TypedOp::Neq | TypedOp::Contains
+            TypedOp::Eq | TypedOp::Neq
         ) {
             return Ok(TypedPredicate {
                 type_id: ctx.type_id.clone(),
@@ -321,12 +321,11 @@ impl TypeHandler for SemanticTextHandler {
             // The raw value lives on the node (see `on_ingest`), so these
             // never touch the vector store. `eq` is equality, `contains`
             // is substring — no embeddings, no fuzziness.
-            TypedOp::Eq | TypedOp::Neq | TypedOp::Contains => {
+            TypedOp::Eq | TypedOp::Neq => {
                 let placeholder = ctx.bind(pred.value.clone());
                 let sym = match pred.op {
                     TypedOp::Eq => "=",
                     TypedOp::Neq => "<>",
-                    TypedOp::Contains => "CONTAINS",
                     _ => unreachable!("guarded by the match arm"),
                 };
                 ctx.set_where(format!(
@@ -350,7 +349,8 @@ impl TypeHandler for SemanticTextHandler {
             TypedOp::Search
             | TypedOp::SearchReranked
             | TypedOp::HybridSearch
-            | TypedOp::EntitySearch => {
+            | TypedOp::EntitySearch
+            | TypedOp::Contains => {
                 let alias = pred.field.alias.as_str();
                 let coll = pred
                     .params

@@ -1,0 +1,64 @@
+{
+  "camera_domain": {
+    "entity_types": [
+      {
+        "name": "Camera",
+        "description": "A video camera or stream that can capture face recognition events.",
+        "properties": [
+          { "name": "id", "property_type": "keyword", "required": true },
+          { "name": "name", "property_type": "text", "required": true },
+          { "name": "kind", "property_type": "keyword", "required": false },
+          { "name": "is_dvr", "property_type": "bool", "required": false },
+          { "name": "streamserver_id", "property_type": "keyword", "required": false }
+        ]
+      },
+      {
+        "name": "Place",
+        "description": "A physical place where cameras are installed.",
+        "properties": [
+          { "name": "id", "property_type": "keyword", "required": true },
+          { "name": "name", "property_type": "text", "required": true },
+          { "name": "description", "property_type": "text", "required": false },
+          { "name": "latitude", "property_type": "float", "required": false },
+          { "name": "longitude", "property_type": "float", "required": false }
+        ]
+      },
+      {
+        "name": "Person",
+        "description": "A person recognized by a face recognition event.",
+        "properties": [
+          { "name": "id", "property_type": "keyword", "required": true },
+          { "name": "name", "property_type": "text", "required": true },
+          { "name": "list_name", "property_type": "text", "required": false },
+          { "name": "priority", "property_type": "keyword", "required": false }
+        ]
+      },
+      {
+        "name": "FaceEvent",
+        "description": "A face recognition event captured by a camera and optionally matched to a person.",
+        "properties": [
+          { "name": "id", "property_type": "keyword", "required": true },
+          { "name": "event_type", "property_type": "keyword", "required": true },
+          { "name": "label", "property_type": "keyword", "required": false },
+          { "name": "ts", "property_type": "int", "required": true },
+          { "name": "match_similarity", "property_type": "float", "required": false },
+          { "name": "estimated_age", "property_type": "float", "required": false }
+        ]
+      }
+    ],
+    "relation_types": [
+      {
+        "name": "LOCATED_AT",
+        "description": "Connects a Camera to the Place where it is installed."
+      },
+      {
+        "name": "CAPTURED_BY",
+        "description": "Connects a FaceEvent to the Camera that captured it."
+      },
+      {
+        "name": "MATCHED_PERSON",
+        "description": "Connects a FaceEvent to the Person recognized in it."
+      }
+    ]
+  }
+}

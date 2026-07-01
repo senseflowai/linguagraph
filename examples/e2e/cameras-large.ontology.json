@@ -1,0 +1,55 @@
+{
+  "camera_large_domain": {
+    "entity_types": [
+      {
+        "name": "Camera",
+        "description": "A camera from the large production cameras dump.",
+        "properties": [
+          { "name": "id", "property_type": "keyword", "required": true },
+          { "name": "name", "property_type": "keyword", "required": true },
+          { "name": "state", "property_type": "keyword", "required": false },
+          { "name": "state_reason", "property_type": "keyword", "required": false },
+          { "name": "is_dvr", "property_type": "bool", "required": false },
+          { "name": "edge", "property_type": "bool", "required": false },
+          { "name": "place_id", "property_type": "keyword", "required": false },
+          { "name": "created_at", "property_type": "keyword", "required": false },
+          { "name": "updated_at", "property_type": "keyword", "required": false },
+          { "name": "scheduler_group", "property_type": "keyword", "required": false },
+          { "name": "capacitygroup_token", "property_type": "keyword", "required": false },
+          { "name": "storage_depth", "property_type": "int", "required": false },
+          { "name": "source_host", "property_type": "keyword", "required": false }
+        ]
+      },
+      {
+        "name": "Place",
+        "description": "A physical installation place for one or more cameras.",
+        "properties": [
+          { "name": "id", "property_type": "keyword", "required": true },
+          { "name": "external_id", "property_type": "keyword", "required": false },
+          { "name": "name", "property_type": "keyword", "required": true },
+          { "name": "description", "property_type": "keyword", "required": false },
+          { "name": "latitude", "property_type": "float", "required": false },
+          { "name": "longitude", "property_type": "float", "required": false }
+        ]
+      },
+      {
+        "name": "AnalyticsModule",
+        "description": "A video analytics module enabled on cameras.",
+        "properties": [
+          { "name": "id", "property_type": "keyword", "required": true },
+          { "name": "name", "property_type": "keyword", "required": true }
+        ]
+      }
+    ],
+    "relation_types": [
+      {
+        "name": "LOCATED_AT",
+        "description": "Connects a Camera to its Place."
+      },
+      {
+        "name": "USES_MODULE",
+        "description": "Connects a Camera to an AnalyticsModule enabled on that camera."
+      }
+    ]
+  }
+}

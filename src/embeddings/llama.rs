@@ -10,6 +10,7 @@
 use super::{EmbedError, Embedder, Reranker};
 use anyhow::Context;
 use llama_cpp_2::context::params::{LlamaContextParams, LlamaPoolingType};
+use llama_cpp_2::context::LlamaContext;
 use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
@@ -85,12 +86,7 @@ impl LlamaEmbedder {
     fn tokenize_prompt(model: &LlamaModel, prompt: &str) -> anyhow::Result<LLamaTokenizer> {
         let mut tokenizer = LLamaTokenizer::new();
 
-        let tokens = tokenizer.tokenize(model, prompt)?;
-        let mut decoder = encoding_rs::UTF_8.new_decoder();
-
-        for token in tokens {
-            model.token_to_piece(*token, &mut decoder, true, None)?;
-        }
+        tokenizer.tokenize(model, prompt)?;
 
         Ok(tokenizer)
     }
@@ -206,24 +202,27 @@ impl LlamaEmbedder {
         n_ctx: u32,
     ) -> Result<Vec<Vec<f32>>, EmbedError> {
         let backend = backend()?;
+        let threads = std::thread::available_parallelism()
+            .map_err(|e| EmbedError::Backend(format!("thread count: {e}")))?
+            .get()
+            .try_into()
+            .map_err(|e| EmbedError::Backend(format!("thread count overflow: {e}")))?;
+        let n_ubatch = n_ctx;
         let ctx_params = LlamaContextParams::default()
             .with_n_ctx(NonZeroU32::new(n_ctx))
-            // .with_n_seq_max(texts.len().max(1) as u32)
+            .with_n_batch(n_ctx)
+            .with_n_ubatch(n_ubatch)
+            .with_n_threads(threads)
+            .with_n_threads_batch(threads)
+            .with_n_seq_max(texts.len().max(1) as u32)
             .with_embeddings(true)
             .with_pooling_type(LlamaPoolingType::Unspecified);
         let mut ctx = model
             .new_context(backend, ctx_params)
             .map_err(|e| EmbedError::Backend(e.to_string()))?;
 
-        let token_lines: Vec<_> = texts
-            .iter()
-            .map(|t| model.str_to_token(t, AddBos::Always))
-            .collect::<Result<_, _>>()
-            .map_err(|e| EmbedError::Backend(format!("tokenize: {e}")))?;
-
-        let max_tokens = 512;
-
         let mut tokenizers: Vec<LLamaTokenizer> = Vec::new();
+        let max_tokens = ctx.n_ctx() as usize;
 
         for prompt in texts {
             let tokenizer = Self::tokenize_prompt(model, prompt)
@@ -233,49 +232,77 @@ impl LlamaEmbedder {
 
         let tokenizers_batches = Self::split_into_batches(tokenizers, ctx.n_ctx() as usize);
 
-        let mut output: Vec<Vec<f32>> = Vec::with_capacity(token_lines.len());
+        let mut output: Vec<Vec<f32>> = Vec::with_capacity(texts.len());
 
         ctx.clear_kv_cache();
 
+        fn flush_packed(
+            ctx: &mut LlamaContext<'_>,
+            packed: &mut Vec<LLamaTokenizer>,
+            output: &mut Vec<Vec<f32>>,
+        ) -> Result<(), EmbedError> {
+            if packed.is_empty() {
+                return Ok(());
+            }
+
+            let total_tokens: usize = packed.iter().map(|t| t.tokens.len()).sum();
+            let mut batch = LlamaBatch::new(total_tokens, packed.len() as i32);
+            for (seq_id, tokenizer) in packed.iter().enumerate() {
+                batch
+                    .add_sequence(&tokenizer.tokens, seq_id as i32, false)
+                    .map_err(|e| EmbedError::Backend(e.to_string()))?;
+            }
+
+            ctx.decode(&mut batch)
+                .map_err(|e| EmbedError::Backend(e.to_string()))?;
+
+            for seq_id in 0..packed.len() {
+                let emb = ctx
+                    .embeddings_seq_ith(seq_id as i32)
+                    .map_err(|e| EmbedError::Backend(e.to_string()))?;
+                output.push(l2_normalise(emb));
+            }
+
+            batch.clear();
+            packed.clear();
+            Ok(())
+        }
+
         for tokenizer_batch in tokenizers_batches {
-            for (_, tokenizer) in tokenizer_batch.iter().enumerate() {
-                if tokenizer.tokens.len() <= max_tokens {
-                    let mut batch = LlamaBatch::new(tokenizer.tokens.len(), 1);
-                    batch
-                        .add_sequence(&tokenizer.tokens, 0, false)
-                        .map_err(|e| EmbedError::Backend(e.to_string()))?;
-                    ctx.decode(&mut batch)
-                        .map_err(|e| EmbedError::Backend(e.to_string()))?;
-                    let emb = ctx
-                        .embeddings_seq_ith(0)
-                        .map_err(|e| EmbedError::Backend(e.to_string()))?;
-                    output.push(l2_normalise(emb));
-                    batch.clear();
-                } else {
-                    let mut batches = Vec::new();
+            let mut packed: Vec<LLamaTokenizer> = Vec::new();
+            let mut packed_tokens = 0usize;
+
+            for tokenizer in tokenizer_batch {
+                if tokenizer.tokens.len() > max_tokens {
+                    flush_packed(&mut ctx, &mut packed, &mut output)?;
+                    packed_tokens = 0;
+
                     for chunk in tokenizer.tokens.chunks(max_tokens) {
                         let mut batch = LlamaBatch::new(chunk.len(), 1);
                         batch
                             .add_sequence(&chunk, 0, false)
                             .map_err(|e| EmbedError::Backend(e.to_string()))?;
-                        batches.push(batch);
-                    }
-
-                    for batch in &mut batches {
-                        ctx.decode(batch)
+                        ctx.decode(&mut batch)
                             .map_err(|e| EmbedError::Backend(e.to_string()))?;
-                    }
-
-                    let emb = ctx
-                        .embeddings_seq_ith(0)
-                        .map_err(|e| EmbedError::Backend(e.to_string()))?;
-                    output.push(l2_normalise(emb));
-
-                    for batch in &mut batches {
+                        let emb = ctx
+                            .embeddings_seq_ith(0)
+                            .map_err(|e| EmbedError::Backend(e.to_string()))?;
+                        output.push(l2_normalise(emb));
                         batch.clear();
                     }
+                    continue;
                 }
+
+                if !packed.is_empty() && packed_tokens + tokenizer.tokens.len() > ctx.n_ubatch() as usize {
+                    flush_packed(&mut ctx, &mut packed, &mut output)?;
+                    packed_tokens = 0;
+                }
+
+                packed_tokens += tokenizer.tokens.len();
+                packed.push(tokenizer);
             }
+
+            flush_packed(&mut ctx, &mut packed, &mut output)?;
         }
 
         Ok(output)

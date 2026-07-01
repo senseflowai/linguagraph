@@ -1,0 +1,105 @@
+{
+  "source": "camera-e2e-sample-from-downloads-data-json",
+  "entities": [
+    {
+      "id": "place-sales",
+      "type": "Place",
+      "labels": ["camera_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "place-sales" },
+        "name": { "type": "Text", "value": "Sales" },
+        "description": { "type": "Text", "value": "проспект Мангилик Ел, С4.6, Астана" },
+        "latitude": { "type": "Number", "value": 51.088347218320884 },
+        "longitude": { "type": "Number", "value": 71.41420765848626 }
+      }
+    },
+    {
+      "id": "place-office",
+      "type": "Place",
+      "labels": ["camera_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "place-office" },
+        "name": { "type": "Text", "value": "Office" },
+        "description": { "type": "Text", "value": "проспект Мангилик Ел, 55/22, Астана" },
+        "latitude": { "type": "Number", "value": 51.08784147023002 },
+        "longitude": { "type": "Number", "value": 71.41307690647338 }
+      }
+    },
+    {
+      "id": "camera-face-rtsp",
+      "type": "Camera",
+      "labels": ["camera_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "4e94bbf1-5207-43d6-b727-e6689ec13193" },
+        "name": { "type": "Text", "value": "TargetAI - Face (RTSP)" },
+        "kind": { "type": "Keyword", "value": "face" },
+        "is_dvr": { "type": "Boolean", "value": false },
+        "streamserver_id": { "type": "Keyword", "value": "1425bb0e-33e7-474a-9d55-049619cdb36c" }
+      }
+    },
+    {
+      "id": "camera-terminal-hik",
+      "type": "Camera",
+      "labels": ["camera_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "0977a573-e7f0-47be-8f7f-a829ba1b9f1f" },
+        "name": { "type": "Text", "value": "zTargetAI - Terminal Hik" },
+        "kind": { "type": "Keyword", "value": "face" },
+        "is_dvr": { "type": "Boolean", "value": false },
+        "streamserver_id": { "type": "Keyword", "value": "1425bb0e-33e7-474a-9d55-049619cdb36c" }
+      }
+    },
+    {
+      "id": "person-marat",
+      "type": "Person",
+      "labels": ["camera_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "2064" },
+        "name": { "type": "Text", "value": "Марат Божебаев" },
+        "list_name": { "type": "Text", "value": "Employees at TargetAI Limited/Сотрудники TargetAI Limited" },
+        "priority": { "type": "Keyword", "value": "low" }
+      }
+    },
+    {
+      "id": "event-0724d380",
+      "type": "FaceEvent",
+      "labels": ["camera_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "0724d380-626c-11f1-99c8-38fa190afc70" },
+        "event_type": { "type": "Keyword", "value": "fr" },
+        "label": { "type": "Keyword", "value": "person" },
+        "ts": { "type": "Number", "value": 1780835154104 },
+        "match_similarity": { "type": "Number", "value": 0.5927521 },
+        "estimated_age": { "type": "Number", "value": 30.819995880126953 }
+      }
+    },
+    {
+      "id": "event-001df7b0",
+      "type": "FaceEvent",
+      "labels": ["camera_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "001df7b0-626c-11f1-bcce-11f0d5ec2738" },
+        "event_type": { "type": "Keyword", "value": "fr" },
+        "label": { "type": "Keyword", "value": "person" },
+        "ts": { "type": "Number", "value": 1780835142315 },
+        "match_similarity": { "type": "Number", "value": 1.0 },
+        "estimated_age": { "type": "Number", "value": 30.819995880126953 }
+      }
+    }
+  ],
+  "relations": [
+    { "from": "camera-face-rtsp", "to": "place-sales", "type": "LOCATED_AT" },
+    { "from": "camera-terminal-hik", "to": "place-office", "type": "LOCATED_AT" },
+    { "from": "event-0724d380", "to": "camera-face-rtsp", "type": "CAPTURED_BY" },
+    { "from": "event-001df7b0", "to": "camera-terminal-hik", "type": "CAPTURED_BY" },
+    { "from": "event-0724d380", "to": "person-marat", "type": "MATCHED_PERSON" },
+    { "from": "event-001df7b0", "to": "person-marat", "type": "MATCHED_PERSON" }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "name": "cameras-large",
+  "graph": "../../target/e2e/cameras_1k.graph.json",
+  "ontology": "cameras-large.ontology.json",
+  "questions": "cameras-large.questions.json",
+  "settings": {
+    "prefix": "E2E_CAMERAS_LARGE",
+    "batch_size": 250,
+    "cleanup_before": true,
+    "cleanup_after": false,
+    "cleanup_vectors": true,
+    "answer_with_llm": false,
+    "judge_with_llm": false,
+    "max_repairs": 1,
+    "llm_base_url": "http://79.117.32.66:50715/v1",
+    "llm_model": "vllm-qwen36",
+    "indexes": [
+      { "label": "Camera", "property": "id" },
+      { "label": "Camera", "property": "state" },
+      { "label": "Camera", "property": "name" },
+      { "label": "Place", "property": "id" },
+      { "label": "Place", "property": "name" },
+      { "label": "AnalyticsModule", "property": "id" },
+      { "label": "AnalyticsModule", "property": "name" }
+    ]
+  }
+}

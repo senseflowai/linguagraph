@@ -1,0 +1,37 @@
+{
+  "questions": [
+    {
+      "id": "camera_at_sales",
+      "question": "Какая камера установлена в месте Sales?",
+      "validation": {
+        "row_count": { "exact": 1 },
+        "contains": [
+          { "column": "*", "mode": "contains", "value": "TargetAI - Face (RTSP)" }
+        ],
+        "answer_contains": ["TargetAI"]
+      }
+    },
+    {
+      "id": "events_for_marat",
+      "question": "Сколько событий распознавания лица связано с маратом божебаевым?",
+      "validation": {
+        "row_count": { "exact": 1 },
+        "numbers": [
+          { "column": "*", "op": "eq", "value": 2 }
+        ],
+        "answer_contains": ["2"]
+      }
+    },
+    {
+      "id": "place_for_terminal_camera",
+      "question": "В каком месте находится камера zTargetAI - Terminal Hik?",
+      "validation": {
+        "row_count": { "exact": 1 },
+        "contains": [
+          { "column": "*", "mode": "contains", "value": "Office" }
+        ],
+        "answer_contains": ["Office"]
+      }
+    }
+  ]
+}

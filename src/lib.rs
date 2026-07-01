@@ -27,6 +27,7 @@ pub mod config;
 pub mod core;
 pub mod db;
 pub mod dsl;
+pub mod e2e;
 pub mod embeddings;
 pub mod error;
 pub mod graph;

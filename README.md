@@ -1076,6 +1076,17 @@ Memgraph required:
   registry and per-type ingestion / lowering / emission
 - `tests/promptgen.rs` / `tests/knowledge_prompt.rs` — prompt generators
 
+For live end-to-end coverage against local Memgraph, real GGUF embeddings and
+an OpenAI-compatible LLM, use the e2e test-kit:
+
+```bash
+./scripts/run-e2e.sh
+```
+
+It loads a graph JSON fixture, an ontology catalog and natural-language
+questions, then validates generated DSL results and optional final answers.
+See [docs/e2e.md](docs/e2e.md) for the fixture format and validation rules.
+
 ## Extending linguagraph
 
 The crate is built to be extended at its trait boundaries:

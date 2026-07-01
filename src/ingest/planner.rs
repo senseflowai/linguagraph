@@ -36,7 +36,7 @@ pub struct PlannerOptions {
 impl Default for PlannerOptions {
     fn default() -> Self {
         Self {
-            max_batch_size: 1000,
+            max_batch_size: 256,
         }
     }
 }

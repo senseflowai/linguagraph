@@ -5,6 +5,7 @@ edition = "2021"
 rust-version = "1.75"
 description = "Natural language to Cypher pipeline backed by Memgraph"
 license = "MIT OR Apache-2.0"
+default-run = "linguagraph"
 
 [lib]
 name = "linguagraph"

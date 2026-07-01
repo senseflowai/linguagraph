@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::ast::query::Literal;
 use crate::ast::{from_dsl, query::InsertQuery, query::ReadQuery};
@@ -23,6 +24,7 @@ use crate::core::entity_type_search::{
 use std::sync::RwLock;
 
 const DEFAULT_TRAVERSAL_RERANK_TOP_K: usize = 50;
+const EMBEDDING_PROGRESS_CHUNK_SIZE: usize = 128;
 
 /// High-level entrypoint used by the CLI and library consumers.
 ///
@@ -406,11 +408,140 @@ impl Pipeline {
         Ok(())
     }
 
+    /// Move SemanticText reranking into this process when a cross-encoder
+    /// reranker is attached (`Pipeline::with_reranker`).
+    ///
+    /// For each semantic SemanticText predicate, fetch hybrid-recall
+    /// candidates from qlink (`libqlink.search_hybrid` — no rerank model
+    /// in Memgraph), rerank their canonical text locally, drop hits below
+    /// `reranker_threshold`, and stash the surviving `{id, score}` pairs
+    /// (rerank order) in the predicate's `reranked_hits` param. `emit`
+    /// then `UNWIND`s them instead of calling
+    /// `libqlink.search_hybrid_reranked`.
+    ///
+    /// No-op when no reranker is configured — the compiled query keeps the
+    /// qlink-side rerank path unchanged.
+    async fn rerank_semantic_predicates(&self, ast: &mut ReadQuery) -> Result<()> {
+        let Some(reranker) = self.reranker.as_ref() else {
+            return Ok(());
+        };
+
+        let mut by_type: std::collections::HashMap<
+            crate::types::TypeId,
+            Vec<&mut crate::types::TypedPredicate>,
+        > = std::collections::HashMap::new();
+        if let Some(expr) = ast.filter.as_mut() {
+            collect_typed_predicates_mut(expr, &mut by_type);
+        }
+        let sem_id = crate::types::TypeId::new(handlers::SemanticTextHandler::TYPE_ID);
+        let Some(preds) = by_type.get_mut(&sem_id) else {
+            return Ok(());
+        };
+
+        for pred in preds.iter_mut() {
+            // Only the semantic ops carry an `embedding` param; exact ops
+            // (`eq`/`neq`) never reach the rerank path.
+            let Some(embedding) = pred.params.get("embedding").cloned() else {
+                continue;
+            };
+            let (Some(collection), Some(query_str), Some(label)) = (
+                pred.params.get("collection").cloned(),
+                pred.params.get("query_str").cloned(),
+                pred.params.get("label").cloned(),
+            ) else {
+                continue;
+            };
+            let candidate_k = pred
+                .params
+                .get("candidate_k")
+                .cloned()
+                .unwrap_or(Literal::Int(handlers::semantic_text::DEFAULT_CANDIDATE_K));
+            let Literal::String(query_text) = query_str.clone() else {
+                continue;
+            };
+
+            // 1. Recall candidates from qlink (no model in Memgraph).
+            let cypher = handlers::semantic_text::build_hybrid_candidates_query(
+                collection,
+                query_str,
+                embedding,
+                label,
+                candidate_k,
+            );
+            let result = self.client.execute(&cypher).await?;
+
+            let mut ids: Vec<i64> = Vec::with_capacity(result.rows.len());
+            let mut texts: Vec<String> = Vec::with_capacity(result.rows.len());
+            for row in &result.rows {
+                let Some(id) = row.fields.get("id").and_then(db_value_as_i64) else {
+                    continue;
+                };
+                let text = row
+                    .fields
+                    .get("text")
+                    .and_then(db_value_as_string)
+                    .unwrap_or_default();
+                ids.push(id);
+                texts.push(text);
+            }
+
+            // 2. Rerank locally, drop sub-threshold hits, sort desc.
+            let mut hits: Vec<(i64, f64)> = Vec::new();
+            if !ids.is_empty() {
+                let scores = reranker.rerank(&query_text, &texts).map_err(|e| {
+                    crate::error::Error::Ingest(IngestError::Type(format!(
+                        "SemanticText reranker failed: {e}"
+                    )))
+                })?;
+                if scores.len() != ids.len() {
+                    return Err(crate::error::Error::Ingest(IngestError::Type(format!(
+                        "SemanticText reranker returned {} scores for {} candidates",
+                        scores.len(),
+                        ids.len()
+                    ))));
+                }
+                hits = ids
+                    .iter()
+                    .copied()
+                    .zip(scores)
+                    .filter(|(_, s)| *s >= self.reranker_threshold)
+                    .collect();
+                hits.sort_by(|a, b| b.1.total_cmp(&a.1));
+            }
+
+            // 3. Stash for emit() to UNWIND. An empty list yields no
+            //    matches — i.e. nothing survived the threshold.
+            let hit_list: Vec<Literal> = hits
+                .into_iter()
+                .map(|(id, score)| {
+                    let mut m: BTreeMap<String, Literal> = BTreeMap::new();
+                    m.insert("id".to_string(), Literal::Int(id));
+                    m.insert("score".to_string(), Literal::Float(score));
+                    Literal::Object(m)
+                })
+                .collect();
+            pred.params
+                .insert("reranked_hits".to_string(), Literal::List(hit_list));
+        }
+
+        Ok(())
+    }
+
     /// Compile and execute against the configured graph client.
     pub async fn run(&self, dsl: DslQuery) -> Result<QueryResult> {
         let mut dsl = dsl;
         self.validate_dsl_relationship_directions(&mut dsl).await?;
-        let cypher = self.compile(dsl)?;
+        let cypher = if self.reranker.is_some() {
+            // Reranker attached: lower, rerank SemanticText candidates
+            // in-process, then build. Mirrors `compile` with the extra
+            // async pre-pass spliced between `lower` and `prepare`.
+            let mut ast = self.lower(dsl)?;
+            self.rerank_semantic_predicates(&mut ast).await?;
+            self.prepare(&mut ast)?;
+            builder::build_read_with(&ast, &self.registry)?
+        } else {
+            self.compile(dsl)?
+        };
         Ok(self.client.execute(&cypher).await?)
     }
 
@@ -962,7 +1093,7 @@ impl Pipeline {
     /// runs before any relationship MERGE, so the planner's ordering
     /// guarantees that when relations execute, both endpoints exist.
     pub async fn ingest(&self, graph: &Graph) -> Result<IngestSummary> {
-        let started = std::time::Instant::now();
+        let started = Instant::now();
         // Soft-merge resolver: rewrite `PrimaryKey::Soft` properties
         // in place before the planner generates its `MERGE` so the
         // standard MERGE deduplicates against existing nodes by
@@ -1001,9 +1132,37 @@ impl Pipeline {
 
         let batches = builder::build_insert(&insert)?;
         let total = batches.len();
-        for batch in &batches {
+        tracing::info!(
+            target: "linguagraph::pipeline",
+            node_rows,
+            relation_rows,
+            batches = total,
+            "starting Memgraph insert stage"
+        );
+        let insert_started = Instant::now();
+        for (idx, batch) in batches.iter().enumerate() {
+            let batch_started = Instant::now();
+            tracing::info!(
+                target: "linguagraph::pipeline",
+                batch = idx + 1,
+                batches = total,
+                "executing Memgraph insert batch"
+            );
             let _ = self.client.execute(batch).await?;
+            tracing::info!(
+                target: "linguagraph::pipeline",
+                batch = idx + 1,
+                batches = total,
+                elapsed_ms = batch_started.elapsed().as_millis() as u64,
+                "finished Memgraph insert batch"
+            );
         }
+        tracing::info!(
+            target: "linguagraph::pipeline",
+            batches = total,
+            elapsed_ms = insert_started.elapsed().as_millis() as u64,
+            "finished Memgraph insert stage"
+        );
 
         // Side effects run after the Memgraph batches land. For
         // [`SideEffect::EmbedAndStore`], that means: embed all queued
@@ -1137,6 +1296,11 @@ impl Pipeline {
         // Snapshot the queue. We keep the original ordering so the
         // generated Cypher is deterministic for snapshot tests.
         let queue: Vec<SideEffect> = effects.drain().collect();
+        tracing::info!(
+            target: "linguagraph::pipeline",
+            queued = queue.len(),
+            "starting embedding side effects"
+        );
 
         let embedder = self.embedder.as_ref().ok_or_else(|| {
             crate::error::Error::Ingest(IngestError::Type(
@@ -1147,22 +1311,23 @@ impl Pipeline {
         })?;
 
         // ── 1. Embed everything in one shot. ─────────────────────────
+        let embed_started = Instant::now();
         let texts: Vec<&str> = queue
             .iter()
             .map(|e| match e {
                 SideEffect::EmbedAndStore { text, .. } => text.as_str(),
             })
             .collect();
-        let vectors = embedder.embed_batch(&texts).map_err(|e| {
+        let vectors = embed_with_progress(embedder, &texts).map_err(|e| {
             crate::error::Error::Ingest(IngestError::Type(format!("embed_batch: {e}")))
         })?;
-        if vectors.len() != queue.len() {
-            return Err(crate::error::Error::Ingest(IngestError::Type(format!(
-                "embedder returned {} vectors for {} inputs",
-                vectors.len(),
-                queue.len()
-            ))));
-        }
+        tracing::info!(
+            target: "linguagraph::pipeline",
+            queued = queue.len(),
+            vectors = vectors.len(),
+            elapsed_ms = embed_started.elapsed().as_millis() as u64,
+            "finished embedding side effects"
+        );
 
         // ── 2. Bucket. The 4-tuple key keeps every row in a bucket on
         //    the same MATCH pattern and the same Qdrant collection.
@@ -1191,16 +1356,88 @@ impl Pipeline {
         // ── 3. One UNWIND batch per group. ───────────────────────────
         let mut batches_run = 0usize;
         let mut rows_inserted = 0usize;
-        for ((_coll, _plabel, _nlabel, _kfield), group) in groups {
+        let group_total = groups.len();
+        let side_effect_started = Instant::now();
+        for (idx, ((_coll, _plabel, _nlabel, _kfield), group)) in groups.into_iter().enumerate() {
+            let batch_started = Instant::now();
+            tracing::info!(
+                target: "linguagraph::pipeline",
+                batch = idx + 1,
+                batches = group_total,
+                rows = group.len(),
+                "executing embedding insert batch"
+            );
             let cypher = handlers::build_embed_insert_batch(&group)
                 .map_err(|e| crate::error::Error::Ingest(IngestError::Type(e.to_string())))?;
             let _ = self.client.execute(&cypher).await?;
             batches_run += 1;
             rows_inserted += group.len();
+            tracing::info!(
+                target: "linguagraph::pipeline",
+                batch = idx + 1,
+                batches = group_total,
+                rows = group.len(),
+                elapsed_ms = batch_started.elapsed().as_millis() as u64,
+                "finished embedding insert batch"
+            );
         }
         let _ = embedder.dim(); // assert the embedder was usable
+        tracing::info!(
+            target: "linguagraph::pipeline",
+            batches = batches_run,
+            rows = rows_inserted,
+            elapsed_ms = side_effect_started.elapsed().as_millis() as u64,
+            "finished embedding insert stage"
+        );
         Ok((batches_run, rows_inserted))
     }
+}
+
+fn embed_with_progress(
+    embedder: &SharedEmbedder,
+    texts: &[&str],
+) -> std::result::Result<Vec<Vec<f32>>, crate::embeddings::EmbedError> {
+    if texts.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let total = texts.len();
+    let chunk_size = EMBEDDING_PROGRESS_CHUNK_SIZE.max(1);
+    let mut vectors = Vec::with_capacity(total);
+    let chunks = texts.len().div_ceil(chunk_size);
+
+    for (idx, chunk) in texts.chunks(chunk_size).enumerate() {
+        tracing::info!(
+            target: "linguagraph::pipeline",
+            chunk = idx + 1,
+            chunks = chunks,
+            rows = chunk.len(),
+            processed = vectors.len(),
+            total,
+            "embedding progress"
+        );
+        let chunk_vectors = embedder.embed_batch(chunk)?;
+        if chunk_vectors.len() != chunk.len() {
+            return Err(crate::embeddings::EmbedError::Backend(format!(
+                "embedder returned {} vectors for {} inputs in chunk {} of {}",
+                chunk_vectors.len(),
+                chunk.len(),
+                idx + 1,
+                chunks
+            )));
+        }
+        vectors.extend(chunk_vectors);
+        tracing::info!(
+            target: "linguagraph::pipeline",
+            chunk = idx + 1,
+            chunks = chunks,
+            processed = vectors.len(),
+            total,
+            "embedding progress advanced"
+        );
+    }
+
+    Ok(vectors)
 }
 
 /// Accumulator for the chunk-leg of [`Pipeline::run_traversal`].

@@ -1,0 +1,75 @@
+{
+  "questions": [
+    {
+      "id": "total_cameras",
+      "question": "Сколько всего камер есть в срезе из 1000 записей?",
+      "validation": {
+        "row_count": { "exact": 1 },
+        "numbers": [
+          { "column": "*", "op": "eq", "value": 1000 }
+        ]
+      }
+    },
+    {
+      "id": "active_cameras",
+      "question": "Сколько камер имеют состояние active?",
+      "validation": {
+        "row_count": { "exact": 1 },
+        "numbers": [
+          { "column": "*", "op": "eq", "value": 998 }
+        ]
+      }
+    },
+    {
+      "id": "inactive_cameras",
+      "question": "Сколько камер имеют состояние inactive?",
+      "validation": {
+        "row_count": { "exact": 1 },
+        "numbers": [
+          { "column": "*", "op": "eq", "value": 2 }
+        ]
+      }
+    },
+    {
+      "id": "top_place_count",
+      "question": "Сколько камер находится в месте мкр. Нуркент Строение 7, Алматы Арена?",
+      "validation": {
+        "row_count": { "exact": 1 },
+        "numbers": [
+          { "column": "*", "op": "eq", "value": 17 }
+        ]
+      }
+    },
+    {
+      "id": "situation_analytics_count",
+      "question": "Сколько камер используют модуль SituationAnalyticsModule?",
+      "validation": {
+        "row_count": { "exact": 1 },
+        "numbers": [
+          { "column": "*", "op": "eq", "value": 20 }
+        ]
+      }
+    },
+    {
+      "id": "known_camera_name_by_id",
+      "question": "Как называется камера с id 6aa00f83-ced4-4e2f-8f8f-0ff11cb92f93?",
+      "dsl": {
+        "action": "find",
+        "start": { "label": "Camera", "alias": "c" },
+        "filters": [
+          { "field": "c.id", "op": "eq", "value": "6aa00f83-ced4-4e2f-8f8f-0ff11cb92f93" }
+        ],
+        "return": [
+          { "field": "c.name", "alias": "name" }
+        ],
+        "limit": 1
+      },
+      "validation": {
+        "row_count": { "exact": 1 },
+        "contains": [
+          { "column": "*", "mode": "contains", "value": "0000Метро Момышулы 581" }
+        ]
+      }
+    }
+  ]
+}

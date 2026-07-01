@@ -1,0 +1,32 @@
+[database]
+uri = "bolt://127.0.0.1:7687/memgraph"
+user = ""
+password = ""
+database = "memgraph"
+max_connections = 16
+query_timeout_secs = 60
+
+[llm]
+provider = "openai"
+base_url = "http://79.117.32.66:50715/v1"
+model = "vllm-qwen36"
+temperature = 0.0
+max_tokens = 2048
+
+[graph_specification]
+embedding_model = "/home/df/.cache/huggingface/hub/models--gpustack--bge-m3-GGUF/snapshots/2d48f1737679ad900d5c26c5aad5410e9c70fdca/bge-m3-Q4_K_M.gguf"
+reranking_model = "/home/df/.cache/huggingface/hub/models--gpustack--bge-reranker-v2-m3-GGUF/snapshots/3093af03b1a635e67b084b1d8c03c5f5e020fd05/bge-reranker-v2-m3-Q4_K_M.gguf"
+embedding_dim = 1024
+reranking_threshold = 0.3
+
+[types.SemanticText]
+embedding_model = "/home/df/.cache/huggingface/hub/models--gpustack--bge-m3-GGUF/snapshots/2d48f1737679ad900d5c26c5aad5410e9c70fdca/bge-m3-Q4_K_M.gguf"
+collection = "linguagraph_e2e"
+top_k = 20
+threshold = 0.35
+reranker_threshold = 0.2
+embedding_dim = 1024
+
+[query]
+max_traversal_depth = 6
+default_limit = 50

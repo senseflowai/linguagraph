@@ -65,6 +65,8 @@ pub struct LlamaEmbedder {
 }
 
 impl LlamaEmbedder {
+    const MAX_SEQS_PER_BATCH: usize = 256;
+
     /// Load a GGUF embedding model from `path`.
     pub fn load(path: &str) -> Result<Self, EmbedError> {
         let backend = backend()?;
@@ -94,6 +96,7 @@ impl LlamaEmbedder {
     fn split_into_batches(
         tokenizers: Vec<LLamaTokenizer>,
         max_tokens: usize,
+        max_sequences: usize,
     ) -> Vec<Vec<LLamaTokenizer>> {
         let mut batches: Vec<Vec<LLamaTokenizer>> = Vec::new();
         let mut current_batch: Vec<LLamaTokenizer> = Vec::new();
@@ -102,17 +105,22 @@ impl LlamaEmbedder {
         for tokenizer in tokenizers {
             let len = tokenizer.tokens.len();
 
-            if len > max_tokens {
+            if len > max_tokens || current_batch.len() >= max_sequences {
                 if !current_batch.is_empty() {
                     batches.push(current_batch);
                     current_batch = Vec::new();
                     current_tokens = 0;
                 }
+            }
+
+            if len > max_tokens {
                 batches.push(vec![tokenizer]);
                 continue;
             }
 
-            if current_tokens + len > max_tokens {
+            if !current_batch.is_empty()
+                && (current_tokens + len > max_tokens || current_batch.len() >= max_sequences)
+            {
                 batches.push(current_batch);
                 current_batch = Vec::new();
                 current_tokens = 0;
@@ -162,7 +170,7 @@ impl LlamaEmbedder {
             tokenizers.push(tokenizer);
         }
 
-        let tokenizers_batches = Self::split_into_batches(tokenizers, MAX_BATCH_SIZE);
+        let tokenizers_batches = Self::split_into_batches(tokenizers, MAX_BATCH_SIZE, 30);
 
         ctx.clear_kv_cache();
 
@@ -214,7 +222,7 @@ impl LlamaEmbedder {
             .with_n_ubatch(n_ubatch)
             .with_n_threads(threads)
             .with_n_threads_batch(threads)
-            .with_n_seq_max(texts.len().max(1) as u32)
+            .with_n_seq_max(Self::MAX_SEQS_PER_BATCH as u32)
             .with_embeddings(true)
             .with_pooling_type(LlamaPoolingType::Unspecified);
         let mut ctx = model
@@ -230,7 +238,11 @@ impl LlamaEmbedder {
             tokenizers.push(tokenizer);
         }
 
-        let tokenizers_batches = Self::split_into_batches(tokenizers, ctx.n_ctx() as usize);
+        let tokenizers_batches = Self::split_into_batches(
+            tokenizers,
+            ctx.n_ctx() as usize,
+            Self::MAX_SEQS_PER_BATCH,
+        );
 
         let mut output: Vec<Vec<f32>> = Vec::with_capacity(texts.len());
 
@@ -351,6 +363,22 @@ mod tests {
             sim_score > diff_score,
             "expected similar pair ({sim_score:.4}) > dissimilar pair ({diff_score:.4})"
         );
+    }
+
+    #[test]
+    fn split_into_batches_respects_sequence_limit() {
+        let tokenizers = (0..300)
+            .map(|_| LLamaTokenizer {
+                tokens: vec![LlamaToken::new(1)],
+            })
+            .collect::<Vec<_>>();
+
+        let batches = LlamaEmbedder::split_into_batches(tokenizers, 1024, 256);
+
+        assert_eq!(batches.len(), 2);
+        assert_eq!(batches[0].len(), 256);
+        assert_eq!(batches[1].len(), 44);
+        assert_eq!(batches.iter().map(Vec::len).sum::<usize>(), 300);
     }
 }
 

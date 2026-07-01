@@ -68,7 +68,7 @@ impl LlamaEmbedder {
     /// Load a GGUF embedding model from `path`.
     pub fn load(path: &str) -> Result<Self, EmbedError> {
         let backend = backend()?;
-        let params = LlamaModelParams::default();
+        let params = llama_model_params();
         let model = LlamaModel::load_from_file(backend, path, &params)
             .map_err(|e| EmbedError::Io(format!("loading {path}: {e}")))?;
         // Use embedding-size from the model. Fall back to a sensible
@@ -369,6 +369,18 @@ fn model_dim(model: &LlamaModel) -> usize {
     // The exact accessor name has churned between releases; this
     // shim isolates the breakage to one place.
     model.n_embd() as usize
+}
+
+fn llama_model_params() -> LlamaModelParams {
+    #[cfg(feature = "cuda")]
+    {
+        LlamaModelParams::default().with_n_gpu_layers(1000)
+    }
+
+    #[cfg(not(feature = "cuda"))]
+    {
+        LlamaModelParams::default()
+    }
 }
 
 impl Embedder for LlamaEmbedder {

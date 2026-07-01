@@ -3,9 +3,13 @@
 //! There are exactly two ways to match a `SemanticText` field, and they
 //! are kept deliberately separate:
 //!
-//! * **Exact / substring** (`eq` / `neq` / `contains`) — plain Cypher
-//!   against the raw string kept on the node. No embeddings, no Qdrant,
-//!   no fuzziness: `eq` means equality.
+//! * **Exact / substring** (`eq` / `neq` / `contains`) — for
+//!   `SemanticText`, these lower to the same semantic retrieval path as
+//!   `search` / `search_reranked` / `hybrid_search` / `contains`. The
+//!   raw string is still kept on the node for display and exact-ish
+//!   fallbacks elsewhere, but the handler does not emit a true
+//!   equality predicate because the field is intentionally
+//!   retrieval-oriented.
 //! * **Semantic** (`search` / `search_reranked` / `hybrid_search`, and
 //!   the resolver-synthesised `entity_search`) — a single per-entity
 //!   hybrid retrieval (dense ⊕ BM25, RRF-fused) followed by one
@@ -20,16 +24,15 @@
 //!    a [`super::super::SideEffect::EmbedAndStore`]. Every other text
 //!    field's value already lives inside `_canonical`, so embedding it
 //!    separately would only duplicate the vector.
-//! 2. **Lower**: for semantic ops, build a query string that mirrors the
-//!    `_canonical` document (`type: {Label}\n{field}: {value}`), embed it
-//!    once, and stash the vector in the predicate's `params` so emission
-//!    stays pure; for exact ops, just carry the literal.
-//! 3. **Emit**: for semantic ops, either render
+//! 2. **Lower**: build a query string that mirrors the `_canonical`
+//!    document (`type: {Label}\n{field}: {value}`), embed it once, and
+//!    stash the vector in the predicate's `params` so emission stays
+//!    pure.
+//! 3. **Emit**: render
 //!    `libqlink.search_hybrid_reranked` over `_canonical` (reranking runs
 //!    inside Memgraph), or — when the pipeline attached a reranker and
-//!    reranked the candidates in-process, leaving a `reranked_hits` param
-//!    — `UNWIND` those precomputed `{id, score}` pairs instead. Exact ops
-//!    emit a plain `=`/`<>`/`CONTAINS` clause.
+//!    reranked the candidates in-process, leaving a `reranked_hits`
+//!    param — `UNWIND` those precomputed `{id, score}` pairs instead.
 //!
 //! The handler is configured by a `[types.SemanticText]` block:
 //!
@@ -60,7 +63,7 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
-use crate::ast::query::{Literal, PropertyRef};
+use crate::ast::query::Literal;
 use crate::config::Config;
 use crate::embeddings::SharedEmbedder;
 use crate::graph::{CANONICAL_FIELD, CHUNK_LABEL};
@@ -173,6 +176,7 @@ impl TypeHandler for SemanticTextHandler {
         vec![
             TypedOp::Eq,
             TypedOp::Neq,
+            TypedOp::In,
             TypedOp::Contains,
             TypedOp::Search,
             TypedOp::SearchReranked,
@@ -240,37 +244,9 @@ impl TypeHandler for SemanticTextHandler {
     }
 
     fn lower(&self, ctx: &mut LowerCtx<'_>) -> Result<TypedPredicate, TypeError> {
-        let text = ctx
-            .raw
-            .value
-            .as_str()
-            .ok_or_else(|| TypeError::InvalidValue {
-                ty: Self::TYPE_ID.into(),
-                reason: format!(
-                    "expected string value for op {}, got {}",
-                    ctx.raw.op,
-                    json_kind(ctx.raw.value)
-                ),
-            })?;
+        let text = semantic_text_operand_text(ctx.raw.op, ctx.raw.value)?;
 
-        // Exact / substring ops never touch the vector store: emit()
-        // renders plain Cypher against the raw string `on_ingest` kept on
-        // the node, so `eq`/`neq`/`contains` stay precise. No embedding,
-        // no params.
-        if matches!(
-            ctx.raw.op,
-            TypedOp::Eq | TypedOp::Neq
-        ) {
-            return Ok(TypedPredicate {
-                type_id: ctx.type_id.clone(),
-                field: ctx.raw.field.clone(),
-                op: ctx.raw.op,
-                value: Literal::String(text.to_string()),
-                params: BTreeMap::new(),
-            });
-        }
-
-        // Every other (semantic) op resolves to the same retrieval: a
+        // All supported ops resolve to the same retrieval: a
         // single per-entity hybrid search (dense ⊕ BM25, RRF-fused) over
         // the field-agnostic `_canonical` collection, then one
         // cross-encoder rerank.
@@ -292,8 +268,9 @@ impl TypeHandler for SemanticTextHandler {
         // `crate::graph::canonical::build_canonical_text`) so the dense
         // embedder, the BM25 branch, and the cross-encoder all compare
         // query and document in the same structure. A per-field semantic
-        // op (`contains` / `hybrid_search` / a non-folded `search`) wraps
-        // its bare value, folding in the field name when one is present.
+        // op (`eq` / `neq` / `in` / `contains` / `hybrid_search` / a
+        // non-folded `search`) wraps its bare value, folding in the
+        // field name when one is present.
         // The resolver-folded `EntitySearch` path already passes a
         // canonical block, so we leave it untouched to avoid
         // double-wrapping.
@@ -345,25 +322,6 @@ impl TypeHandler for SemanticTextHandler {
 
     fn emit(&self, ctx: &mut EmitCtx<'_>, pred: &TypedPredicate) -> Result<(), TypeError> {
         match pred.op {
-            // ── Exact / substring: precise plain Cypher. ──────────────
-            //
-            // The raw value lives on the node (see `on_ingest`), so these
-            // never touch the vector store. `eq` is equality, `contains`
-            // is substring — no embeddings, no fuzziness.
-            TypedOp::Eq | TypedOp::Neq => {
-                let placeholder = ctx.bind(pred.value.clone());
-                let sym = match pred.op {
-                    TypedOp::Eq => "=",
-                    TypedOp::Neq => "<>",
-                    _ => unreachable!("guarded by the match arm"),
-                };
-                ctx.set_where(format!(
-                    "{lhs} {sym} {placeholder}",
-                    lhs = render_field(&pred.field)
-                ));
-                Ok(())
-            }
-
             // ── Semantic: one per-entity hybrid search + single rerank. ─
             //
             // Every semantic op (plain `search`, `search_reranked`,
@@ -375,7 +333,10 @@ impl TypeHandler for SemanticTextHandler {
             // over their canonical text. The yield is the surviving
             // (id, reranker_score) pairs descending; the MATCH then joins
             // by id, so we need no Cypher-side threshold or WITH gate.
-            TypedOp::Search
+            TypedOp::Eq
+            | TypedOp::Neq
+            | TypedOp::In
+            | TypedOp::Search
             | TypedOp::SearchReranked
             | TypedOp::HybridSearch
             | TypedOp::EntitySearch
@@ -475,9 +436,10 @@ impl TypeHandler for SemanticTextHandler {
             capabilities: self.capabilities(),
             ops: self.supported_ops(),
             doc: Some(
-                "Free-text field. Use `eq`/`neq`/`contains` for precise (non-fuzzy) lookups, \
-                 and `search` for natural-language matches (a hybrid dense+keyword retrieval \
-                 over the whole entity, with cross-encoder reranking)."
+                "Free-text field. Use `search` / `contains` / `eq` / `neq` when you want \
+                 semantic retrieval over the entity's canonical text. The field is not \
+                 matched by exact string equality; all of these ops route through the \
+                 hybrid dense+keyword retriever with cross-encoder reranking."
                     .into(),
             ),
             example: Some(
@@ -498,13 +460,42 @@ fn json_kind(v: &Value) -> &'static str {
     }
 }
 
-/// Render the left-hand side of an exact-match clause: `alias.property`
-/// when the filter names a property, or just `alias` for an entity-level
-/// reference.
-fn render_field(field: &PropertyRef) -> String {
-    match &field.property {
-        Some(prop) => format!("{}.{}", field.alias, prop),
-        None => field.alias.to_string(),
+fn semantic_text_operand_text(op: TypedOp, value: &Value) -> Result<String, TypeError> {
+    match (op, value) {
+        (TypedOp::In, Value::Array(items)) => {
+            let mut values = Vec::with_capacity(items.len());
+            for item in items {
+                match item {
+                    Value::String(s) => values.push(s.clone()),
+                    _ => {
+                        return Err(TypeError::InvalidValue {
+                            ty: SemanticTextHandler::TYPE_ID.into(),
+                            reason: "in expects an array of strings".into(),
+                        })
+                    }
+                }
+            }
+            if values.is_empty() {
+                return Err(TypeError::InvalidValue {
+                    ty: SemanticTextHandler::TYPE_ID.into(),
+                    reason: "in expects a non-empty array of strings".into(),
+                });
+            }
+            Ok(values.join(" | "))
+        }
+        (TypedOp::In, other) => Err(TypeError::InvalidValue {
+            ty: SemanticTextHandler::TYPE_ID.into(),
+            reason: format!("in expects an array value, got {}", json_kind(other)),
+        }),
+        (_, Value::String(s)) => Ok(s.clone()),
+        (_, other) => Err(TypeError::InvalidValue {
+            ty: SemanticTextHandler::TYPE_ID.into(),
+            reason: format!(
+                "expected string value for op {}, got {}",
+                op,
+                json_kind(other)
+            ),
+        }),
     }
 }
 
@@ -961,24 +952,35 @@ mod tests {
     }
 
     #[test]
-    fn lower_eq_is_exact_with_no_embedding() {
-        // `eq`/`neq`/`contains` are exact ops: they carry only the literal
-        // value and queue no embedding work — emit() renders plain Cypher.
+    fn lower_eq_routes_to_semantic_search() {
+        // `eq` on SemanticText is not exact: it uses the same semantic
+        // retrieval path as the other search-like ops.
         let h = handler();
         let field = pref("c", "name");
         let value = serde_json::json!("apple");
         let mut ctx = lc(&field, TypedOp::Eq, &value, "Company");
         let pred = h.lower(&mut ctx).unwrap();
         assert_eq!(pred.value, Literal::String("apple".into()));
-        assert!(
-            pred.params.is_empty(),
-            "exact ops must not embed or carry search params; got {:?}",
-            pred.params
-        );
+        assert!(pred.params.contains_key("embedding"));
+        assert!(pred.params.contains_key("collection"));
+        assert!(pred.params.contains_key("query_str"));
     }
 
     #[test]
-    fn emit_eq_renders_plain_cypher_equality() {
+    fn lower_in_routes_to_semantic_search() {
+        let h = handler();
+        let field = pref("c", "name");
+        let value = serde_json::json!(["apple", "pear"]);
+        let mut ctx = lc(&field, TypedOp::In, &value, "Company");
+        let pred = h.lower(&mut ctx).unwrap();
+        assert_eq!(pred.value, Literal::String("apple | pear".into()));
+        assert!(pred.params.contains_key("embedding"));
+        assert!(pred.params.contains_key("collection"));
+        assert!(pred.params.contains_key("query_str"));
+    }
+
+    #[test]
+    fn emit_eq_routes_to_hybrid_reranked_search() {
         let h = handler();
         let field = pref("c", "name");
         let value = serde_json::json!("apple");
@@ -994,16 +996,40 @@ mod tests {
         let mut emit = EmitCtx::new(&mut contrib, &mut binder);
         h.emit(&mut emit, &pred).unwrap();
 
-        // Plain WHERE clause against the raw property — no qlink, no
-        // pre_match prelude.
-        assert_eq!(contrib.where_inline.as_deref(), Some("c.name = $p0"));
-        assert!(contrib.pre_match.is_empty());
-        assert!(contrib.order_by.is_empty());
-        assert_eq!(binder.params.get("p0"), Some(&Literal::String("apple".into())));
+        let pre = contrib.pre_match.join("\n");
+        assert!(pre.contains("CALL libqlink.search_hybrid_reranked("));
+        assert!(pre.contains("YIELD id AS c__qid_0, score AS c__score_0"));
+        assert_eq!(contrib.where_inline.as_deref(), Some("id(c) = c__qid_0"));
+        assert_eq!(contrib.order_by.len(), 1);
+        assert_eq!(contrib.order_by[0].0, "c__score_0");
     }
 
     #[test]
-    fn emit_contains_renders_plain_cypher_contains() {
+    fn emit_in_routes_to_hybrid_reranked_search() {
+        let h = handler();
+        let field = pref("c", "name");
+        let value = serde_json::json!(["apple", "pear"]);
+        let mut lower = lc(&field, TypedOp::In, &value, "Company");
+        let pred = h.lower(&mut lower).unwrap();
+
+        let mut contrib = CypherContribution::default();
+        let mut binder = CountingBinder {
+            next: 0,
+            next_var: 0,
+            params: Default::default(),
+        };
+        let mut emit = EmitCtx::new(&mut contrib, &mut binder);
+        h.emit(&mut emit, &pred).unwrap();
+
+        let pre = contrib.pre_match.join("\n");
+        assert!(pre.contains("CALL libqlink.search_hybrid_reranked("));
+        assert!(pre.contains("YIELD id AS c__qid_0, score AS c__score_0"));
+        assert_eq!(contrib.where_inline.as_deref(), Some("id(c) = c__qid_0"));
+        assert_eq!(contrib.order_by.len(), 1);
+    }
+
+    #[test]
+    fn emit_contains_routes_to_hybrid_reranked_search() {
         let h = handler();
         let field = pref("c", "name");
         let value = serde_json::json!("app");
@@ -1018,8 +1044,10 @@ mod tests {
         };
         let mut emit = EmitCtx::new(&mut contrib, &mut binder);
         h.emit(&mut emit, &pred).unwrap();
-        assert_eq!(contrib.where_inline.as_deref(), Some("c.name CONTAINS $p0"));
-        assert!(contrib.pre_match.is_empty());
+        let pre = contrib.pre_match.join("\n");
+        assert!(pre.contains("CALL libqlink.search_hybrid_reranked("));
+        assert_eq!(contrib.where_inline.as_deref(), Some("id(c) = c__qid_0"));
+        assert_eq!(contrib.order_by.len(), 1);
     }
 
     #[test]

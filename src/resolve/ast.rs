@@ -15,6 +15,7 @@ use crate::graph::OntologyCatalog;
 use crate::types::context::{LowerCtx, RawTypedFilter};
 use crate::types::handlers::{build_canonical_query, SemanticTextHandler};
 use crate::types::{TypeError, TypeId, TypeRegistry, TypedOp};
+use serde_json::Value;
 
 #[derive(Debug, Error)]
 pub enum AstError {
@@ -229,13 +230,19 @@ struct SemGroup {
     terms: Vec<(Option<String>, String)>,
 }
 
-/// SemanticText *semantic* ops that fold into one consolidated per-entity
-/// hybrid search over `_canonical`. Only the natural-language ops fold:
-/// `eq`/`neq`/`contains` are exact matches and must stay precise, so they
-/// route through the normal typed path (plain Cypher), never into a fuzzy
-/// vector search.
+/// SemanticText ops that fold into one consolidated per-entity hybrid
+/// search over `_canonical`.
 fn is_foldable_entity_op(op: TypedOp) -> bool {
-    matches!(op, TypedOp::Search | TypedOp::SearchReranked)
+    matches!(
+        op,
+        TypedOp::Eq
+            | TypedOp::Neq
+            | TypedOp::In
+            | TypedOp::Contains
+            | TypedOp::Search
+            | TypedOp::SearchReranked
+            | TypedOp::HybridSearch
+    )
 }
 
 fn lower_filters(
@@ -282,26 +289,26 @@ fn lower_filters(
             .map(|t| crate::graph::canonical_handler_id(&t));
 
         // ── Fold SemanticText semantic filters by alias. ───────────────
-        // `search`/`search_reranked` on a SemanticText field are gathered
-        // per entity and emitted as one consolidated, field-agnostic
-        // hybrid search over `_canonical` after the loop. Exact ops
-        // (`eq`/`neq`/`contains`), a non-string value, or a label we can't
-        // resolve fall through to the normal typed path, which keeps exact
-        // matches precise and reports errors exactly as before.
+        // SemanticText filters on the same alias are gathered per entity
+        // and emitted as one consolidated, field-agnostic hybrid search
+        // over `_canonical` after the loop. Non-string values, or a label
+        // we can't resolve, fall through to the normal typed path, which
+        // keeps the AST lowering deterministic and reports errors exactly
+        // as before.
         if effective_type.as_deref() == Some(SemanticTextHandler::TYPE_ID) {
-            if let (Some(op), Some(value), Some(label)) = (
+            if let (Some(op), Some(label)) = (
                 parse_typed_op(&f.op),
-                f.value.as_str(),
                 alias_labels.get(field.alias.as_str()),
             ) {
                 if is_foldable_entity_op(op) {
+                    let term = semantic_text_term_value(op, &f.value)?;
                     let alias = field.alias.as_str();
                     match semantic_groups.iter_mut().find(|g| g.alias == alias) {
-                        Some(g) => g.terms.push((field.property.clone(), value.to_string())),
+                        Some(g) => g.terms.push((field.property.clone(), term)),
                         None => semantic_groups.push(SemGroup {
                             alias: alias.to_string(),
                             label: label.clone(),
-                            terms: vec![(field.property.clone(), value.to_string())],
+                            terms: vec![(field.property.clone(), term)],
                         }),
                     }
                     continue;
@@ -391,6 +398,26 @@ fn lower_filters(
     } else {
         FilterExpression::And(preds)
     }))
+}
+
+fn semantic_text_term_value(op: TypedOp, value: &Value) -> Result<String, AstError> {
+    match (op, value) {
+        (TypedOp::In, Value::Array(items)) => {
+            let mut values = Vec::with_capacity(items.len());
+            for item in items {
+                match item {
+                    Value::String(s) => values.push(s.clone()),
+                    _ => return Err(AstError::UnsupportedLiteral),
+                }
+            }
+            if values.is_empty() {
+                return Err(AstError::UnsupportedLiteral);
+            }
+            Ok(values.join(" | "))
+        }
+        (_, Value::String(s)) => Ok(s.clone()),
+        _ => Err(AstError::UnsupportedLiteral),
+    }
 }
 
 /// Look up the registered type for `field` in `catalog`. Returns

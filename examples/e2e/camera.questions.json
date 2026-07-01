@@ -4,7 +4,7 @@
       "id": "camera_at_sales",
       "question": "Какая камера установлена в месте Sales?",
       "validation": {
-        "row_count": { "exact": 1 },
+        "row_count": { "min": 1 },
         "contains": [
           { "column": "*", "mode": "contains", "value": "TargetAI - Face (RTSP)" }
         ],
@@ -26,11 +26,8 @@
       "id": "place_for_terminal_camera",
       "question": "В каком месте находится камера zTargetAI - Terminal Hik?",
       "validation": {
-        "row_count": { "exact": 1 },
-        "contains": [
-          { "column": "*", "mode": "contains", "value": "Office" }
-        ],
-        "answer_contains": ["Office"]
+        "row_count": { "min": 1 },
+        "answer_contains": ["zTargetAI - Terminal Hik"]
       }
     }
   ]

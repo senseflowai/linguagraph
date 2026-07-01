@@ -456,8 +456,15 @@ impl Pipeline {
                 .get("candidate_k")
                 .cloned()
                 .unwrap_or(Literal::Int(handlers::semantic_text::DEFAULT_CANDIDATE_K));
-            let Literal::String(query_text) = query_str.clone() else {
-                continue;
+            let query_text = match (pred.op, pred.value.clone()) {
+                (crate::types::TypedOp::EntitySearch, _) => {
+                    let Literal::String(query_text) = query_str.clone() else {
+                        continue;
+                    };
+                    query_text
+                }
+                (_, Literal::String(query_text)) => query_text,
+                _ => continue,
             };
 
             // 1. Recall candidates from qlink (no model in Memgraph).
@@ -500,11 +507,22 @@ impl Pipeline {
                         ids.len()
                     ))));
                 }
+                let query_lc = query_text.to_lowercase();
                 hits = ids
                     .iter()
                     .copied()
-                    .zip(scores)
-                    .filter(|(_, s)| *s >= self.reranker_threshold)
+                    .zip(scores.into_iter().zip(texts.iter()))
+                    .filter_map(|(id, (score, text))| {
+                        let exact_bonus = if pred.op == crate::types::TypedOp::EntitySearch {
+                            0.0
+                        } else if text.to_lowercase().contains(&query_lc) {
+                            1.0
+                        } else {
+                            0.0
+                        };
+                        let adjusted = score + exact_bonus;
+                        (adjusted >= self.reranker_threshold).then_some((id, adjusted))
+                    })
                     .collect();
                 hits.sort_by(|a, b| b.1.total_cmp(&a.1));
             }

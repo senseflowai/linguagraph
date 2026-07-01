@@ -12,9 +12,9 @@
 //!   retrieval-oriented.
 //! * **Semantic** (`search` / `search_reranked` / `hybrid_search`, and
 //!   the resolver-synthesised `entity_search`) — a single per-entity
-//!   hybrid retrieval (dense ⊕ BM25, RRF-fused) followed by one
-//!   cross-encoder rerank, always against the field-agnostic
-//!   `_canonical` collection.
+//!   hybrid retrieval (dense ⊕ BM25, RRF-fused) followed by a
+//!   cross-encoder rerank in Linguagraph, always against the
+//!   field-agnostic `_canonical` collection.
 //!
 //! Responsibilities:
 //!
@@ -28,11 +28,11 @@
 //!    document (`type: {Label}\n{field}: {value}`), embed it once, and
 //!    stash the vector in the predicate's `params` so emission stays
 //!    pure.
-//! 3. **Emit**: render
-//!    `libqlink.search_hybrid_reranked` over `_canonical` (reranking runs
-//!    inside Memgraph), or — when the pipeline attached a reranker and
-//!    reranked the candidates in-process, leaving a `reranked_hits`
-//!    param — `UNWIND` those precomputed `{id, score}` pairs instead.
+//! 3. **Emit**: render `libqlink.search_hybrid` over `_canonical`
+//!    (recall only, no rerank in Memgraph), or — when the pipeline
+//!    attached a reranker and reranked the candidates in-process,
+//!    leaving a `reranked_hits` param — `UNWIND` those precomputed
+//!    `{id, score}` pairs instead.
 //!
 //! The handler is configured by a `[types.SemanticText]` block:
 //!
@@ -51,13 +51,12 @@
 //!   originating Cypher node label as a Qdrant payload tag. That lets a
 //!   single embedding collection host multiple node labels safely while
 //!   still being addressable by label at query time.
-//! * **Search** — `libqlink.search_reranked` does a label-filtered KNN
-//!   pre-filter (cosine ≥ `search_threshold`), looks up each surviving
-//!   id as a Memgraph node, runs a cross-encoder reranker locally,
-//!   and emits hits whose reranker score is ≥ `reranker_threshold`,
-//!   sorted descending. We hand it the raw natural-language query
-//!   (the DSL filter `value`) and the embedded vector — qlink does
-//!   the rest.
+//! * **Search** — `libqlink.search_hybrid` does a label-filtered
+//!   hybrid pre-filter (dense + lexical), looks up each surviving id as
+//!   a Memgraph node, and returns the candidate set for a local
+//!   cross-encoder rerank in Linguagraph. We hand it the raw
+//!   natural-language query (the DSL filter `value`) and the embedded
+//!   vector — qlink only handles recall.
 
 use std::collections::BTreeMap;
 
@@ -74,15 +73,14 @@ use crate::types::{
 };
 
 /// Default cosine cutoff for stage-1 retrieval inside
-/// `libqlink.search_reranked`. A modest 0.8 keeps obvious near-
-/// duplicates in and aggressively prunes the long tail; raise it
-/// for small corpora, lower it for noisy ones.
+/// `libqlink.search_hybrid`. A modest 0.8 keeps obvious near-
+/// duplicates in and aggressively prunes the long tail; raise it for
+/// small corpora, lower it for noisy ones.
 pub const DEFAULT_SEARCH_THRESHOLD: f64 = 0.8;
 
-/// Default reranker score cutoff for stage-2 of
-/// `libqlink.search_reranked`. Reranker scores are sigmoid-bounded
-/// to `[0, 1]`; values around 0.3 keep recall sane on out-of-the-
-/// box BGE rerankers.
+/// Default reranker score cutoff for stage-2 in Linguagraph.
+/// Reranker scores are sigmoid-bounded to `[0, 1]`; values around 0.3
+/// keep recall sane on out-of-the-box BGE rerankers.
 pub const DEFAULT_RERANKER_THRESHOLD: f64 = 0.5;
 
 /// Default number of RRF-fused candidates handed to the cross-encoder by
@@ -102,10 +100,10 @@ pub struct SemanticTextConfig {
     /// SemanticText property may override this in its mapping by
     /// providing `collection: <str>` in the type params.
     pub collection: String,
-    /// Number of results to fan out from stage-1 KNN. Currently
-    /// informational only — `libqlink.search_reranked` hard-codes
-    /// the stage-1 fan-out internally — but kept on the config so
-    /// the field-types prompt block can still advertise it.
+    /// Number of results to fan out from stage-1 recall. Currently
+    /// informational only — `libqlink.search_hybrid` handles the
+    /// hybrid recall internals — but kept on the config so the
+    /// field-types prompt block can still advertise it.
     pub top_k: u32,
     /// Cosine threshold for stage-1 KNN retrieval. Defaults to
     /// [`DEFAULT_SEARCH_THRESHOLD`].
@@ -328,11 +326,9 @@ impl TypeHandler for SemanticTextHandler {
             // `hybrid_search`, and the resolver-synthesised
             // `entity_search`) shares this one implementation. One CALL
             // per alias against the `_canonical` collection: qlink fuses a
-            // dense and a BM25-sparse branch with RRF, label-filters by
-            // entity type, then reranks the top `candidate_k` candidates
-            // over their canonical text. The yield is the surviving
-            // (id, reranker_score) pairs descending; the MATCH then joins
-            // by id, so we need no Cypher-side threshold or WITH gate.
+            // dense and a BM25-sparse branch with RRF and label-filters by
+            // entity type; reranking happens in Linguagraph when a
+            // cross-encoder is attached to the pipeline.
             TypedOp::Eq
             | TypedOp::Neq
             | TypedOp::In
@@ -348,6 +344,7 @@ impl TypeHandler for SemanticTextHandler {
                 let n = ctx.fresh_id();
                 let qid = format!("{alias}__qid_{n}");
                 let score = format!("{alias}__score_{n}");
+                let hit_text = format!("{alias}__text_{n}");
 
                 // Two ways to bind `qid` / `score`:
                 //
@@ -360,8 +357,8 @@ impl TypeHandler for SemanticTextHandler {
                 //   same way the qlink-side `YIELD`s do. An empty list
                 //   unwinds to zero rows — i.e. nothing survived the
                 //   threshold.
-                // * otherwise → fall back to qlink reranking inside
-                //   Memgraph via `search_hybrid_reranked`.
+                // * otherwise → fall back to qlink recall-only search
+                //   inside Memgraph via `search_hybrid`.
                 //
                 // Either way the downstream `WHERE` / `ORDER BY` below are
                 // identical, so only the prelude differs.
@@ -393,11 +390,6 @@ impl TypeHandler for SemanticTextHandler {
                         .get("label")
                         .cloned()
                         .ok_or_else(|| TypeError::Handler("missing 'label' param".into()))?;
-                    let rerank_thr = pred
-                        .params
-                        .get("reranker_threshold")
-                        .cloned()
-                        .unwrap_or(Literal::Float(DEFAULT_RERANKER_THRESHOLD));
                     let candidate_k = pred
                         .params
                         .get("candidate_k")
@@ -408,18 +400,26 @@ impl TypeHandler for SemanticTextHandler {
                     let q_p = ctx.bind(query_str);
                     let emb_p = ctx.bind(emb);
                     let label_p = ctx.bind(label);
-                    let thr_p = ctx.bind(rerank_thr);
                     let k_p = ctx.bind(candidate_k);
                     ctx.push_pre_match(format!(
-                        "CALL libqlink.search_hybrid_reranked({coll_p}, {q_p}, {emb_p}, {label_p}, {thr_p}, {k_p}) \
-                         YIELD id AS {qid}, score AS {score}"
+                        "CALL libqlink.search_hybrid({coll_p}, {q_p}, {emb_p}, {label_p}, {k_p}) \
+                         YIELD id AS {qid}, text AS {hit_text}"
                     ));
                 }
 
-                ctx.set_where(format!("id({alias}) = {qid}"));
-                ctx.contribution_mut()
-                    .order_by
-                    .push((score, OrderDir::Desc));
+                let mut where_expr = format!("id({alias}) = {qid}");
+                if pred.op == TypedOp::Eq {
+                    if let Some(prop) = pred.field.property.as_ref() {
+                        let exact_value = ctx.bind(pred.value.clone());
+                        where_expr.push_str(&format!(" AND {alias}.{prop} = {exact_value}"));
+                    }
+                }
+                ctx.set_where(where_expr);
+                if pred.params.contains_key("reranked_hits") {
+                    ctx.contribution_mut()
+                        .order_by
+                        .push((score, OrderDir::Desc));
+                }
                 Ok(())
             }
 
@@ -562,7 +562,7 @@ pub(crate) fn with_prefix_index(prefix_index: Option<&str>, base: &str) -> Strin
 /// Build the recall-only candidate query for the in-process rerank path.
 ///
 /// Renders `CALL libqlink.search_hybrid(...) YIELD id, text RETURN id,
-/// text` — the recall half of `search_hybrid_reranked` with no model in
+/// text` — the recall half of `search_hybrid` with no model in
 /// Memgraph. The pipeline runs this, reranks the `(id, text)` rows with
 /// its own cross-encoder, and folds the survivors back into the main
 /// query as the `reranked_hits` param (see [`SemanticTextHandler::emit`]).
@@ -616,8 +616,8 @@ pub enum SideEffectEmitError {
 /// When the bucket has a `payload_label`, we use
 /// `libqlink.insert_labeled` so each vector lands in Qdrant tagged
 /// with the originating Cypher node label — that's what
-/// `libqlink.search_hybrid_reranked` filters by at query time. When the
-/// bucket has no label we fall back to plain `libqlink.insert`.
+/// `libqlink.search_hybrid` filters by at query time. When the bucket
+/// has no label we fall back to plain `libqlink.insert`.
 ///
 /// This Cypher renderer belongs to the SemanticText handler because
 /// only this handler knows what shape an embedding side effect takes;
@@ -901,7 +901,7 @@ mod tests {
             assert!(pred.params.contains_key(key), "missing '{key}' in params");
         }
         // The cosine `search_threshold`/`top_k` knobs aren't used by
-        // search_hybrid_reranked, so they're no longer carried.
+        // search_hybrid, so they're no longer carried.
         assert!(!pred.params.contains_key("search_threshold"));
         assert!(!pred.params.contains_key("top_k"));
         match pred.params.get("embedding").unwrap() {
@@ -997,11 +997,11 @@ mod tests {
         h.emit(&mut emit, &pred).unwrap();
 
         let pre = contrib.pre_match.join("\n");
-        assert!(pre.contains("CALL libqlink.search_hybrid_reranked("));
-        assert!(pre.contains("YIELD id AS c__qid_0, score AS c__score_0"));
-        assert_eq!(contrib.where_inline.as_deref(), Some("id(c) = c__qid_0"));
-        assert_eq!(contrib.order_by.len(), 1);
-        assert_eq!(contrib.order_by[0].0, "c__score_0");
+        assert!(pre.contains("CALL libqlink.search_hybrid("));
+        assert!(pre.contains("YIELD id AS c__qid_0, text AS c__text_0"));
+        let where_inline = contrib.where_inline.as_deref().unwrap();
+        assert!(where_inline.starts_with("id(c) = c__qid_0 AND c.name = $p"));
+        assert!(contrib.order_by.is_empty());
     }
 
     #[test]
@@ -1022,10 +1022,10 @@ mod tests {
         h.emit(&mut emit, &pred).unwrap();
 
         let pre = contrib.pre_match.join("\n");
-        assert!(pre.contains("CALL libqlink.search_hybrid_reranked("));
-        assert!(pre.contains("YIELD id AS c__qid_0, score AS c__score_0"));
+        assert!(pre.contains("CALL libqlink.search_hybrid("));
+        assert!(pre.contains("YIELD id AS c__qid_0, text AS c__text_0"));
         assert_eq!(contrib.where_inline.as_deref(), Some("id(c) = c__qid_0"));
-        assert_eq!(contrib.order_by.len(), 1);
+        assert!(contrib.order_by.is_empty());
     }
 
     #[test]
@@ -1045,16 +1045,15 @@ mod tests {
         let mut emit = EmitCtx::new(&mut contrib, &mut binder);
         h.emit(&mut emit, &pred).unwrap();
         let pre = contrib.pre_match.join("\n");
-        assert!(pre.contains("CALL libqlink.search_hybrid_reranked("));
+        assert!(pre.contains("CALL libqlink.search_hybrid("));
         assert_eq!(contrib.where_inline.as_deref(), Some("id(c) = c__qid_0"));
-        assert_eq!(contrib.order_by.len(), 1);
+        assert!(contrib.order_by.is_empty());
     }
 
     #[test]
-    fn emit_search_calls_hybrid_reranked_and_orders_by_score() {
-        // Every semantic op compiles to the same per-entity hybrid
-        // retrieval + rerank over `_canonical`, exposing the surviving
-        // (id, score) pairs descending.
+    fn emit_search_calls_hybrid_search_only() {
+        // The handler now emits recall-only search; reranking happens in
+        // the pipeline when a cross-encoder is configured.
         let h = handler();
         let field = pref("c", "name");
         let value = serde_json::json!("apple");
@@ -1071,28 +1070,18 @@ mod tests {
         h.emit(&mut emit, &pred).unwrap();
 
         let pre = contrib.pre_match.join("\n");
-        assert!(
-            pre.contains("CALL libqlink.search_hybrid_reranked("),
-            "pre_match should call libqlink.search_hybrid_reranked; got {pre}"
-        );
-        assert!(pre.contains("YIELD id AS c__qid_0, score AS c__score_0"));
-        // No post-yield WHERE — qlink filters internally.
-        assert!(
-            !pre.contains("WHERE c__score"),
-            "must not emit a duplicate score-filter clause; got {pre}"
-        );
+        assert!(pre.contains("CALL libqlink.search_hybrid("));
+        assert!(pre.contains("YIELD id AS c__qid_0, text AS c__text_0"));
         assert_eq!(contrib.where_inline.as_deref(), Some("id(c) = c__qid_0"));
-        assert_eq!(contrib.order_by.len(), 1);
-        assert_eq!(contrib.order_by[0].0, "c__score_0");
+        assert!(contrib.order_by.is_empty());
     }
 
     #[test]
     fn emit_unwinds_precomputed_hits_instead_of_calling_qlink_reranker() {
         // When the pipeline already reranked the candidates in-process
         // (a reranker is attached), it stashes `reranked_hits` and emit
-        // UNWINDs them — no `search_hybrid_reranked` call — while binding
-        // the very same `qid` / `score` the downstream WHERE / ORDER BY
-        // expect.
+        // UNWINDs them — no qlink rerank call — while binding the very
+        // same `qid` / `score` the downstream WHERE / ORDER BY expect.
         let h = handler();
         let field = pref("c", "name");
         let value = serde_json::json!("apple");
@@ -1155,8 +1144,8 @@ mod tests {
 
     #[test]
     fn emit_search_reranked_threshold_is_bound_as_parameter() {
-        // The reranker threshold is bound as a Cypher parameter, never
-        // inlined into the `search_hybrid_reranked` call site.
+        // The recall-only query stays on `search_hybrid`; rerank
+        // thresholds are handled by the pipeline, not qlink.
         let h = handler_with_thresholds(0.42, 0.17);
         let field = pref("c", "name");
         let value = serde_json::json!("apple");
@@ -1172,34 +1161,24 @@ mod tests {
         let mut emit = EmitCtx::new(&mut contrib, &mut binder);
         h.emit(&mut emit, &pred).unwrap();
 
-        let floats: Vec<f64> = binder
-            .params
-            .values()
-            .filter_map(|v| {
-                if let Literal::Float(f) = v {
-                    Some(*f)
-                } else {
-                    None
-                }
-            })
-            .collect();
-        assert!(
-            floats.iter().any(|f| (f - 0.17).abs() < 1e-9),
-            "reranker_threshold 0.17 not bound; floats={floats:?}"
-        );
         let pre = contrib.pre_match.join("\n");
-        assert!(pre.contains("libqlink.search_hybrid_reranked"));
+        assert!(pre.contains("libqlink.search_hybrid("));
+        assert!(!pre.contains("search_hybrid_reranked"));
         assert!(
-            !pre.contains("0.17"),
-            "reranker_threshold leaked inline: {pre}"
+            !binder
+                .params
+                .values()
+                .any(|v| matches!(v, Literal::Float(f) if (*f - 0.17).abs() < 1e-9)),
+            "reranker_threshold should not be bound in emit; binder params={:?}",
+            binder.params
         );
     }
 
     #[test]
     fn emit_hybrid_search_routes_to_canonical_hybrid() {
         // `hybrid_search` is now an alias for the unified semantic path:
-        // it compiles to `search_hybrid_reranked` over `_canonical`, not
-        // the old inline exact + score_batch_node scheme.
+        // it compiles to recall-only `search_hybrid` over `_canonical`,
+        // with reranking handled by the pipeline when configured.
         let h = handler();
         let field = pref("c", "name");
         let value = serde_json::json!("apple");
@@ -1215,14 +1194,13 @@ mod tests {
         h.emit(&mut emit, &pred).unwrap();
 
         let pre = contrib.pre_match.join("\n");
-        assert!(pre.contains("CALL libqlink.search_hybrid_reranked("));
+        assert!(pre.contains("CALL libqlink.search_hybrid("));
         assert!(contrib.post_match.is_empty());
         assert!(
             !pre.contains("score_batch_node"),
             "hybrid_search must no longer emit score_batch_node; got {pre}"
         );
-        assert_eq!(contrib.order_by.len(), 1);
-        assert_eq!(contrib.order_by[0].0, "c__score_0");
+        assert!(contrib.order_by.is_empty());
     }
 
     #[test]
@@ -1299,13 +1277,9 @@ mod tests {
         h.emit(&mut emit, &pred).unwrap();
 
         let pre = contrib.pre_match.join("\n");
-        assert!(
-            pre.contains("CALL libqlink.search_hybrid_reranked("),
-            "pre_match should call search_hybrid_reranked; got {pre}"
-        );
-        assert!(pre.contains("YIELD id AS p__qid_0, score AS p__score_0"));
+        assert!(pre.contains("CALL libqlink.search_hybrid("));
+        assert!(pre.contains("YIELD id AS p__qid_0, text AS p__text_0"));
         assert_eq!(contrib.where_inline.as_deref(), Some("id(p) = p__qid_0"));
-        assert_eq!(contrib.order_by.len(), 1);
-        assert_eq!(contrib.order_by[0].0, "p__score_0");
+        assert!(contrib.order_by.is_empty());
     }
 }

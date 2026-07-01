@@ -456,6 +456,12 @@ async fn run_case(
         }
     };
 
+    tracing::debug!(
+        target: "linguagraph::e2e",
+        dsl = %serde_json::to_string(&dsl).unwrap_or_default(),
+        "compiled e2e DSL"
+    );
+
     let result = match pipeline.run(dsl.clone()).await {
         Ok(result) => result,
         Err(err) => {

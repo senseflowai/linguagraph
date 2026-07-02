@@ -1,4 +1,4 @@
-//! End-to-end orchestration: DSL/mapping → AST → Cypher → DB.
+//! End-to-end orchestration: DSL → AST → Cypher → DB.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -899,20 +899,6 @@ impl Pipeline {
 
     // ── Insert path ─────────────────────────────────────────────────────────
 
-    /// Compile a graph into one Cypher batch per node/relation group.
-    /// Pure; no I/O. Drops side effects on the floor — use
-    /// [`Self::lower_insert_with_effects`] when you need them.
-    pub fn compile_insert(&self, graph: &Graph) -> Result<Vec<CypherQuery>> {
-        let (insert, _effects) = self.lower_insert_with_effects(graph)?;
-        Ok(builder::build_insert(&insert)?)
-    }
-
-    /// Lower a graph into the typed [`InsertQuery`] AST, dropping any
-    /// queued side effects.
-    pub fn lower_insert(&self, graph: &Graph) -> Result<InsertQuery> {
-        Ok(self.lower_insert_with_effects(graph)?.0)
-    }
-
     /// Lower a graph, returning both the [`InsertQuery`] and the queue
     /// of side effects that must run after the Memgraph batches succeed.
     pub fn lower_insert_with_effects(
@@ -932,28 +918,6 @@ impl Pipeline {
             self.prefix_index.as_deref(),
         )?;
         Ok((insert, effects))
-    }
-
-    /// Ingest a JSON document through a mapping.
-    ///
-    /// Convenience wrapper around [`crate::mapper::to_graph`] followed by
-    /// [`Self::ingest`]. The mapping describes how to lift raw JSON rows
-    /// into typed graph entities and relations; the resulting
-    /// [`Graph`] is then ingested via the standard path so all the same
-    /// type handlers, side effects, and prefix scoping apply.
-    ///
-    /// `GraphSpecification` derived from the mapping is *not* persisted
-    /// here — that lives in the optional `graph_specification_storage`
-    /// path and is the caller's responsibility (see
-    /// `cli::cmd_ingest_json` for the full file-backed variant).
-    pub async fn ingest_json(
-        &self,
-        mapping: &crate::mapper::Mapping,
-        value: &serde_json::Value,
-    ) -> Result<IngestSummary> {
-        let mapped = crate::mapper::to_graph(mapping, value)
-            .map_err(|e| IngestError::Type(format!("mapper::to_graph: {e}")))?;
-        self.ingest(&mapped.graph).await
     }
 
     /// Compile and execute the full graph ingestion pipeline.

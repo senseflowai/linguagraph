@@ -9,9 +9,22 @@
 
 use std::fmt::Write;
 
-use crate::graph::{DomainOntology, EntityTypeSpec};
+use crate::graph::{DomainOntology, EntityTypeSpec, OntologyPropertyType};
 
-use super::knowledge::property_type_label;
+/// Human-readable label for an ontology property type, used in the prompt
+/// vocabulary shown to the LLM.
+fn property_type_label(t: OntologyPropertyType) -> &'static str {
+    match t {
+        OntologyPropertyType::Keyword => "keyword",
+        OntologyPropertyType::Text => "text",
+        OntologyPropertyType::Int => "int",
+        OntologyPropertyType::Float => "float",
+        OntologyPropertyType::Bool => "bool",
+        OntologyPropertyType::Date => "date",
+        OntologyPropertyType::Datetime => "datetime",
+        OntologyPropertyType::List => "list",
+    }
+}
 
 /// Render the schema-suggestion prompt for `fragment` against the given
 /// `ontology`. `domain` is the human label of the ontology (used only

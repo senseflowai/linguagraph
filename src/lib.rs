@@ -33,10 +33,7 @@ pub mod error;
 pub mod graph;
 pub mod ingest;
 pub mod llm;
-pub mod mapgen;
-pub mod mapper;
 pub mod prompt;
-pub mod promptgen;
 pub mod resolve;
 pub mod types;
 

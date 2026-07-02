@@ -23,9 +23,6 @@ pub enum Error {
     #[error("Insert builder error: {0}")]
     InsertBuilder(#[from] crate::builder::InsertError),
 
-    #[error("Mapper error: {0}")]
-    Mapper(#[from] crate::mapper::MapperError),
-
     #[error("Graph build error: {0}")]
     GraphBuild(#[from] crate::graph::GraphBuildError),
 
@@ -43,9 +40,6 @@ pub enum Error {
 
     #[error("LLM error: {0}")]
     Llm(#[from] crate::llm::LlmError),
-
-    #[error("Mapping generation error: {0}")]
-    MapGen(#[from] crate::mapgen::MapGenError),
 
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),

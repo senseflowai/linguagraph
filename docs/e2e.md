@@ -29,7 +29,7 @@ cargo run --bin linguagraph-e2e -- \
 
 The default e2e config uses:
 
-- LLM API: `http://79.117.32.66:50715/v1`
+- LLM API: configured in `config.e2e.toml`
 - LLM model: `vllm-qwen36`
 - embedding model: `gpustack/bge-m3-GGUF` / `bge-m3-Q4_K_M.gguf`
 - reranking model: `gpustack/bge-reranker-v2-m3-GGUF` / `bge-reranker-v2-m3-Q4_K_M.gguf`

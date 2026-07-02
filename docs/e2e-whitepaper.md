@@ -28,7 +28,7 @@ Each suite follows the same production-like flow:
 
 The current default e2e stack uses:
 
-- OpenAI-compatible LLM endpoint: `http://79.117.32.66:50715/v1`
+- OpenAI-compatible LLM endpoint: configured in `config.e2e.toml`
 - embedding model: `gpustack/bge-m3-GGUF` / `bge-m3-Q4_K_M.gguf`
 - reranker model: `gpustack/bge-reranker-v2-m3-GGUF` / `bge-reranker-v2-m3-Q4_K_M.gguf`
 - local Memgraph: `bolt://127.0.0.1:7687/memgraph`

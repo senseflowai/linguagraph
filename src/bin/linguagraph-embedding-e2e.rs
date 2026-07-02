@@ -157,7 +157,10 @@ async fn main() -> anyhow::Result<()> {
     }
 
     if args.check_long_text {
-        let long_text = build_long_text(samples.similar_left.canonical.as_str(), args.long_text_words);
+        let long_text = build_long_text(
+            samples.similar_left.canonical.as_str(),
+            args.long_text_words,
+        );
         let long_inputs = [long_text.as_str()];
         println!(
             "long_text words={} chars={}",
@@ -296,7 +299,11 @@ fn select_camera_samples(graph: &linguagraph::graph::Graph) -> anyhow::Result<Sa
     })
 }
 
-fn validate_vector_shape(vectors: &[Vec<f32>], dim: usize, norm_epsilon: f32) -> anyhow::Result<()> {
+fn validate_vector_shape(
+    vectors: &[Vec<f32>],
+    dim: usize,
+    norm_epsilon: f32,
+) -> anyhow::Result<()> {
     for (idx, vec) in vectors.iter().enumerate() {
         if vec.len() != dim {
             bail!("vector {idx} has dim {}, expected {dim}", vec.len());
@@ -339,14 +346,10 @@ fn validate_batch_consistency(
             .map(|(a, b)| (a - b).abs())
             .fold(0.0_f32, f32::max);
 
-        println!(
-            "batch_consistency idx={idx} cosine={cosine:.6} max_abs_diff={max_abs_diff:.6}"
-        );
+        println!("batch_consistency idx={idx} cosine={cosine:.6} max_abs_diff={max_abs_diff:.6}");
 
         if cosine < cosine_min {
-            bail!(
-                "vector {idx} batch/single cosine {cosine:.6} below minimum {cosine_min:.6}"
-            );
+            bail!("vector {idx} batch/single cosine {cosine:.6} below minimum {cosine_min:.6}");
         }
         if max_abs_diff > abs_epsilon {
             bail!(

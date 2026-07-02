@@ -399,7 +399,12 @@ fn flatten_object(
         let field_path = format!("{entity_path}.{field_name}");
         match v {
             Value::Array(_) => {
-                walk(acc, &format!("{entity_path}.{field_name}"), v, Some(entity_name));
+                walk(
+                    acc,
+                    &format!("{entity_path}.{field_name}"),
+                    v,
+                    Some(entity_name),
+                );
             }
             Value::Object(inner) => {
                 if depth < MAX_FLATTEN_DEPTH {
@@ -586,7 +591,11 @@ mod tests {
         let event = s.entities.iter().find(|e| e.name == "Event").unwrap();
         // primary key is the direct event_id, not the nested *_id fields.
         assert_eq!(event.primary_key.as_deref(), Some("$.events[*].event_id"));
-        let field_paths: Vec<&str> = event.fields.iter().map(|f| f.source_path.as_str()).collect();
+        let field_paths: Vec<&str> = event
+            .fields
+            .iter()
+            .map(|f| f.source_path.as_str())
+            .collect();
         assert!(field_paths.contains(&"$.events[*].origin.camera_id"));
         assert!(field_paths.contains(&"$.events[*].origin.place_id"));
         // ForeignKey hint for the nested camera_id with its full path.

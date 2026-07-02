@@ -448,7 +448,11 @@ async fn semantic_search_reranks_in_process_when_reranker_attached() {
             _ => None,
         })
         .collect();
-    assert_eq!(ids, vec![10, 30], "survivors must be rerank-ordered 10 then 30");
+    assert_eq!(
+        ids,
+        vec![10, 30],
+        "survivors must be rerank-ordered 10 then 30"
+    );
 }
 
 /// Consolidation: when a query carries several `SemanticText` semantic
@@ -487,7 +491,10 @@ fn multiple_semantic_filters_on_same_alias_consolidate_into_one_call() {
 
     // Exactly ONE consolidated call, yielding into a single pair of vars.
     assert_eq!(
-        cypher.text.matches("CALL libqlink.search_hybrid_reranked").count(),
+        cypher
+            .text
+            .matches("CALL libqlink.search_hybrid_reranked")
+            .count(),
         1,
         "the two same-alias filters must collapse into one call; got:\n{}",
         cypher.text
@@ -682,7 +689,11 @@ fn plain_filters_remain_untyped_and_compile_without_registry() {
 // the lowering step should pick up the type from the catalog snapshot
 // and route the filter through the matching handler.
 
-fn prop(name: &str, property_type: OntologyPropertyType, description: Option<&str>) -> PropertySpec {
+fn prop(
+    name: &str,
+    property_type: OntologyPropertyType,
+    description: Option<&str>,
+) -> PropertySpec {
     PropertySpec {
         name: name.into(),
         description: description.map(str::to_string),
@@ -704,7 +715,10 @@ fn ontology_catalog_round_trips_field_types() {
             .and_then(|p| p.description.as_deref()),
         Some("the company name")
     );
-    assert_eq!(catalog.get_query_type("Company", "industry"), Some("Keyword"));
+    assert_eq!(
+        catalog.get_query_type("Company", "industry"),
+        Some("Keyword")
+    );
 }
 
 fn semantic_catalog() -> OntologyCatalog {
@@ -988,8 +1002,10 @@ fn ontology_catalog_lookup_keys_off_label_not_alias() {
 async fn loaded_ontology_catalog_auto_resolves_semantic_text_filters() {
     let cfg = cfg_with_semantic_text();
     let (registry, embedder) = registry_and_embedder();
-    let path =
-        std::env::temp_dir().join(format!("linguagraph-catalog-test-{}.json", std::process::id()));
+    let path = std::env::temp_dir().join(format!(
+        "linguagraph-catalog-test-{}.json",
+        std::process::id()
+    ));
     let storage = JsonFileOntologyCatalogStorage::new(&path);
     storage.save(&semantic_catalog()).await.unwrap();
     let storage: Arc<dyn OntologyCatalogStorage> = Arc::new(storage);

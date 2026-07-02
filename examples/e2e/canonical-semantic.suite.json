@@ -1,0 +1,17 @@
+{
+  "name": "canonical-semantic",
+  "graph": "camera.graph.json",
+  "ontology": "camera.ontology.json",
+  "questions": "canonical-semantic/questions.json",
+  "settings": {
+    "prefix": "E2E_CANONICAL_SEMANTIC",
+    "cleanup_before": true,
+    "cleanup_after": false,
+    "cleanup_vectors": true,
+    "answer_with_llm": false,
+    "judge_with_llm": false,
+    "max_repairs": 0,
+    "llm_base_url": "http://79.117.32.66:50715/v1",
+    "llm_model": "vllm-qwen36"
+  }
+}

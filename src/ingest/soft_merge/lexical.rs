@@ -219,6 +219,9 @@ mod tests {
         let b = "type: Person\nname: Elon Mask";
         let s = lexical_score(a, b);
         // Both names share 8 of 9 chars; should be quite high.
-        assert!(s >= 0.85, "expected ≥0.85 for Elon Musk / Elon Mask, got {s}");
+        assert!(
+            s >= 0.85,
+            "expected ≥0.85 for Elon Musk / Elon Mask, got {s}"
+        );
     }
 }

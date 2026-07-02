@@ -1,0 +1,308 @@
+{
+  "crm_domain": {
+    "entity_types": [
+      {
+        "name": "Account",
+        "description": "A customer or prospect company in the CRM.",
+        "properties": [
+          {
+            "name": "id",
+            "property_type": "keyword",
+            "required": true,
+            "description": "Stable account identifier used for exact matching."
+          },
+          {
+            "name": "name",
+            "property_type": "text",
+            "required": true,
+            "description": "Human-readable company name."
+          },
+          {
+            "name": "industry",
+            "property_type": "text",
+            "required": false,
+            "description": "Industry the account operates in, such as logistics or retail."
+          },
+          {
+            "name": "region",
+            "property_type": "keyword",
+            "required": false,
+            "description": "Commercial region or market bucket such as CIS or EMEA."
+          },
+          {
+            "name": "segment",
+            "property_type": "keyword",
+            "required": false,
+            "description": "Sales segmentation bucket such as Enterprise or Mid-market."
+          },
+          {
+            "name": "status",
+            "property_type": "keyword",
+            "required": false,
+            "description": "Lifecycle status of the account, such as Active or Prospect."
+          },
+          {
+            "name": "description",
+            "property_type": "text",
+            "required": false,
+            "description": "Free-form summary of the account context and needs."
+          }
+        ]
+      },
+      {
+        "name": "Contact",
+        "description": "A person associated with a customer account.",
+        "properties": [
+          {
+            "name": "id",
+            "property_type": "keyword",
+            "required": true,
+            "description": "Stable contact identifier used for exact matching."
+          },
+          {
+            "name": "full_name",
+            "property_type": "text",
+            "required": true,
+            "description": "Full person name used in CRM communication."
+          },
+          {
+            "name": "title",
+            "property_type": "text",
+            "required": false,
+            "description": "Job title or responsibility of the contact."
+          },
+          {
+            "name": "email",
+            "property_type": "text",
+            "required": false,
+            "description": "Primary email address."
+          },
+          {
+            "name": "phone",
+            "property_type": "text",
+            "required": false,
+            "description": "Primary phone number."
+          }
+        ]
+      },
+      {
+        "name": "Deal",
+        "description": "A sales opportunity tied to an account.",
+        "properties": [
+          {
+            "name": "id",
+            "property_type": "keyword",
+            "required": true,
+            "description": "Stable deal identifier used for exact matching."
+          },
+          {
+            "name": "name",
+            "property_type": "keyword",
+            "required": true,
+            "description": "Deal title used by sales teams for exact lookup and display. This field accepts the exact title only."
+          },
+          {
+            "name": "stage",
+            "property_type": "keyword",
+            "required": false,
+            "description": "Sales pipeline stage."
+          },
+          {
+            "name": "status",
+            "property_type": "keyword",
+            "required": false,
+            "description": "Deal status such as Open or Closed."
+          },
+          {
+            "name": "amount",
+            "property_type": "float",
+            "required": false,
+            "description": "Expected deal amount."
+          },
+          {
+            "name": "probability",
+            "property_type": "float",
+            "required": false,
+            "description": "Probability of closing from 0 to 1."
+          },
+          {
+            "name": "description",
+            "property_type": "text",
+            "required": false,
+            "description": "Free-form summary of the opportunity. Prefer this field for semantic search when the question describes the deal by purpose or context instead of its exact title."
+          }
+        ]
+      },
+      {
+        "name": "Ticket",
+        "description": "A customer support case or service request.",
+        "properties": [
+          {
+            "name": "id",
+            "property_type": "keyword",
+            "required": true,
+            "description": "Stable ticket identifier used for exact matching."
+          },
+          {
+            "name": "subject",
+            "property_type": "text",
+            "required": true,
+            "description": "Ticket subject or issue summary."
+          },
+          {
+            "name": "status",
+            "property_type": "keyword",
+            "required": false,
+            "description": "Support ticket status."
+          },
+          {
+            "name": "priority",
+            "property_type": "keyword",
+            "required": false,
+            "description": "Support priority level."
+          },
+          {
+            "name": "source",
+            "property_type": "keyword",
+            "required": false,
+            "description": "Inbound channel that created the ticket."
+          },
+          {
+            "name": "category",
+            "property_type": "keyword",
+            "required": false,
+            "description": "Issue category or support area."
+          }
+        ]
+      },
+      {
+        "name": "User",
+        "description": "An internal CRM user such as a sales rep or support lead.",
+        "properties": [
+          {
+            "name": "id",
+            "property_type": "keyword",
+            "required": true,
+            "description": "Stable internal user identifier used for exact matching."
+          },
+          {
+            "name": "name",
+            "property_type": "text",
+            "required": true,
+            "description": "Display name of the user."
+          },
+          {
+            "name": "role",
+            "property_type": "keyword",
+            "required": false,
+            "description": "Role or job function of the user."
+          },
+          {
+            "name": "team",
+            "property_type": "keyword",
+            "required": false,
+            "description": "Team or group the user belongs to."
+          }
+        ]
+      },
+      {
+        "name": "Product",
+        "description": "A product or service sold through the CRM.",
+        "properties": [
+          {
+            "name": "id",
+            "property_type": "keyword",
+            "required": true,
+            "description": "Stable product identifier used for exact matching."
+          },
+          {
+            "name": "name",
+            "property_type": "text",
+            "required": true,
+            "description": "Product or service name."
+          },
+          {
+            "name": "category",
+            "property_type": "keyword",
+            "required": false,
+            "description": "Product family or category."
+          }
+        ]
+      },
+      {
+        "name": "Activity",
+        "description": "A task, call, workshop, or meeting tracked against a deal.",
+        "properties": [
+          {
+            "name": "id",
+            "property_type": "keyword",
+            "required": true,
+            "description": "Stable activity identifier used for exact matching."
+          },
+          {
+            "name": "subject",
+            "property_type": "text",
+            "required": true,
+            "description": "Short description of the activity."
+          },
+          {
+            "name": "type",
+            "property_type": "keyword",
+            "required": false,
+            "description": "Activity type such as call, meeting, or workshop."
+          },
+          {
+            "name": "status",
+            "property_type": "keyword",
+            "required": false,
+            "description": "Activity status such as scheduled or completed."
+          },
+          {
+            "name": "due_date",
+            "property_type": "date",
+            "required": false,
+            "description": "Planned due date in ISO format."
+          }
+        ]
+      }
+    ],
+    "relation_types": [
+      {
+        "name": "ACCOUNT_OWNER",
+        "description": "Connects an Account to the User who owns it."
+      },
+      {
+        "name": "CONTACT_ACCOUNT",
+        "description": "Connects a Contact to the Account they belong to."
+      },
+      {
+        "name": "PRIMARY_CONTACT",
+        "description": "Connects an Account to its primary Contact."
+      },
+      {
+        "name": "ACCOUNT_DEAL",
+        "description": "Connects an Account to a Deal registered under it."
+      },
+      {
+        "name": "DEAL_OWNER",
+        "description": "Connects a Deal to the User responsible for it."
+      },
+      {
+        "name": "DEAL_PRODUCT",
+        "description": "Connects a Deal to the Product being sold or renewed."
+      },
+      {
+        "name": "TICKET_ACCOUNT",
+        "description": "Connects a Ticket to the Account it belongs to."
+      },
+      {
+        "name": "TICKET_OWNER",
+        "description": "Connects a Ticket to the User assigned to resolve it."
+      },
+      {
+        "name": "NEXT_ACTIVITY",
+        "description": "Connects a Deal to its next Activity."
+      }
+    ]
+  }
+}

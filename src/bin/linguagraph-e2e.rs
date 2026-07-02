@@ -29,6 +29,10 @@ struct Args {
     #[arg(long)]
     questions: Option<PathBuf>,
 
+    /// Run only the question with this id.
+    #[arg(long = "question-id", alias = "case-id")]
+    question_id: Option<String>,
+
     /// Write a machine-readable JSON report.
     #[arg(long)]
     report: Option<PathBuf>,
@@ -64,6 +68,7 @@ async fn main() -> anyhow::Result<()> {
         graph_path: args.graph,
         ontology_path: args.ontology,
         questions_path: args.questions,
+        case_id: args.question_id,
         report_path: args.report,
         prefix: args.prefix,
         cleanup_after: args.cleanup_after.then_some(true),

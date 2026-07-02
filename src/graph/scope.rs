@@ -34,8 +34,19 @@ use strum::VariantNames;
 /// attributes — the single source for both [`cypher_label`](Self::cypher_label)
 /// and its inverse, with `serde` keeping the lowercase JSON form.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
-    strum::EnumString, strum::IntoStaticStr, strum::VariantNames,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "lowercase")]
 pub enum Scope {

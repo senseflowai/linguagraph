@@ -146,7 +146,11 @@ pub(super) fn deduplicate_in_batch(
             });
         }
         // classify expects hits sorted by score descending.
-        hits.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        hits.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         let info = CandidateInfo {
             canonical_text: &cand_text,
@@ -170,11 +174,15 @@ pub(super) fn deduplicate_in_batch(
                     top_score,
                     "in-batch dedup: collapsing duplicate onto representative",
                 );
-                let dup_entity = graph.entities_mut().get_mut(dup_entity_index).ok_or_else(|| {
-                    IngestError::SoftMerge(format!(
-                        "in-batch dedup: duplicate idx {dup_entity_index} out of bounds"
-                    ))
-                })?;
+                let dup_entity =
+                    graph
+                        .entities_mut()
+                        .get_mut(dup_entity_index)
+                        .ok_or_else(|| {
+                            IngestError::SoftMerge(format!(
+                                "in-batch dedup: duplicate idx {dup_entity_index} out of bounds"
+                            ))
+                        })?;
                 if let Some(prop) = dup_entity.properties.get_mut(field) {
                     prop.value = Value::String(canonical);
                     outcome.collapsed += 1;

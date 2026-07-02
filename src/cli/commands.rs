@@ -476,7 +476,11 @@ pub async fn run(cli: Cli) -> Result<()> {
                 &cli.config,
                 text,
                 top_k,
-                if no_threshold { None } else { Some(score_threshold) },
+                if no_threshold {
+                    None
+                } else {
+                    Some(score_threshold)
+                },
                 include_neighbors,
                 !no_catalog,
                 catalog_threshold,
@@ -634,7 +638,6 @@ async fn cmd_cypher(
                         _ => None,
                     })
                     .collect();
-                println!("{:?}", emb);
             }
             _ => {}
         }
@@ -1176,7 +1179,11 @@ async fn cmd_entity_type_search(
         include_neighbors,
         include_catalog_signal,
         catalog_threshold,
-        fields: if fields.is_empty() { None } else { Some(fields) },
+        fields: if fields.is_empty() {
+            None
+        } else {
+            Some(fields)
+        },
         collections: None,
     };
     let result = pipeline.run_entity_type_search(query).await?;
@@ -1324,8 +1331,7 @@ async fn cmd_generate_mapping(
         },
     };
 
-    let mapping =
-        generate_mapping(&value, &ontology, schema.as_ref(), llm.as_ref(), &opts).await?;
+    let mapping = generate_mapping(&value, &ontology, schema.as_ref(), llm.as_ref(), &opts).await?;
 
     let mut mapping = if interactive {
         refine_mapping_interactively(mapping, &value, &ontology)?
@@ -1342,8 +1348,7 @@ async fn cmd_generate_mapping(
             overwrite_existing: describe_overwrite,
             ..DescribeOptions::default()
         };
-        let n =
-            describe_properties(&mut mapping, &ontology, &value, llm.as_ref(), &opts).await?;
+        let n = describe_properties(&mut mapping, &ontology, &value, llm.as_ref(), &opts).await?;
         tracing::info!(target: "linguagraph::cli", described = n, "wrote property descriptions");
     }
 
@@ -1469,7 +1474,9 @@ fn refine_mapping_interactively(
     data: &serde_json::Value,
     ontology: &DomainOntology,
 ) -> Result<Mapping> {
-    Ok(crate::mapgen::refine_interactively(mapping, data, ontology)?)
+    Ok(crate::mapgen::refine_interactively(
+        mapping, data, ontology,
+    )?)
 }
 
 #[cfg(not(feature = "interactive"))]

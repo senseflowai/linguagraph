@@ -241,10 +241,7 @@ mod tests {
         assert_eq!(hits[0].id, 7);
         assert!((hits[0].score - 0.95).abs() < 1e-9);
         assert_eq!(hits[0].canonical, "Microsoft");
-        assert_eq!(
-            hits[0].props.get("country"),
-            Some(&serde_json::json!("US"))
-        );
+        assert_eq!(hits[0].props.get("country"), Some(&serde_json::json!("US")));
         assert_eq!(hits[1].id, 9);
     }
 

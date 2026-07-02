@@ -7,7 +7,15 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, strum::Display,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    strum::Display,
     strum::IntoStaticStr,
 )]
 #[serde(rename_all = "snake_case")]

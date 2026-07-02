@@ -16,8 +16,16 @@ use crate::types::BuiltinType;
 /// Variant names are the strings verbatim, so `strum` derives `as_str`
 /// / `Display` with no `match` to maintain.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
-    strum::Display, strum::IntoStaticStr,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    strum::Display,
+    strum::IntoStaticStr,
 )]
 pub enum InferredType {
     /// Used for the entity's primary key — surfaced as a hint, not as

@@ -156,8 +156,7 @@ async fn resolver_parses_memgraph_style_json_wrapped_cells() {
     // and hits arrive as `Json(Array(...))`.
     let client = Arc::new(MockClient::new());
     let mut row = Row::default();
-    row.fields
-        .insert("idx".into(), DbValue::Json(json!(0)));
+    row.fields.insert("idx".into(), DbValue::Json(json!(0)));
     row.fields.insert(
         "hits".into(),
         hits_cell(json!([{
@@ -312,8 +311,14 @@ async fn in_batch_dedup_collapses_above_threshold() {
         .iter()
         .map(|e| &e.properties[CANONICAL_FIELD].value)
         .collect();
-    assert_eq!(canonical_values[0], &json!("type: LegalConcept\nname: Microsoft"));
-    assert_eq!(canonical_values[1], &json!("type: LegalConcept\nname: Microsoft"));
+    assert_eq!(
+        canonical_values[0],
+        &json!("type: LegalConcept\nname: Microsoft")
+    );
+    assert_eq!(
+        canonical_values[1],
+        &json!("type: LegalConcept\nname: Microsoft")
+    );
     let captured = client.captured.lock().unwrap();
     assert_eq!(captured.len(), 1);
     let rows = captured[0]

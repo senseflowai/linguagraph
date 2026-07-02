@@ -53,10 +53,22 @@ pub struct ReviewHit {
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum GateReason {
-    BelowAutoMergeThreshold { top: f64, required: f64 },
-    InsufficientMargin { margin: f64, required: f64 },
-    InsufficientLexical { lexical: f64, required: f64 },
-    TooManyCloseCandidates { count: usize, allowed: usize },
+    BelowAutoMergeThreshold {
+        top: f64,
+        required: f64,
+    },
+    InsufficientMargin {
+        margin: f64,
+        required: f64,
+    },
+    InsufficientLexical {
+        lexical: f64,
+        required: f64,
+    },
+    TooManyCloseCandidates {
+        count: usize,
+        allowed: usize,
+    },
     HardConflict {
         property: String,
         incoming: String,
@@ -72,11 +84,7 @@ pub(super) struct CandidateInfo<'a> {
 
 /// Classify a single candidate. `hits` must already be sorted by score
 /// descending (the Cypher does this).
-pub(super) fn classify(
-    cand: &CandidateInfo<'_>,
-    hits: &[Hit],
-    cfg: &SoftMergeConfig,
-) -> Decision {
+pub(super) fn classify(cand: &CandidateInfo<'_>, hits: &[Hit], cfg: &SoftMergeConfig) -> Decision {
     // Gate 0: no candidate at all.
     if hits.is_empty() {
         return Decision::NoMerge;
@@ -191,7 +199,9 @@ fn detect_hard_conflict(
     cfg: &SoftMergeConfig,
 ) -> Option<GateReason> {
     for key in &cfg.conflict_properties {
-        let inc = incoming.get(key).and_then(|p| json_to_compare_string(&p.value));
+        let inc = incoming
+            .get(key)
+            .and_then(|p| json_to_compare_string(&p.value));
         let hit = candidate.get(key).and_then(json_to_compare_string);
         if let (Some(a), Some(b)) = (inc, hit) {
             if !a.is_empty() && !b.is_empty() && a != b {
@@ -319,10 +329,9 @@ mod tests {
         let hits = vec![hit(0.90, "Microsoft")];
         match classify(&cand, &hits, &strict_cfg()) {
             Decision::NeedsReview { rejected_by, .. } => {
-                assert!(rejected_by.iter().any(|r| matches!(
-                    r,
-                    GateReason::BelowAutoMergeThreshold { .. }
-                )));
+                assert!(rejected_by
+                    .iter()
+                    .any(|r| matches!(r, GateReason::BelowAutoMergeThreshold { .. })));
             }
             other => panic!("expected NeedsReview, got {other:?}"),
         }
@@ -393,9 +402,9 @@ mod tests {
             json!({"email": "b@example.com"}),
         )];
         match classify(&cand, &hits, &strict_cfg()) {
-            Decision::NeedsReview { rejected_by, .. } => assert!(rejected_by
-                .iter()
-                .any(|r| matches!(r, GateReason::HardConflict { property, .. } if property == "email"))),
+            Decision::NeedsReview { rejected_by, .. } => assert!(rejected_by.iter().any(
+                |r| matches!(r, GateReason::HardConflict { property, .. } if property == "email")
+            )),
             other => panic!("expected NeedsReview, got {other:?}"),
         }
     }

@@ -253,8 +253,13 @@ mod tests {
             ],
             relation_types: vec![],
         };
-        let (system, _) =
-            build_mapping_prompt(&data, &summary, &onto, None, &MapGenPromptOptions::default());
+        let (system, _) = build_mapping_prompt(
+            &data,
+            &summary,
+            &onto,
+            None,
+            &MapGenPromptOptions::default(),
+        );
         // Strengthened FK section + entity descriptions present.
         assert!(system.contains("## Foreign keys (REQUIRED)"));
         assert!(system.contains("* `Camera` — A video camera."));

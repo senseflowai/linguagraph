@@ -1,0 +1,136 @@
+{
+  "erp_domain": {
+    "entity_types": [
+      {
+        "name": "Customer",
+        "description": "Покупающая компания в ERP-процессе продаж и расчётов.",
+        "properties": [
+          { "name": "id", "property_type": "keyword", "required": true, "description": "Стабильный идентификатор клиента для точного сопоставления." },
+          { "name": "name", "property_type": "text", "required": true, "description": "Читаемое имя клиента." },
+          { "name": "description", "property_type": "text", "required": false, "description": "Свободное описание операционного контекста и потребностей клиента, например складская инфраструктура, закупки или сервис." },
+          { "name": "region", "property_type": "keyword", "required": false, "description": "Коммерческий регион, например СНГ." },
+          { "name": "segment", "property_type": "keyword", "required": false, "description": "Сегмент продаж, например корпоративный или средний." },
+          { "name": "status", "property_type": "keyword", "required": false, "description": "Статус жизненного цикла клиента, например активный или приостановлен." }
+        ]
+      },
+      {
+        "name": "Employee",
+        "description": "Внутренний пользователь ERP, отвечающий за продажи или закупки.",
+        "properties": [
+          { "name": "id", "property_type": "keyword", "required": true, "description": "Стабильный идентификатор сотрудника для точного сопоставления." },
+          { "name": "name", "property_type": "text", "required": true, "description": "Отображаемое имя сотрудника." },
+          { "name": "role", "property_type": "keyword", "required": false, "description": "Должность или функция." },
+          { "name": "team", "property_type": "keyword", "required": false, "description": "Внутренняя команда или подразделение." }
+        ]
+      },
+      {
+        "name": "Product",
+        "description": "Продукт или услуга, продаваемая или закупаемая через ERP-систему.",
+        "properties": [
+          { "name": "id", "property_type": "keyword", "required": true, "description": "Стабильный идентификатор продукта для точного сопоставления." },
+          { "name": "name", "property_type": "text", "required": true, "description": "Название продукта или услуги." },
+          { "name": "category", "property_type": "keyword", "required": false, "description": "Семейство или категория продукта." },
+          { "name": "description", "property_type": "text", "required": false, "description": "Свободное описание ценности продукта." }
+        ]
+      },
+      {
+        "name": "Warehouse",
+        "description": "Физическое место хранения или комплектации заказов.",
+        "properties": [
+          { "name": "id", "property_type": "keyword", "required": true, "description": "Стабильный идентификатор склада для точного сопоставления." },
+          { "name": "name", "property_type": "text", "required": true, "description": "Название склада." },
+          { "name": "city", "property_type": "keyword", "required": false, "description": "Город, где расположен склад." },
+          { "name": "description", "property_type": "text", "required": false, "description": "Свободное описание роли склада и нагрузки." }
+        ]
+      },
+      {
+        "name": "Supplier",
+        "description": "Поставщик материалов или запасных частей для ERP.",
+        "properties": [
+          { "name": "id", "property_type": "keyword", "required": true, "description": "Стабильный идентификатор поставщика для точного сопоставления." },
+          { "name": "name", "property_type": "text", "required": true, "description": "Название поставщика." },
+          { "name": "category", "property_type": "keyword", "required": false, "description": "Категория поставщика, например упаковка или запасные части." },
+          { "name": "description", "property_type": "text", "required": false, "description": "Свободное описание того, что поставляет компания." }
+        ]
+      },
+      {
+        "name": "SalesOrder",
+        "description": "Заказ на продажу, созданный в процессе продаж и расчётов.",
+        "properties": [
+          { "name": "id", "property_type": "keyword", "required": true, "description": "Стабильный идентификатор заказа на продажу для точного сопоставления." },
+          { "name": "name", "property_type": "text", "required": true, "description": "Название заказа на продажу." },
+          { "name": "status", "property_type": "keyword", "required": false, "description": "Текущий статус заказа. Допустимы только строго заданные значения: `открыт` означает заказ уже создан и находится в активной обработке, `ожидает` означает заказ приостановлен и ждёт следующего действия или согласования, `закрыт` означает заказ завершён. Для фильтраций используй только эти значения, не придумывай новые формулировки." },
+          { "name": "stage", "property_type": "keyword", "required": false, "description": "Стадия воронки, например предложение или переговоры." },
+          { "name": "description", "property_type": "text", "required": false, "description": "Свободное описание контекста заказа." }
+        ]
+      },
+      {
+        "name": "SalesOrderLine",
+        "description": "Позиция, прикреплённая к заказу на продажу.",
+        "properties": [
+          { "name": "id", "property_type": "keyword", "required": true, "description": "Стабильный идентификатор позиции для точного сопоставления." },
+          { "name": "line_name", "property_type": "text", "required": true, "description": "Читаемое название позиции." },
+          { "name": "quantity", "property_type": "int", "required": false, "description": "Заказанное количество." },
+          { "name": "description", "property_type": "text", "required": false, "description": "Свободное описание содержимого позиции." }
+        ]
+      },
+      {
+        "name": "Invoice",
+        "description": "Платёжный документ, выпущенный по заказу на продажу.",
+        "properties": [
+          { "name": "id", "property_type": "keyword", "required": true, "description": "Стабильный идентификатор инвойса для точного сопоставления." },
+          { "name": "invoice_number", "property_type": "keyword", "required": true, "description": "Внешний номер инвойса, видимый клиенту и финансам." },
+          { "name": "invoice_date", "property_type": "date", "required": false, "description": "Дата выставления инвойса в ISO-8601 формате." },
+          { "name": "subject", "property_type": "text", "required": true, "description": "Тема или заголовок инвойса." },
+          { "name": "status", "property_type": "keyword", "required": false, "description": "Текущий статус инвойса, например открыт, оплачен или просрочен." },
+          { "name": "description", "property_type": "text", "required": false, "description": "Свободное описание контекста инвойса." }
+        ]
+      },
+      {
+        "name": "Payment",
+        "description": "Платёж, зарегистрированный по инвойсу.",
+        "properties": [
+          { "name": "id", "property_type": "keyword", "required": true, "description": "Стабильный идентификатор платежа для точного сопоставления." },
+          { "name": "reference", "property_type": "keyword", "required": true, "description": "Внешний номер ссылки на платёж." },
+          { "name": "status", "property_type": "keyword", "required": false, "description": "Текущий статус платежа, например получен или ожидает." },
+          { "name": "method", "property_type": "keyword", "required": false, "description": "Способ оплаты, например банковский перевод или карта." },
+          { "name": "description", "property_type": "text", "required": false, "description": "Свободное описание контекста платежа." }
+        ]
+      },
+      {
+        "name": "PurchaseOrder",
+        "description": "Закупочный заказ, размещённый у поставщика.",
+        "properties": [
+          { "name": "id", "property_type": "keyword", "required": true, "description": "Стабильный идентификатор закупочного заказа для точного сопоставления." },
+          { "name": "number", "property_type": "keyword", "required": true, "description": "Внешний номер закупочного заказа." },
+          { "name": "status", "property_type": "keyword", "required": false, "description": "Текущий статус закупочного заказа, например открыт или одобрен." },
+          { "name": "description", "property_type": "text", "required": false, "description": "Свободное описание потребности в закупке." }
+        ]
+      },
+      {
+        "name": "Shipment",
+        "description": "Физическая отгрузка, связанная с заказом на продажу.",
+        "properties": [
+          { "name": "id", "property_type": "keyword", "required": true, "description": "Внутренний технический идентификатор отгрузки для точного сопоставления." },
+          { "name": "reference", "property_type": "keyword", "required": true, "description": "Внешний номер отгрузки, который показывают пользователю и по которому обычно ищут запись." },
+          { "name": "status", "property_type": "keyword", "required": false, "description": "Текущий статус отгрузки, например в пути или доставлено." },
+          { "name": "carrier", "property_type": "keyword", "required": false, "description": "Название перевозчика или службы доставки." },
+          { "name": "description", "property_type": "text", "required": false, "description": "Свободное описание маршрута или назначения отгрузки." }
+        ]
+      }
+    ],
+    "relationships": [
+      { "name": "CUSTOMER_MANAGER", "description": "Связывает клиента с ответственным сотрудником." },
+      { "name": "CUSTOMER_ORDER", "description": "Связывает клиента с заказом на продажу." },
+      { "name": "ORDER_OWNER", "description": "Связывает заказ на продажу с внутренним ответственным сотрудником." },
+      { "name": "ORDER_LINE", "description": "Связывает заказ на продажу с одной из его позиций." },
+      { "name": "LINE_PRODUCT", "description": "Связывает позицию заказа с продаваемым продуктом." },
+      { "name": "ORDER_INVOICE", "description": "Связывает заказ на продажу с созданным инвойсом." },
+      { "name": "INVOICE_PAYMENT", "description": "Связывает инвойс с его платёжной записью." },
+      { "name": "PURCHASE_ORDER_SUPPLIER", "description": "Связывает закупочный заказ с поставщиком, у которого покупают." },
+      { "name": "PURCHASE_ORDER_WAREHOUSE", "description": "Связывает закупочный заказ с целевым складом." },
+      { "name": "ORDER_SHIPMENT", "description": "Связывает заказ на продажу с соответствующей отгрузкой." },
+      { "name": "SHIPMENT_WAREHOUSE", "description": "Связывает отгрузку со складом, через который она проходит." }
+    ]
+  }
+}

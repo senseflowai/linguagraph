@@ -13,7 +13,7 @@
 //! * **Semantic** (`search` / `search_reranked` / `hybrid_search`, and
 //!   the resolver-synthesised `entity_search`) — a single per-entity
 //!   hybrid retrieval (dense ⊕ BM25, RRF-fused) followed by a
-//!   cross-encoder rerank in Linguagraph, always against the
+//!   cross-encoder rerank inside qlink, always against the
 //!   field-agnostic `_canonical` collection.
 //!
 //! Responsibilities:
@@ -28,11 +28,9 @@
 //!    document (`type: {Label}\n{field}: {value}`), embed it once, and
 //!    stash the vector in the predicate's `params` so emission stays
 //!    pure.
-//! 3. **Emit**: render `libqlink.search_hybrid` over `_canonical`
-//!    (recall only, no rerank in Memgraph), or — when the pipeline
-//!    attached a reranker and reranked the candidates in-process,
-//!    leaving a `reranked_hits` param — `UNWIND` those precomputed
-//!    `{id, score}` pairs instead.
+//! 3. **Emit**: render `libqlink.search_hybrid_reranked` over
+//!    `_canonical`, so qlink performs recall and rerank in one call
+//!    before the result ever reaches the Cypher builder.
 //!
 //! The handler is configured by a `[types.SemanticText]` block:
 //!
@@ -51,12 +49,11 @@
 //!   originating Cypher node label as a Qdrant payload tag. That lets a
 //!   single embedding collection host multiple node labels safely while
 //!   still being addressable by label at query time.
-//! * **Search** — `libqlink.search_hybrid` does a label-filtered
-//!   hybrid pre-filter (dense + lexical), looks up each surviving id as
-//!   a Memgraph node, and returns the candidate set for a local
-//!   cross-encoder rerank in Linguagraph. We hand it the raw
+//! * **Search** — `libqlink.search_hybrid_reranked` does a label-filtered
+//!   hybrid pre-filter (dense + lexical), reranks inside qlink, and
+//!   returns only the surviving `{id, score}` pairs. We hand it the raw
 //!   natural-language query (the DSL filter `value`) and the embedded
-//!   vector — qlink only handles recall.
+//!   vector.
 
 use std::collections::BTreeMap;
 
@@ -298,10 +295,7 @@ impl TypeHandler for SemanticTextHandler {
         let mut params = BTreeMap::new();
         params.insert("embedding".to_string(), lit_vec);
         params.insert("collection".to_string(), Literal::String(collection));
-        params.insert(
-            "query_str".to_string(),
-            Literal::String(query_for_rerank),
-        );
+        params.insert("query_str".to_string(), Literal::String(query_for_rerank));
         params.insert("candidate_k".to_string(), Literal::Int(DEFAULT_CANDIDATE_K));
         params.insert("label".to_string(), Literal::String(label.to_string()));
         params.insert(
@@ -344,68 +338,48 @@ impl TypeHandler for SemanticTextHandler {
                 let n = ctx.fresh_id();
                 let qid = format!("{alias}__qid_{n}");
                 let score = format!("{alias}__score_{n}");
-                let hit_text = format!("{alias}__text_{n}");
 
-                // Two ways to bind `qid` / `score`:
-                //
-                // * `reranked_hits` present → the pipeline already
-                //   reranked the candidates in-process (a reranker is
-                //   attached via `Pipeline::with_reranker`). We just
-                //   `UNWIND` the precomputed, rerank-ordered `{id, score}`
-                //   list. `WITH *` keeps any earlier prelude's variables
-                //   in scope so multiple semantic predicates compose the
-                //   same way the qlink-side `YIELD`s do. An empty list
-                //   unwinds to zero rows — i.e. nothing survived the
-                //   threshold.
-                // * otherwise → fall back to qlink recall-only search
-                //   inside Memgraph via `search_hybrid`.
-                //
-                // Either way the downstream `WHERE` / `ORDER BY` below are
-                // identical, so only the prelude differs.
-                if let Some(hits) = pred.params.get("reranked_hits").cloned() {
-                    let hits_p = ctx.bind(hits);
-                    let hit = format!("{alias}__hit_{n}");
-                    ctx.push_pre_match(format!(
-                        "UNWIND {hits_p} AS {hit} \
-                         WITH *, {hit}.id AS {qid}, {hit}.score AS {score}"
-                    ));
-                } else {
-                    let coll = pred
-                        .params
-                        .get("collection")
-                        .cloned()
-                        .ok_or_else(|| TypeError::Handler("missing 'collection' param".into()))?;
-                    let emb = pred
-                        .params
-                        .get("embedding")
-                        .cloned()
-                        .ok_or_else(|| TypeError::Handler("missing 'embedding' param".into()))?;
-                    let query_str = pred
-                        .params
-                        .get("query_str")
-                        .cloned()
-                        .ok_or_else(|| TypeError::Handler("missing 'query_str' param".into()))?;
-                    let label = pred
-                        .params
-                        .get("label")
-                        .cloned()
-                        .ok_or_else(|| TypeError::Handler("missing 'label' param".into()))?;
-                    let candidate_k = pred
-                        .params
-                        .get("candidate_k")
-                        .cloned()
-                        .unwrap_or(Literal::Int(DEFAULT_CANDIDATE_K));
+                let coll = pred
+                    .params
+                    .get("collection")
+                    .cloned()
+                    .ok_or_else(|| TypeError::Handler("missing 'collection' param".into()))?;
+                let emb = pred
+                    .params
+                    .get("embedding")
+                    .cloned()
+                    .ok_or_else(|| TypeError::Handler("missing 'embedding' param".into()))?;
+                let query_str = pred
+                    .params
+                    .get("query_str")
+                    .cloned()
+                    .ok_or_else(|| TypeError::Handler("missing 'query_str' param".into()))?;
+                let label = pred
+                    .params
+                    .get("label")
+                    .cloned()
+                    .ok_or_else(|| TypeError::Handler("missing 'label' param".into()))?;
+                let reranker_threshold = pred
+                    .params
+                    .get("reranker_threshold")
+                    .cloned()
+                    .unwrap_or(Literal::Float(DEFAULT_RERANKER_THRESHOLD));
+                let candidate_k = pred
+                    .params
+                    .get("candidate_k")
+                    .cloned()
+                    .unwrap_or(Literal::Int(DEFAULT_CANDIDATE_K));
 
-                    let coll_p = ctx.bind(coll);
-                    let q_p = ctx.bind(query_str);
-                    let emb_p = ctx.bind(emb);
-                    let label_p = ctx.bind(label);
-                    let k_p = ctx.bind(candidate_k);
-                    ctx.push_pre_match(format!(
-                        "CALL libqlink.search_hybrid({coll_p}, {q_p}, {emb_p}, {label_p}, {k_p}) \
-                         YIELD id AS {qid}, text AS {hit_text}"
-                    ));
-                }
+                let coll_p = ctx.bind(coll);
+                let q_p = ctx.bind(query_str);
+                let emb_p = ctx.bind(emb);
+                let label_p = ctx.bind(label);
+                let th_p = ctx.bind(reranker_threshold);
+                let k_p = ctx.bind(candidate_k);
+                ctx.push_pre_match(format!(
+                    "CALL libqlink.search_hybrid_reranked({coll_p}, {q_p}, {emb_p}, {label_p}, {th_p}, {k_p}) \
+                     YIELD id AS {qid}, score AS {score}"
+                ));
 
                 let mut where_expr = format!("id({alias}) = {qid}");
                 if pred.op == TypedOp::Eq {
@@ -415,11 +389,9 @@ impl TypeHandler for SemanticTextHandler {
                     }
                 }
                 ctx.set_where(where_expr);
-                if pred.params.contains_key("reranked_hits") {
-                    ctx.contribution_mut()
-                        .order_by
-                        .push((score, OrderDir::Desc));
-                }
+                ctx.contribution_mut()
+                    .order_by
+                    .push((score, OrderDir::Desc));
                 Ok(())
             }
 
@@ -559,22 +531,20 @@ pub(crate) fn with_prefix_index(prefix_index: Option<&str>, base: &str) -> Strin
     }
 }
 
-/// Build the recall-only candidate query for the in-process rerank path.
+/// Build the hybrid recall + rerank query for qlink.
 ///
-/// Renders `CALL libqlink.search_hybrid(...) YIELD id, text RETURN id,
-/// text` — the recall half of `search_hybrid` with no model in
-/// Memgraph. The pipeline runs this, reranks the `(id, text)` rows with
-/// its own cross-encoder, and folds the survivors back into the main
-/// query as the `reranked_hits` param (see [`SemanticTextHandler::emit`]).
+/// Renders `CALL libqlink.search_hybrid_reranked(...) YIELD id, score`
+/// — the full hybrid retrieval and rerank path inside qlink.
 ///
-/// The four value params are the same `Literal`s `lower` stashed in the
+/// The five value params are the same `Literal`s `lower` stashed in the
 /// predicate (`collection`, `query_str`, `embedding`, `label`,
-/// `candidate_k`), so no re-embedding happens.
-pub fn build_hybrid_candidates_query(
+/// `reranker_threshold`, `candidate_k`), so no re-embedding happens.
+pub fn build_hybrid_reranked_query(
     collection: Literal,
     query_str: Literal,
     embedding: Literal,
     label: Literal,
+    reranker_threshold: Literal,
     candidate_k: Literal,
 ) -> crate::builder::CypherQuery {
     let mut params: BTreeMap<String, Literal> = BTreeMap::new();
@@ -582,10 +552,11 @@ pub fn build_hybrid_candidates_query(
     params.insert("q".to_string(), query_str);
     params.insert("emb".to_string(), embedding);
     params.insert("label".to_string(), label);
+    params.insert("th".to_string(), reranker_threshold);
     params.insert("k".to_string(), candidate_k);
     crate::builder::CypherQuery::new(
-        "CALL libqlink.search_hybrid($coll, $q, $emb, $label, $k) \
-         YIELD id, text RETURN id, text"
+        "CALL libqlink.search_hybrid_reranked($coll, $q, $emb, $label, $th, $k) \
+         YIELD id, score RETURN id, score"
             .to_string(),
         params,
     )
@@ -784,7 +755,14 @@ mod tests {
         let mut q = SideEffectQueue::new();
         let key = Literal::String("type: Company\nname: Hello".into());
         let raw = serde_json::json!("type: Company\nname: Hello");
-        let mut ctx = IC::new("Company", CANONICAL_FIELD, &key, CANONICAL_FIELD, &raw, &mut q);
+        let mut ctx = IC::new(
+            "Company",
+            CANONICAL_FIELD,
+            &key,
+            CANONICAL_FIELD,
+            &raw,
+            &mut q,
+        );
         h.on_ingest(&mut ctx).unwrap();
         let stored = ctx.finish();
         assert_eq!(
@@ -818,7 +796,11 @@ mod tests {
         h.on_ingest(&mut ctx).unwrap();
         let stored = ctx.finish();
         assert_eq!(stored, Some(Some(Literal::String("Hello world".into()))));
-        assert_eq!(q.len(), 0, "non-canonical fields must not queue an embedding");
+        assert_eq!(
+            q.len(),
+            0,
+            "non-canonical fields must not queue an embedding"
+        );
     }
 
     #[test]
@@ -847,8 +829,15 @@ mod tests {
         let mut q = SideEffectQueue::new();
         let key = Literal::String("type: Company".into());
         let raw = serde_json::json!("type: Company");
-        let mut ctx = IC::new("Company", CANONICAL_FIELD, &key, CANONICAL_FIELD, &raw, &mut q)
-            .with_prefix_index(Some("Tenant1"));
+        let mut ctx = IC::new(
+            "Company",
+            CANONICAL_FIELD,
+            &key,
+            CANONICAL_FIELD,
+            &raw,
+            &mut q,
+        )
+        .with_prefix_index(Some("Tenant1"));
         h.on_ingest(&mut ctx).unwrap();
         ctx.finish();
         match &q.into_vec()[0] {
@@ -997,11 +986,12 @@ mod tests {
         h.emit(&mut emit, &pred).unwrap();
 
         let pre = contrib.pre_match.join("\n");
-        assert!(pre.contains("CALL libqlink.search_hybrid("));
-        assert!(pre.contains("YIELD id AS c__qid_0, text AS c__text_0"));
+        assert!(pre.contains("CALL libqlink.search_hybrid_reranked("));
+        assert!(pre.contains("YIELD id AS c__qid_0, score AS c__score_0"));
         let where_inline = contrib.where_inline.as_deref().unwrap();
         assert!(where_inline.starts_with("id(c) = c__qid_0 AND c.name = $p"));
-        assert!(contrib.order_by.is_empty());
+        assert_eq!(contrib.order_by.len(), 1);
+        assert_eq!(contrib.order_by[0].0, "c__score_0");
     }
 
     #[test]
@@ -1022,10 +1012,11 @@ mod tests {
         h.emit(&mut emit, &pred).unwrap();
 
         let pre = contrib.pre_match.join("\n");
-        assert!(pre.contains("CALL libqlink.search_hybrid("));
-        assert!(pre.contains("YIELD id AS c__qid_0, text AS c__text_0"));
+        assert!(pre.contains("CALL libqlink.search_hybrid_reranked("));
+        assert!(pre.contains("YIELD id AS c__qid_0, score AS c__score_0"));
         assert_eq!(contrib.where_inline.as_deref(), Some("id(c) = c__qid_0"));
-        assert!(contrib.order_by.is_empty());
+        assert_eq!(contrib.order_by.len(), 1);
+        assert_eq!(contrib.order_by[0].0, "c__score_0");
     }
 
     #[test]
@@ -1045,15 +1036,14 @@ mod tests {
         let mut emit = EmitCtx::new(&mut contrib, &mut binder);
         h.emit(&mut emit, &pred).unwrap();
         let pre = contrib.pre_match.join("\n");
-        assert!(pre.contains("CALL libqlink.search_hybrid("));
+        assert!(pre.contains("CALL libqlink.search_hybrid_reranked("));
         assert_eq!(contrib.where_inline.as_deref(), Some("id(c) = c__qid_0"));
-        assert!(contrib.order_by.is_empty());
+        assert_eq!(contrib.order_by.len(), 1);
+        assert_eq!(contrib.order_by[0].0, "c__score_0");
     }
 
     #[test]
-    fn emit_search_calls_hybrid_search_only() {
-        // The handler now emits recall-only search; reranking happens in
-        // the pipeline when a cross-encoder is configured.
+    fn emit_search_calls_hybrid_reranked_search() {
         let h = handler();
         let field = pref("c", "name");
         let value = serde_json::json!("apple");
@@ -1070,61 +1060,11 @@ mod tests {
         h.emit(&mut emit, &pred).unwrap();
 
         let pre = contrib.pre_match.join("\n");
-        assert!(pre.contains("CALL libqlink.search_hybrid("));
-        assert!(pre.contains("YIELD id AS c__qid_0, text AS c__text_0"));
-        assert_eq!(contrib.where_inline.as_deref(), Some("id(c) = c__qid_0"));
-        assert!(contrib.order_by.is_empty());
-    }
-
-    #[test]
-    fn emit_unwinds_precomputed_hits_instead_of_calling_qlink_reranker() {
-        // When the pipeline already reranked the candidates in-process
-        // (a reranker is attached), it stashes `reranked_hits` and emit
-        // UNWINDs them — no qlink rerank call — while binding the very
-        // same `qid` / `score` the downstream WHERE / ORDER BY expect.
-        let h = handler();
-        let field = pref("c", "name");
-        let value = serde_json::json!("apple");
-        let mut lower = lc(&field, TypedOp::Search, &value, "Company");
-        let mut pred = h.lower(&mut lower).unwrap();
-        // Simulate the pipeline pre-pass output.
-        let mut hit = BTreeMap::new();
-        hit.insert("id".to_string(), Literal::Int(7));
-        hit.insert("score".to_string(), Literal::Float(0.9));
-        pred.params.insert(
-            "reranked_hits".to_string(),
-            Literal::List(vec![Literal::Object(hit)]),
-        );
-
-        let mut contrib = CypherContribution::default();
-        let mut binder = CountingBinder {
-            next: 0,
-            next_var: 0,
-            params: Default::default(),
-        };
-        let mut emit = EmitCtx::new(&mut contrib, &mut binder);
-        h.emit(&mut emit, &pred).unwrap();
-
-        let pre = contrib.pre_match.join("\n");
-        assert!(pre.contains("UNWIND"), "expected an UNWIND prelude; got {pre}");
-        assert!(
-            pre.contains("AS c__qid_0") && pre.contains("AS c__score_0"),
-            "prelude must bind c__qid_0 / c__score_0; got {pre}"
-        );
-        assert!(
-            !pre.contains("search_hybrid_reranked"),
-            "must not call qlink's reranker when hits are precomputed; got {pre}"
-        );
-        // Downstream is identical to the qlink-side path.
+        assert!(pre.contains("CALL libqlink.search_hybrid_reranked("));
+        assert!(pre.contains("YIELD id AS c__qid_0, score AS c__score_0"));
         assert_eq!(contrib.where_inline.as_deref(), Some("id(c) = c__qid_0"));
         assert_eq!(contrib.order_by.len(), 1);
         assert_eq!(contrib.order_by[0].0, "c__score_0");
-        // The hits ride in a bound parameter, never inlined.
-        let bound_object_list = binder.params.values().any(|v| {
-            matches!(v, Literal::List(items)
-                if items.iter().all(|i| matches!(i, Literal::Object(_))) && !items.is_empty())
-        });
-        assert!(bound_object_list, "reranked_hits should be bound as a List of maps");
     }
 
     #[test]
@@ -1144,8 +1084,7 @@ mod tests {
 
     #[test]
     fn emit_search_reranked_threshold_is_bound_as_parameter() {
-        // The recall-only query stays on `search_hybrid`; rerank
-        // thresholds are handled by the pipeline, not qlink.
+        // Threshold is now forwarded to qlink's reranked procedure.
         let h = handler_with_thresholds(0.42, 0.17);
         let field = pref("c", "name");
         let value = serde_json::json!("apple");
@@ -1162,23 +1101,18 @@ mod tests {
         h.emit(&mut emit, &pred).unwrap();
 
         let pre = contrib.pre_match.join("\n");
-        assert!(pre.contains("libqlink.search_hybrid("));
-        assert!(!pre.contains("search_hybrid_reranked"));
-        assert!(
-            !binder
-                .params
-                .values()
-                .any(|v| matches!(v, Literal::Float(f) if (*f - 0.17).abs() < 1e-9)),
-            "reranker_threshold should not be bound in emit; binder params={:?}",
-            binder.params
-        );
+        assert!(pre.contains("libqlink.search_hybrid_reranked("));
+        assert!(binder
+            .params
+            .values()
+            .any(|v| matches!(v, Literal::Float(f) if (*f - 0.17).abs() < 1e-9)));
     }
 
     #[test]
     fn emit_hybrid_search_routes_to_canonical_hybrid() {
         // `hybrid_search` is now an alias for the unified semantic path:
-        // it compiles to recall-only `search_hybrid` over `_canonical`,
-        // with reranking handled by the pipeline when configured.
+        // it compiles to qlink-side `search_hybrid_reranked` over
+        // `_canonical`.
         let h = handler();
         let field = pref("c", "name");
         let value = serde_json::json!("apple");
@@ -1194,13 +1128,10 @@ mod tests {
         h.emit(&mut emit, &pred).unwrap();
 
         let pre = contrib.pre_match.join("\n");
-        assert!(pre.contains("CALL libqlink.search_hybrid("));
+        assert!(pre.contains("CALL libqlink.search_hybrid_reranked("));
         assert!(contrib.post_match.is_empty());
-        assert!(
-            !pre.contains("score_batch_node"),
-            "hybrid_search must no longer emit score_batch_node; got {pre}"
-        );
-        assert!(contrib.order_by.is_empty());
+        assert_eq!(contrib.order_by.len(), 1);
+        assert_eq!(contrib.order_by[0].0, "c__score_0");
     }
 
     #[test]
@@ -1252,6 +1183,7 @@ mod tests {
             &Literal::String("test___canonical".into())
         );
         assert!(pred.params.contains_key("candidate_k"));
+        assert!(pred.params.contains_key("reranker_threshold"));
         // The query string round-trips as `query_str` for the reranker.
         assert_eq!(
             pred.params.get("query_str").unwrap(),
@@ -1277,9 +1209,10 @@ mod tests {
         h.emit(&mut emit, &pred).unwrap();
 
         let pre = contrib.pre_match.join("\n");
-        assert!(pre.contains("CALL libqlink.search_hybrid("));
-        assert!(pre.contains("YIELD id AS p__qid_0, text AS p__text_0"));
+        assert!(pre.contains("CALL libqlink.search_hybrid_reranked("));
+        assert!(pre.contains("YIELD id AS p__qid_0, score AS p__score_0"));
         assert_eq!(contrib.where_inline.as_deref(), Some("id(p) = p__qid_0"));
-        assert!(contrib.order_by.is_empty());
+        assert_eq!(contrib.order_by.len(), 1);
+        assert_eq!(contrib.order_by[0].0, "p__score_0");
     }
 }

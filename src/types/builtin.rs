@@ -20,8 +20,19 @@ use super::TypeId;
 /// The built-in field-type ids known to every registry produced by
 /// [`super::handlers::register_core`]. See the [module docs](self).
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumString, IntoStaticStr, VariantNames,
-    EnumIter, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Display,
+    EnumString,
+    IntoStaticStr,
+    VariantNames,
+    EnumIter,
+    serde::Serialize,
+    serde::Deserialize,
 )]
 pub enum BuiltinType {
     /// Plain string — matched by Cypher with standard operators

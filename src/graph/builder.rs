@@ -2,7 +2,7 @@ use crate::graph::builtins::{
     is_builtin_entity, new_chunk, new_source, CHUNK_LABEL, MENTION_REL, PART_OF_REL, SOURCE_LABEL,
 };
 use crate::graph::canonical::build_canonical_text;
-use crate::graph::schema::{EntityGraph, PrimaryKey, PropertyType, RelationGraph};
+use crate::graph::schema::{EntityGraph, PropertyType, RelationGraph};
 use crate::graph::scope::Scope;
 use crate::graph::types::{EntityRef, GraphBuildError, RelationRef};
 use serde::Deserialize;
@@ -407,7 +407,11 @@ fn ensure_canonical_property(entity: EntityGraph) -> EntityGraph {
     let raw_props: HashMap<String, Value> = entity
         .properties
         .iter()
-        .filter(|(k, _)| k.as_str() != "id" && k.as_str() != CANONICAL_FIELD)
+        .filter(|(k, p)| {
+            k.as_str() != "id"
+                && k.as_str() != CANONICAL_FIELD
+                && p.property_type == PropertyType::Text
+        })
         .map(|(k, p)| (k.clone(), p.value.clone()))
         .collect();
     let canonical = build_canonical_text(&entity.r#type, &raw_props);
@@ -666,7 +670,8 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::graph::{EntityGraph, PrimaryKey};
+    use crate::graph::schema::PrimaryKey;
+    use crate::graph::EntityGraph;
     use std::collections::BTreeSet;
 
     #[test]
@@ -726,6 +731,7 @@ mod tests {
             .as_str()
             .unwrap();
         assert_eq!(alice_canonical, "type: Person\nname: Alice");
+        assert!(!alice_canonical.contains("42"));
         assert_eq!(graph.relation(knows).unwrap().r#type, "KNOWS");
         assert_eq!(graph.relation(knows).unwrap().from, alice);
         assert_eq!(graph.relation(knows).unwrap().to, bob);
@@ -943,23 +949,20 @@ mod tests {
         // `_canonical` and defaults the soft primary key to it.
         let graph = GraphBuilder::from_json(
             r#"{
-                "entities": [{"id": "elon", "type": "Person", "name": "Elon Musk", "role": "CEO"}],
+                "entities": [{"id": "elon", "type": "Person", "name": "Elon Musk", "age": 42}],
                 "relations": []
             }"#,
         )
         .unwrap();
 
         let entity = &graph.entities()[0];
-        assert_eq!(
-            entity.primary_key,
-            Some(PrimaryKey::Soft)
-        );
+        assert_eq!(entity.primary_key, Some(PrimaryKey::Soft));
         let canonical = &entity.properties[CANONICAL_FIELD];
         assert_eq!(canonical.property_type, PropertyType::Text);
         let text = canonical.value.as_str().expect("canonical is a string");
         assert!(text.starts_with("type: Person"));
         assert!(text.contains("name: Elon Musk"));
-        assert!(text.contains("role: CEO"));
+        assert!(!text.contains("age: 42"));
     }
 
     #[test]
@@ -1044,8 +1047,7 @@ mod tests {
     fn with_default_scope_skips_source_and_chunk_builtins() {
         // Source/Chunk are built-ins — caller is responsible for
         // their scoping. The default must not bleed onto them.
-        let mut builder =
-            GraphBuilder::with_source("doc").with_default_scope(Scope::Text);
+        let mut builder = GraphBuilder::with_source("doc").with_default_scope(Scope::Text);
         let source_ref = builder.source().unwrap();
         let chunk = builder.chunk("fragment").add().unwrap();
         let alice = builder
@@ -1083,11 +1085,7 @@ mod tests {
     #[test]
     fn chunk_builder_supports_explicit_scope() {
         let mut builder = GraphBuilder::with_source("doc");
-        let chunk = builder
-            .chunk("fragment")
-            .scope(Scope::Table)
-            .add()
-            .unwrap();
+        let chunk = builder.chunk("fragment").scope(Scope::Table).add().unwrap();
         let graph = builder.build();
 
         assert!(graph.entity(chunk).unwrap().has_scope(Scope::Table));

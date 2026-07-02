@@ -238,11 +238,8 @@ impl LlamaEmbedder {
             tokenizers.push(tokenizer);
         }
 
-        let tokenizers_batches = Self::split_into_batches(
-            tokenizers,
-            ctx.n_ctx() as usize,
-            Self::MAX_SEQS_PER_BATCH,
-        );
+        let tokenizers_batches =
+            Self::split_into_batches(tokenizers, ctx.n_ctx() as usize, Self::MAX_SEQS_PER_BATCH);
 
         let mut output: Vec<Vec<f32>> = Vec::with_capacity(texts.len());
 
@@ -305,7 +302,9 @@ impl LlamaEmbedder {
                     continue;
                 }
 
-                if !packed.is_empty() && packed_tokens + tokenizer.tokens.len() > ctx.n_ubatch() as usize {
+                if !packed.is_empty()
+                    && packed_tokens + tokenizer.tokens.len() > ctx.n_ubatch() as usize
+                {
                     flush_packed(&mut ctx, &mut packed, &mut output)?;
                     packed_tokens = 0;
                 }

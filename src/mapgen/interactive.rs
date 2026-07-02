@@ -44,14 +44,7 @@ pub fn select_collections(items: &[CollectionInfo]) -> Result<Vec<String>, MapGe
 }
 
 /// Field-type vocabulary offered when (re)typing a property.
-const FIELD_TYPES: &[&str] = &[
-    "Keyword",
-    "Text",
-    "Number",
-    "Boolean",
-    "DateTime",
-    "List",
-];
+const FIELD_TYPES: &[&str] = &["Keyword", "Text", "Number", "Boolean", "DateTime", "List"];
 
 fn ui_err(e: dialoguer::Error) -> MapGenError {
     MapGenError::Interactive(e.to_string())
@@ -175,7 +168,11 @@ pub fn refine_interactively(
             let missing: Vec<_> = es
                 .fields
                 .iter()
-                .filter(|f| !ent.properties.iter().any(|p| p.source_path == f.source_path))
+                .filter(|f| {
+                    !ent.properties
+                        .iter()
+                        .any(|p| p.source_path == f.source_path)
+                })
                 .collect();
             if !missing.is_empty()
                 && Confirm::new()
@@ -213,7 +210,10 @@ pub fn refine_interactively(
         let mut keep: Vec<RelationshipMapping> = Vec::new();
         for rel in std::mem::take(&mut mapping.relationships) {
             let ok = Confirm::new()
-                .with_prompt(format!("  keep `{}` ({} → {})?", rel.kind, rel.from, rel.to))
+                .with_prompt(format!(
+                    "  keep `{}` ({} → {})?",
+                    rel.kind, rel.from, rel.to
+                ))
                 .default(true)
                 .interact()
                 .map_err(ui_err)?;

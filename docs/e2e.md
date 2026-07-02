@@ -1,5 +1,8 @@
 # E2E Test-Kit
 
+For the higher-level product and architecture view, see
+[docs/e2e-whitepaper.md](e2e-whitepaper.md).
+
 The e2e runner exercises the production path:
 
 1. load a graph JSON fixture;
@@ -119,6 +122,10 @@ The ontology file is an `OntologyCatalog`:
       "question": "Какая камера установлена в месте Sales?",
       "validation": {
         "row_count": { "exact": 1 },
+        "dsl_expect": {
+          "start_label": "Place",
+          "required_traversal_labels": ["LOCATED_AT"]
+        },
         "contains": [
           { "column": "*", "mode": "contains", "value": "TargetAI - Face (RTSP)" }
         ],
@@ -132,13 +139,29 @@ The ontology file is an `OntologyCatalog`:
 }
 ```
 
+`rows` entries are subset matches:
+
+```json
+{
+  "validation": {
+    "rows": [
+      { "fields": { "name": "Eastline Logistics", "region": "EMEA" } }
+    ]
+  }
+}
+```
+
 Validation is intentionally layered:
 
 - `row_count`: deterministic cardinality check (`exact`, `min`, `max`);
+- `rows`: order-insensitive expected row subsets, useful when aliases are stable enough to
+  assert exact values but row order is not;
 - `columns`: require projected column names when aliases matter;
 - `contains`: require a value in a column, or in any column with `"column": "*"`;
 - `not_contains`: inverse of `contains`;
 - `numbers`: numeric comparison (`eq`, `neq`, `gt`, `gte`, `lt`, `lte`);
+- `dsl_expect`: structural checks on the generated DSL, matched against the parsed query
+  rather than raw text;
 - `answer_contains`: substring checks on the final LLM-synthesized answer;
 - `judge`: optional LLM-as-judge for freer answers, kept off by default.
 

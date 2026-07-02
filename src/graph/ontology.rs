@@ -56,7 +56,11 @@ pub enum OntologyPropertyType {
     #[strum(serialize = "Bool", serialize = "Boolean")]
     Bool,
     Date,
-    #[strum(serialize = "Datetime", serialize = "DateTime", serialize = "Timestamp")]
+    #[strum(
+        serialize = "Datetime",
+        serialize = "DateTime",
+        serialize = "Timestamp"
+    )]
     Datetime,
     List,
 }

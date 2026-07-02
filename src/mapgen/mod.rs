@@ -49,7 +49,7 @@ use thiserror::Error;
 
 use crate::graph::DomainOntology;
 use crate::llm::{LlmClient, LlmError};
-use crate::mapper::{self, Mapping, MapperError};
+use crate::mapper::{self, MapperError, Mapping};
 use crate::prompt::GraphSchema;
 
 /// Errors raised while generating a mapping.
@@ -157,7 +157,11 @@ pub async fn generate_mapping(
 }
 
 /// Parse, validate, whitelist-check, and verify a candidate mapping.
-fn finalize(cleaned: &str, ontology: &DomainOntology, data: &Value) -> Result<Mapping, MapGenError> {
+fn finalize(
+    cleaned: &str,
+    ontology: &DomainOntology,
+    data: &Value,
+) -> Result<Mapping, MapGenError> {
     let mut mapping = Mapping::from_str(cleaned).map_err(MapGenError::Parse)?;
     enforce_ontology(&mut mapping, ontology)?;
     // Verify primary keys actually resolve against the data.
@@ -203,7 +207,10 @@ fn enforce_ontology(mapping: &mut Mapping, ontology: &DomainOntology) -> Result<
 }
 
 fn canonicalize_endpoint(endpoint: &mut String, emitted: &[String]) {
-    if let Some(canon) = emitted.iter().find(|e| e.eq_ignore_ascii_case(endpoint.trim())) {
+    if let Some(canon) = emitted
+        .iter()
+        .find(|e| e.eq_ignore_ascii_case(endpoint.trim()))
+    {
         *endpoint = canon.clone();
     }
 }
@@ -409,7 +416,10 @@ mod tests {
 
     #[tokio::test]
     async fn fenced_and_prose_wrapped_json_is_recovered() {
-        let wrapped = format!("Here is your mapping:\n```json\n{}\n```\nDone!", good_mapping());
+        let wrapped = format!(
+            "Here is your mapping:\n```json\n{}\n```\nDone!",
+            good_mapping()
+        );
         let llm = MockLlmClient::single(wrapped);
         let mapping = generate_mapping(&data(), &ontology(), None, &llm, &MapGenOptions::default())
             .await

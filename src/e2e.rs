@@ -33,6 +33,7 @@ pub struct E2eRunOptions {
     pub graph_path: Option<PathBuf>,
     pub ontology_path: Option<PathBuf>,
     pub questions_path: Option<PathBuf>,
+    pub case_id: Option<String>,
     pub report_path: Option<PathBuf>,
     pub prefix: Option<String>,
     pub cleanup_after: Option<bool>,
@@ -70,6 +71,10 @@ pub struct E2eCaseReport {
     pub errors: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dsl: Option<JsonValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cypher: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cypher_params: Option<BTreeMap<String, JsonValue>>,
     pub row_count: usize,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub rows: Vec<BTreeMap<String, JsonValue>>,
@@ -168,6 +173,8 @@ struct ValidationSpec {
     #[serde(default)]
     row_count: Option<RowCountSpec>,
     #[serde(default)]
+    rows: Vec<ExpectedRow>,
+    #[serde(default)]
     columns: Vec<String>,
     #[serde(default)]
     contains: Vec<CellExpectation>,
@@ -177,6 +184,8 @@ struct ValidationSpec {
     numbers: Vec<NumericExpectation>,
     #[serde(default)]
     answer_contains: Vec<String>,
+    #[serde(default)]
+    dsl_expect: Option<DslValidationSpec>,
     #[serde(default)]
     judge: Option<JudgeSpec>,
 }
@@ -197,6 +206,12 @@ struct CellExpectation {
     value: JsonValue,
     #[serde(default)]
     mode: MatchMode,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ExpectedRow {
+    #[serde(default)]
+    fields: BTreeMap<String, JsonValue>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
@@ -230,6 +245,32 @@ struct JudgeSpec {
     expected: String,
     #[serde(default = "default_true")]
     require_pass: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct DslValidationSpec {
+    #[serde(default)]
+    start_label: Option<String>,
+    #[serde(default)]
+    start_alias: Option<String>,
+    #[serde(default)]
+    required_filter_fields: Vec<String>,
+    #[serde(default)]
+    required_filter_ops: Vec<String>,
+    #[serde(default)]
+    forbidden_filter_ops: Vec<String>,
+    #[serde(default)]
+    required_return_fields: Vec<String>,
+    #[serde(default)]
+    required_traversal_labels: Vec<String>,
+    #[serde(default)]
+    min_filters: Option<usize>,
+    #[serde(default)]
+    max_filters: Option<usize>,
+    #[serde(default)]
+    min_returns: Option<usize>,
+    #[serde(default)]
+    max_returns: Option<usize>,
 }
 
 fn default_true() -> bool {
@@ -301,6 +342,22 @@ pub async fn run_suite(opts: E2eRunOptions) -> anyhow::Result<E2eReport> {
 
     let catalog = load_catalog(&ontology_path).await?;
     let questions = load_questions(&questions_path).await?;
+    let questions = if let Some(case_id) = &opts.case_id {
+        let filtered: Vec<_> = questions
+            .into_iter()
+            .filter(|case| case.id == *case_id)
+            .collect();
+        if filtered.is_empty() {
+            return Err(anyhow!(
+                "question id `{}` not found in {}",
+                case_id,
+                questions_path.display()
+            ));
+        }
+        filtered
+    } else {
+        questions
+    };
     let graph_raw = fs::read_to_string(&graph_path)
         .await
         .with_context(|| format!("read graph {}", graph_path.display()))?;
@@ -321,6 +378,9 @@ pub async fn run_suite(opts: E2eRunOptions) -> anyhow::Result<E2eReport> {
         .with_prefix_index(Some(prefix.clone()));
     if let Some(embedder) = embedder {
         pipeline = pipeline.with_embedder(embedder);
+    }
+    if let Some(reranker) = build_semantic_text_reranker(&cfg)? {
+        pipeline = pipeline.with_reranker(reranker);
     }
     pipeline.load_ontology_catalog().await?;
 
@@ -350,9 +410,11 @@ pub async fn run_suite(opts: E2eRunOptions) -> anyhow::Result<E2eReport> {
     );
 
     let llm = build_llm_client(&cfg)?;
+    let prompt_reranker = pipeline.reranker();
     let schema = pipeline.live_schema(&[prefix.as_str()]).await?;
     let prompt_opts = PromptOptions {
         include_examples: true,
+        reranking_model: prompt_reranker,
         type_registry: Some((*registry).clone()),
         ..PromptOptions::default()
     };
@@ -416,6 +478,8 @@ async fn run_case(
 ) -> E2eCaseReport {
     let mut errors = Vec::new();
     let mut dsl_json = None;
+    let mut cypher = None;
+    let mut cypher_params = None;
     let mut rows = Vec::new();
     let mut answer = None;
     let mut judge_report = None;
@@ -448,6 +512,8 @@ async fn run_case(
                 passed: false,
                 errors,
                 dsl: dsl_json,
+                cypher,
+                cypher_params,
                 row_count: 0,
                 rows,
                 answer,
@@ -462,6 +528,31 @@ async fn run_case(
         "compiled e2e DSL"
     );
 
+    errors.extend(validate_dsl(&case.validation.dsl_expect, &dsl));
+
+    match pipeline.compile(dsl.clone()) {
+        Ok(query) => {
+            cypher = Some(query.text.clone());
+            cypher_params = Some(mask_cypher_params(&query.params));
+        }
+        Err(err) => {
+            errors.push(format!("cypher compile failed: {err}"));
+            return E2eCaseReport {
+                id: case.id.clone(),
+                question: case.question.clone(),
+                passed: false,
+                errors,
+                dsl: dsl_json,
+                cypher,
+                cypher_params,
+                row_count: 0,
+                rows,
+                answer,
+                judge: judge_report,
+            };
+        }
+    }
+
     let result = match pipeline.run(dsl.clone()).await {
         Ok(result) => result,
         Err(err) => {
@@ -472,6 +563,8 @@ async fn run_case(
                 passed: false,
                 errors,
                 dsl: dsl_json,
+                cypher,
+                cypher_params,
                 row_count: 0,
                 rows,
                 answer,
@@ -524,6 +617,8 @@ async fn run_case(
         passed,
         errors,
         dsl: dsl_json,
+        cypher,
+        cypher_params,
         row_count: result.rows.len(),
         rows,
         answer,
@@ -557,6 +652,56 @@ async fn load_questions(path: &Path) -> anyhow::Result<Vec<QuestionCase>> {
     let questions: Vec<QuestionCase> = serde_json::from_str(&raw)
         .with_context(|| format!("parse questions {}", path.display()))?;
     Ok(questions)
+}
+
+fn mask_cypher_params(
+    params: &BTreeMap<String, crate::ast::query::Literal>,
+) -> BTreeMap<String, JsonValue> {
+    params
+        .iter()
+        .map(|(name, value)| {
+            let masked = if is_masked_param_name(name) {
+                masked_param_value(value)
+            } else {
+                literal_to_json(value)
+            };
+            (name.clone(), masked)
+        })
+        .collect()
+}
+
+fn is_masked_param_name(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    name.contains("embedding") || name == "vec" || name.ends_with("_vec")
+}
+
+fn masked_param_value(value: &crate::ast::query::Literal) -> JsonValue {
+    match value {
+        crate::ast::query::Literal::List(items) => {
+            JsonValue::String(format!("<masked embedding len={}>", items.len()))
+        }
+        _ => JsonValue::String("<masked embedding>".to_string()),
+    }
+}
+
+fn literal_to_json(literal: &crate::ast::query::Literal) -> JsonValue {
+    match literal {
+        crate::ast::query::Literal::String(s) => JsonValue::String(s.clone()),
+        crate::ast::query::Literal::Bool(b) => JsonValue::Bool(*b),
+        crate::ast::query::Literal::Int(i) => JsonValue::Number((*i).into()),
+        crate::ast::query::Literal::Float(f) => serde_json::Number::from_f64(*f)
+            .map(JsonValue::Number)
+            .unwrap_or(JsonValue::Null),
+        crate::ast::query::Literal::List(items) => {
+            JsonValue::Array(items.iter().map(literal_to_json).collect())
+        }
+        crate::ast::query::Literal::Object(map) => JsonValue::Object(
+            map.iter()
+                .map(|(key, value)| (key.clone(), literal_to_json(value)))
+                .collect(),
+        ),
+        crate::ast::query::Literal::Null => JsonValue::Null,
+    }
 }
 
 fn resolve_suite_path(suite_dir: &Path, path: PathBuf) -> PathBuf {
@@ -616,6 +761,26 @@ fn build_registry(cfg: &Config) -> anyhow::Result<(SharedRegistry, Option<Shared
     let registry = types::handlers::register_default(cfg, embedder.clone())
         .map_err(|e| anyhow!("registry init: {e}"))?;
     Ok((Arc::new(registry), Some(embedder)))
+}
+
+fn build_semantic_text_reranker(
+    cfg: &Config,
+) -> anyhow::Result<Option<embeddings::SharedReranker>> {
+    let Some(model) = cfg
+        .types
+        .get("SemanticText")
+        .and_then(|t| t.reranking_model.clone())
+    else {
+        return Ok(None);
+    };
+    let dim = cfg
+        .types
+        .get("SemanticText")
+        .and_then(|t| t.embedding_dim)
+        .unwrap_or(384);
+    let reranker = embeddings::default_reranker(Some(&model), dim)
+        .map_err(|e| anyhow!("SemanticText reranker init: {e}"))?;
+    Ok(Some(reranker))
 }
 
 #[cfg(feature = "openai")]
@@ -865,6 +1030,10 @@ fn validate_result(
         }
     }
 
+    if !spec.rows.is_empty() {
+        errors.extend(validate_expected_rows(&spec.rows, result));
+    }
+
     for column in &spec.columns {
         if !result_has_column(result, column) {
             errors.push(format!("missing expected column `{column}`"));
@@ -903,6 +1072,171 @@ fn validate_result(
     }
 
     errors
+}
+
+fn validate_dsl(spec: &Option<DslValidationSpec>, dsl: &DslQuery) -> Vec<String> {
+    let Some(spec) = spec.as_ref() else {
+        return Vec::new();
+    };
+
+    let mut errors = Vec::new();
+
+    if let Some(expected) = &spec.start_label {
+        if !dsl.start.label.eq_ignore_ascii_case(expected) {
+            errors.push(format!(
+                "dsl start label mismatch: expected `{expected}`, got `{}`",
+                dsl.start.label
+            ));
+        }
+    }
+    if let Some(expected) = &spec.start_alias {
+        if dsl.start.alias != *expected {
+            errors.push(format!(
+                "dsl start alias mismatch: expected `{expected}`, got `{}`",
+                dsl.start.alias
+            ));
+        }
+    }
+
+    if spec.min_filters.is_some_and(|min| dsl.filters.len() < min) {
+        errors.push(format!(
+            "dsl filter count below minimum: expected at least {}, got {}",
+            spec.min_filters.unwrap(),
+            dsl.filters.len()
+        ));
+    }
+    if spec.max_filters.is_some_and(|max| dsl.filters.len() > max) {
+        errors.push(format!(
+            "dsl filter count above maximum: expected at most {}, got {}",
+            spec.max_filters.unwrap(),
+            dsl.filters.len()
+        ));
+    }
+    if spec.min_returns.is_some_and(|min| dsl.return_.len() < min) {
+        errors.push(format!(
+            "dsl return count below minimum: expected at least {}, got {}",
+            spec.min_returns.unwrap(),
+            dsl.return_.len()
+        ));
+    }
+    if spec.max_returns.is_some_and(|max| dsl.return_.len() > max) {
+        errors.push(format!(
+            "dsl return count above maximum: expected at most {}, got {}",
+            spec.max_returns.unwrap(),
+            dsl.return_.len()
+        ));
+    }
+
+    for expected in &spec.required_filter_fields {
+        if !dsl
+            .filters
+            .iter()
+            .any(|f| field_matches(&f.field, expected))
+        {
+            errors.push(format!("dsl missing filter field matching `{expected}`"));
+        }
+    }
+    for expected in &spec.required_filter_ops {
+        if !dsl
+            .filters
+            .iter()
+            .any(|f| f.op.eq_ignore_ascii_case(expected))
+        {
+            errors.push(format!("dsl missing filter op `{expected}`"));
+        }
+    }
+    for forbidden in &spec.forbidden_filter_ops {
+        if dsl
+            .filters
+            .iter()
+            .any(|f| f.op.eq_ignore_ascii_case(forbidden))
+        {
+            errors.push(format!("dsl contains forbidden filter op `{forbidden}`"));
+        }
+    }
+
+    for expected in &spec.required_return_fields {
+        if !dsl
+            .return_
+            .iter()
+            .any(|item| return_item_matches(item, expected))
+        {
+            errors.push(format!("dsl missing return item matching `{expected}`"));
+        }
+    }
+
+    for expected in &spec.required_traversal_labels {
+        if !dsl.traversals.iter().any(|t| {
+            t.edge.label.eq_ignore_ascii_case(expected)
+                || t.target.label.eq_ignore_ascii_case(expected)
+        }) {
+            errors.push(format!(
+                "dsl missing traversal edge or target matching `{expected}`"
+            ));
+        }
+    }
+
+    errors
+}
+
+fn validate_expected_rows(expected_rows: &[ExpectedRow], result: &QueryResult) -> Vec<String> {
+    let actual_rows = result_rows_json(result);
+    let mut unmatched = Vec::new();
+    let mut used = vec![false; actual_rows.len()];
+
+    for expected in expected_rows {
+        let mut found = false;
+        for (idx, actual) in actual_rows.iter().enumerate() {
+            if used[idx] {
+                continue;
+            }
+            if row_matches(actual, &expected.fields) {
+                used[idx] = true;
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            unmatched.push(format!(
+                "no row matched expected subset: {}",
+                serde_json::to_string(&expected.fields).unwrap_or_default()
+            ));
+        }
+    }
+
+    unmatched
+}
+
+fn row_matches(
+    actual: &BTreeMap<String, JsonValue>,
+    expected: &BTreeMap<String, JsonValue>,
+) -> bool {
+    expected.iter().all(|(column, expected_value)| {
+        actual
+            .get(column)
+            .is_some_and(|actual_value| json_values_equal(actual_value, expected_value))
+    })
+}
+
+fn field_matches(actual: &str, expected: &str) -> bool {
+    actual == expected
+        || actual
+            .rsplit_once('.')
+            .is_some_and(|(_, suffix)| suffix.eq_ignore_ascii_case(expected))
+}
+
+fn return_item_matches(item: &crate::dsl::schema::ReturnItem, expected: &str) -> bool {
+    match item {
+        crate::dsl::schema::ReturnItem::Field { field, alias } => {
+            field_matches(field, expected) || alias.as_deref() == Some(expected)
+        }
+        crate::dsl::schema::ReturnItem::Aggregate { field, alias, .. } => {
+            field_matches(field, expected) || alias.as_deref() == Some(expected)
+        }
+        crate::dsl::schema::ReturnItem::DatePart { field, alias, .. } => {
+            field_matches(field, expected) || alias.as_deref() == Some(expected)
+        }
+    }
 }
 
 fn validate_answer_contains(expected: &[String], answer: &str) -> Vec<String> {
@@ -1087,5 +1421,97 @@ fn json_value_text(value: &JsonValue) -> String {
         JsonValue::Number(v) => v.to_string(),
         JsonValue::String(v) => v.clone(),
         JsonValue::Array(_) | JsonValue::Object(_) => value.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::query::Literal;
+    use crate::dsl::{Action, DslQuery, Filter, NodePattern};
+    use serde_json::json;
+
+    #[test]
+    fn validate_dsl_checks_structure_without_alias_exactness() {
+        let dsl = DslQuery {
+            action: Action::Find,
+            start: NodePattern {
+                label: "Account".into(),
+                alias: "a".into(),
+            },
+            traversals: Vec::new(),
+            filters: vec![Filter {
+                field: "a.region".into(),
+                op: "in".into(),
+                value: json!(["CIS", "EMEA"]),
+                field_type: None,
+            }],
+            return_: Vec::new(),
+            group_by: Vec::new(),
+            sort: Vec::new(),
+            limit: None,
+            prefix_label: None,
+            prefix_index: None,
+        };
+
+        let spec = DslValidationSpec {
+            start_label: Some("account".into()),
+            required_filter_fields: vec!["region".into()],
+            required_filter_ops: vec!["in".into()],
+            ..Default::default()
+        };
+
+        assert!(validate_dsl(&Some(spec), &dsl).is_empty());
+    }
+
+    #[test]
+    fn validate_expected_rows_matches_subset_rows() {
+        let result = QueryResult {
+            columns: Vec::new(),
+            rows: vec![
+                crate::db::Row {
+                    fields: BTreeMap::from([
+                        (
+                            "name".into(),
+                            crate::db::Value::String("Eastline Logistics".into()),
+                        ),
+                        ("region".into(), crate::db::Value::String("EMEA".into())),
+                    ]),
+                },
+                crate::db::Row {
+                    fields: BTreeMap::from([
+                        (
+                            "name".into(),
+                            crate::db::Value::String("Northwind Kazakhstan".into()),
+                        ),
+                        ("region".into(), crate::db::Value::String("CIS".into())),
+                    ]),
+                },
+            ],
+        };
+
+        let spec = vec![ExpectedRow {
+            fields: BTreeMap::from([("name".into(), json!("Eastline Logistics"))]),
+        }];
+
+        assert!(validate_expected_rows(&spec, &result).is_empty());
+    }
+
+    #[test]
+    fn mask_cypher_params_hides_embedding_vector() {
+        let params = BTreeMap::from([
+            (
+                "embedding".into(),
+                Literal::List(vec![Literal::Float(1.0), Literal::Float(2.0)]),
+            ),
+            ("limit".into(), Literal::Int(10)),
+        ]);
+
+        let masked = mask_cypher_params(&params);
+        assert_eq!(
+            masked.get("embedding"),
+            Some(&json!("<masked embedding len=2>"))
+        );
+        assert_eq!(masked.get("limit"), Some(&json!(10)));
     }
 }

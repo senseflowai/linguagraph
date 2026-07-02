@@ -264,7 +264,10 @@ fn resolve_ref(
 /// one is declared, otherwise the row's (already stringified) primary key.
 fn target_key_string(to_row: &EntityRow, to_key: Option<&str>) -> Option<String> {
     match to_key {
-        Some(key) => to_row.join_keys.get(key).and_then(primary_key_part_to_string),
+        Some(key) => to_row
+            .join_keys
+            .get(key)
+            .and_then(primary_key_part_to_string),
         None => primary_key_part_to_string(&to_row.id),
     }
 }
@@ -487,12 +490,7 @@ mod tests {
         let mapped = to_graph(&mapping, &data).unwrap();
 
         assert_eq!(
-            mapped
-                .catalog
-                .get_entity("Company")
-                .unwrap()
-                .1
-                .description,
+            mapped.catalog.get_entity("Company").unwrap().1.description,
             Some("A legal organization.".into())
         );
         assert_eq!(
@@ -583,13 +581,7 @@ mod tests {
         let data: Value = serde_json::from_str(&load("teye_data.json")).unwrap();
 
         let graph = to_graph(&mapping, &data).unwrap().graph;
-        let count = |t: &str| {
-            graph
-                .relations()
-                .iter()
-                .filter(|r| r.r#type == t)
-                .count()
-        };
+        let count = |t: &str| graph.relations().iter().filter(|r| r.r#type == t).count();
         // 2 cameras → places, 2 events → cameras, 2 events → places.
         assert_eq!(count("INSTALLED_AT"), 2);
         assert_eq!(count("CAPTURED_BY"), 2);
@@ -726,7 +718,10 @@ mod tests {
         let cam = &graph.entities()[captured[0].to.index()];
         assert_eq!(cam.r#type, "Camera");
         assert_eq!(cam.properties["id"].value, json!("cam-in-graph"));
-        assert!(!cam.properties.contains_key("name"), "stub has no real props");
+        assert!(
+            !cam.properties.contains_key("name"),
+            "stub has no real props"
+        );
         assert_eq!(cam.domain.as_deref(), Some("surveillance"));
 
         let occurred = graph
@@ -802,10 +797,7 @@ mod tests {
         assert_eq!(cam_batch.rows[0].id, Literal::String("cam-9".into()));
         // Stub props must not carry fabricated fields beyond the id.
         assert!(
-            cam_batch.rows[0]
-                .props
-                .keys()
-                .all(|k| k == "id"),
+            cam_batch.rows[0].props.keys().all(|k| k == "id"),
             "stub node should not set non-id properties"
         );
 

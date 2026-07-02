@@ -11,8 +11,16 @@ use crate::graph::scope::Scope;
 /// `Date` / `Timestamp`). The ingest planner maps these to registry
 /// handler ids in [`crate::ingest`].
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
-    strum::EnumString, strum::Display,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    strum::EnumString,
+    strum::Display,
 )]
 pub enum PropertyType {
     /// Plain string, standard Cypher matching. `String` is the legacy
@@ -28,6 +36,7 @@ pub enum PropertyType {
     Boolean,
     DateTime,
     #[strum(serialize = "Timestamp", serialize = "Date")]
+    #[serde(alias = "Date")]
     Timestamp,
 }
 

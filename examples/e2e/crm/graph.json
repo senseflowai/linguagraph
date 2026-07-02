@@ -1,0 +1,4782 @@
+{
+  "source": "crm-e2e-sandbox",
+  "entities": [
+    {
+      "id": "account-northwind",
+      "type": "Account",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "acc-1001"
+        },
+        "name": {
+          "type": "Text",
+          "value": "Northwind Kazakhstan"
+        },
+        "industry": {
+          "type": "Text",
+          "value": "Logistics"
+        },
+        "region": {
+          "type": "Keyword",
+          "value": "CIS"
+        },
+        "segment": {
+          "type": "Keyword",
+          "value": "Enterprise"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Active"
+        },
+        "description": {
+          "type": "Text",
+          "value": "Cross-border logistics client in Almaty with weekly inventory reviews."
+        }
+      }
+    },
+    {
+      "id": "account-eastline",
+      "type": "Account",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "acc-1002"
+        },
+        "name": {
+          "type": "Text",
+          "value": "Eastline Logistics"
+        },
+        "industry": {
+          "type": "Text",
+          "value": "Transportation"
+        },
+        "region": {
+          "type": "Keyword",
+          "value": "EMEA"
+        },
+        "segment": {
+          "type": "Keyword",
+          "value": "Mid-market"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Active"
+        },
+        "description": {
+          "type": "Text",
+          "value": "Regional freight operator with portal adoption and automation needs."
+        }
+      }
+    },
+    {
+      "id": "account-fabrikam",
+      "type": "Account",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "acc-1003"
+        },
+        "name": {
+          "type": "Text",
+          "value": "Fabrikam Manufacturing"
+        },
+        "industry": {
+          "type": "Text",
+          "value": "Manufacturing"
+        },
+        "region": {
+          "type": "Keyword",
+          "value": "EMEA"
+        },
+        "segment": {
+          "type": "Keyword",
+          "value": "Enterprise"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Active"
+        },
+        "description": {
+          "type": "Text",
+          "value": "Factory account interested in service desk and platform rollout."
+        }
+      }
+    },
+    {
+      "id": "account-globex",
+      "type": "Account",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "acc-1004"
+        },
+        "name": {
+          "type": "Text",
+          "value": "Globex Retail Kazakhstan"
+        },
+        "industry": {
+          "type": "Text",
+          "value": "Retail"
+        },
+        "region": {
+          "type": "Keyword",
+          "value": "CIS"
+        },
+        "segment": {
+          "type": "Keyword",
+          "value": "Mid-market"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Prospect"
+        },
+        "description": {
+          "type": "Text",
+          "value": "Retail prospect evaluating support tooling and renewal workflows."
+        }
+      }
+    },
+    {
+      "id": "contact-irina",
+      "type": "Contact",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "con-2001"
+        },
+        "full_name": {
+          "type": "Text",
+          "value": "Irina Sokolova"
+        },
+        "title": {
+          "type": "Text",
+          "value": "Finance Director"
+        },
+        "email": {
+          "type": "Text",
+          "value": "irina.sokolova@northwind.kz"
+        },
+        "phone": {
+          "type": "Text",
+          "value": "+7-701-100-2001"
+        }
+      }
+    },
+    {
+      "id": "contact-timur",
+      "type": "Contact",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "con-2002"
+        },
+        "full_name": {
+          "type": "Text",
+          "value": "Timur Nurgaliyev"
+        },
+        "title": {
+          "type": "Text",
+          "value": "Procurement Lead"
+        },
+        "email": {
+          "type": "Text",
+          "value": "timur.nurgaliyev@eastline.io"
+        },
+        "phone": {
+          "type": "Text",
+          "value": "+7-701-100-2002"
+        }
+      }
+    },
+    {
+      "id": "contact-dina",
+      "type": "Contact",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "con-2003"
+        },
+        "full_name": {
+          "type": "Text",
+          "value": "Dina Akhmetova"
+        },
+        "title": {
+          "type": "Text",
+          "value": "Operations Manager"
+        },
+        "email": {
+          "type": "Text",
+          "value": "dina.akhmetova@fabrikam.kz"
+        },
+        "phone": {
+          "type": "Text",
+          "value": "+7-701-100-2003"
+        }
+      }
+    },
+    {
+      "id": "contact-sergey",
+      "type": "Contact",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "con-2004"
+        },
+        "full_name": {
+          "type": "Text",
+          "value": "Sergey Ivanov"
+        },
+        "title": {
+          "type": "Text",
+          "value": "IT Manager"
+        },
+        "email": {
+          "type": "Text",
+          "value": "sergey.ivanov@globex.kz"
+        },
+        "phone": {
+          "type": "Text",
+          "value": "+7-701-100-2004"
+        }
+      }
+    },
+    {
+      "id": "user-anna",
+      "type": "User",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "usr-3001"
+        },
+        "name": {
+          "type": "Text",
+          "value": "Anna Morozova"
+        },
+        "role": {
+          "type": "Keyword",
+          "value": "Sales Manager"
+        },
+        "team": {
+          "type": "Keyword",
+          "value": "Enterprise Sales"
+        }
+      }
+    },
+    {
+      "id": "user-pavel",
+      "type": "User",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "usr-3002"
+        },
+        "name": {
+          "type": "Text",
+          "value": "Pavel Kim"
+        },
+        "role": {
+          "type": "Keyword",
+          "value": "Account Executive"
+        },
+        "team": {
+          "type": "Keyword",
+          "value": "SMB Sales"
+        }
+      }
+    },
+    {
+      "id": "user-olga",
+      "type": "User",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "usr-3003"
+        },
+        "name": {
+          "type": "Text",
+          "value": "Olga Petrova"
+        },
+        "role": {
+          "type": "Keyword",
+          "value": "Support Lead"
+        },
+        "team": {
+          "type": "Keyword",
+          "value": "Customer Care"
+        }
+      }
+    },
+    {
+      "id": "product-crm",
+      "type": "Product",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "prd-4001"
+        },
+        "name": {
+          "type": "Text",
+          "value": "CRM Pro"
+        },
+        "category": {
+          "type": "Keyword",
+          "value": "Platform"
+        }
+      }
+    },
+    {
+      "id": "product-analytics",
+      "type": "Product",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "prd-4002"
+        },
+        "name": {
+          "type": "Text",
+          "value": "Analytics Plus"
+        },
+        "category": {
+          "type": "Keyword",
+          "value": "Analytics"
+        }
+      }
+    },
+    {
+      "id": "product-servicedesk",
+      "type": "Product",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "prd-4003"
+        },
+        "name": {
+          "type": "Text",
+          "value": "Service Desk"
+        },
+        "category": {
+          "type": "Keyword",
+          "value": "Support"
+        }
+      }
+    },
+    {
+      "id": "deal-northwind-renewal",
+      "type": "Deal",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "deal-5001"
+        },
+        "name": {
+          "type": "Keyword",
+          "value": "Annual renewal for Northwind Kazakhstan"
+        },
+        "stage": {
+          "type": "Keyword",
+          "value": "Negotiation"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Open"
+        },
+        "amount": {
+          "type": "Number",
+          "value": 120000
+        },
+        "probability": {
+          "type": "Number",
+          "value": 0.7
+        },
+        "description": {
+          "type": "Text",
+          "value": "Renewal package with CRM Pro and support coverage."
+        }
+      }
+    },
+    {
+      "id": "deal-northwind-expansion",
+      "type": "Deal",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "deal-5002"
+        },
+        "name": {
+          "type": "Keyword",
+          "value": "Аналитика и отчётность для логистического планирования"
+        },
+        "stage": {
+          "type": "Keyword",
+          "value": "Discovery"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Open"
+        },
+        "amount": {
+          "type": "Number",
+          "value": 60000
+        },
+        "probability": {
+          "type": "Number",
+          "value": 0.35
+        },
+        "description": {
+          "type": "Text",
+          "value": "Аналитика и отчётность для логистического планирования."
+        }
+      }
+    },
+    {
+      "id": "deal-eastline-automation",
+      "type": "Deal",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "deal-5003"
+        },
+        "name": {
+          "type": "Keyword",
+          "value": "Автоматизация отслеживания отгрузок и клиентского портала"
+        },
+        "stage": {
+          "type": "Keyword",
+          "value": "Proposal"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Open"
+        },
+        "amount": {
+          "type": "Number",
+          "value": 85000
+        },
+        "probability": {
+          "type": "Number",
+          "value": 0.55
+        },
+        "description": {
+          "type": "Text",
+          "value": "Автоматизация отслеживания отгрузок и клиентского портала."
+        }
+      }
+    },
+    {
+      "id": "deal-fabrikam-service",
+      "type": "Deal",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "deal-5004"
+        },
+        "name": {
+          "type": "Keyword",
+          "value": "Fabrikam service desk upgrade"
+        },
+        "stage": {
+          "type": "Keyword",
+          "value": "Closed Won"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Closed"
+        },
+        "amount": {
+          "type": "Number",
+          "value": 210000
+        },
+        "probability": {
+          "type": "Number",
+          "value": 1.0
+        },
+        "description": {
+          "type": "Text",
+          "value": "Upgrade package for support workflows and ticket routing."
+        }
+      }
+    },
+    {
+      "id": "ticket-invoice",
+      "type": "Ticket",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "tic-6001"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "Invoice not applied to order"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Open"
+        },
+        "priority": {
+          "type": "Keyword",
+          "value": "High"
+        },
+        "source": {
+          "type": "Keyword",
+          "value": "Email"
+        },
+        "category": {
+          "type": "Keyword",
+          "value": "Billing"
+        }
+      }
+    },
+    {
+      "id": "ticket-vpn",
+      "type": "Ticket",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "tic-6002"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "VPN access for customer portal"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Open"
+        },
+        "priority": {
+          "type": "Keyword",
+          "value": "Medium"
+        },
+        "source": {
+          "type": "Keyword",
+          "value": "Portal"
+        },
+        "category": {
+          "type": "Keyword",
+          "value": "Access"
+        }
+      }
+    },
+    {
+      "id": "ticket-api",
+      "type": "Ticket",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "tic-6003"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "API latency on exports"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Resolved"
+        },
+        "priority": {
+          "type": "Keyword",
+          "value": "High"
+        },
+        "source": {
+          "type": "Keyword",
+          "value": "Phone"
+        },
+        "category": {
+          "type": "Keyword",
+          "value": "Performance"
+        }
+      }
+    },
+    {
+      "id": "ticket-billing-contact",
+      "type": "Ticket",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "tic-6004"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "Need update billing contact"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Pending"
+        },
+        "priority": {
+          "type": "Keyword",
+          "value": "High"
+        },
+        "source": {
+          "type": "Keyword",
+          "value": "Email"
+        },
+        "category": {
+          "type": "Keyword",
+          "value": "Billing"
+        }
+      }
+    },
+    {
+      "id": "activity-northwind-qbr",
+      "type": "Activity",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "act-7001"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "QBR renewal review"
+        },
+        "type": {
+          "type": "Keyword",
+          "value": "Call"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Scheduled"
+        },
+        "due_date": {
+          "type": "Date",
+          "value": "2026-07-10"
+        }
+      }
+    },
+    {
+      "id": "activity-eastline-demo",
+      "type": "Activity",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "act-7002"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "Proposal demo follow-up"
+        },
+        "type": {
+          "type": "Keyword",
+          "value": "Meeting"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Scheduled"
+        },
+        "due_date": {
+          "type": "Date",
+          "value": "2026-07-08"
+        }
+      }
+    },
+    {
+      "id": "activity-fabrikam-kickoff",
+      "type": "Activity",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "act-7003"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "Implementation kickoff"
+        },
+        "type": {
+          "type": "Keyword",
+          "value": "Workshop"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Completed"
+        },
+        "due_date": {
+          "type": "Date",
+          "value": "2026-06-28"
+        }
+      }
+    },
+    {
+      "id": "account-apac-01",
+      "type": "Account",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "acc-2001"
+        },
+        "name": {
+          "type": "Text",
+          "value": "APAC Corridor Account 01"
+        },
+        "industry": {
+          "type": "Text",
+          "value": "Logistics"
+        },
+        "region": {
+          "type": "Keyword",
+          "value": "APAC"
+        },
+        "segment": {
+          "type": "Keyword",
+          "value": "Enterprise"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Active"
+        },
+        "description": {
+          "type": "Text",
+          "value": "APAC customer profile 01 for CRM operations, covering renewals, service, and cross-sell coordination."
+        }
+      }
+    },
+    {
+      "id": "account-apac-02",
+      "type": "Account",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "acc-2002"
+        },
+        "name": {
+          "type": "Text",
+          "value": "APAC Corridor Account 02"
+        },
+        "industry": {
+          "type": "Text",
+          "value": "Manufacturing"
+        },
+        "region": {
+          "type": "Keyword",
+          "value": "APAC"
+        },
+        "segment": {
+          "type": "Keyword",
+          "value": "Mid-market"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Active"
+        },
+        "description": {
+          "type": "Text",
+          "value": "APAC customer profile 02 for CRM operations, covering renewals, service, and cross-sell coordination."
+        }
+      }
+    },
+    {
+      "id": "account-apac-03",
+      "type": "Account",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "acc-2003"
+        },
+        "name": {
+          "type": "Text",
+          "value": "APAC Corridor Account 03"
+        },
+        "industry": {
+          "type": "Text",
+          "value": "Retail"
+        },
+        "region": {
+          "type": "Keyword",
+          "value": "APAC"
+        },
+        "segment": {
+          "type": "Keyword",
+          "value": "Enterprise"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Active"
+        },
+        "description": {
+          "type": "Text",
+          "value": "APAC customer profile 03 for CRM operations, covering renewals, service, and cross-sell coordination."
+        }
+      }
+    },
+    {
+      "id": "account-apac-04",
+      "type": "Account",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "acc-2004"
+        },
+        "name": {
+          "type": "Text",
+          "value": "APAC Corridor Account 04"
+        },
+        "industry": {
+          "type": "Text",
+          "value": "Software"
+        },
+        "region": {
+          "type": "Keyword",
+          "value": "APAC"
+        },
+        "segment": {
+          "type": "Keyword",
+          "value": "Mid-market"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Active"
+        },
+        "description": {
+          "type": "Text",
+          "value": "APAC customer profile 04 for CRM operations, covering renewals, service, and cross-sell coordination."
+        }
+      }
+    },
+    {
+      "id": "account-apac-05",
+      "type": "Account",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "acc-2005"
+        },
+        "name": {
+          "type": "Text",
+          "value": "APAC Corridor Account 05"
+        },
+        "industry": {
+          "type": "Text",
+          "value": "Healthcare"
+        },
+        "region": {
+          "type": "Keyword",
+          "value": "APAC"
+        },
+        "segment": {
+          "type": "Keyword",
+          "value": "Enterprise"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Active"
+        },
+        "description": {
+          "type": "Text",
+          "value": "APAC customer profile 05 for CRM operations, covering renewals, service, and cross-sell coordination."
+        }
+      }
+    },
+    {
+      "id": "account-apac-06",
+      "type": "Account",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "acc-2006"
+        },
+        "name": {
+          "type": "Text",
+          "value": "APAC Corridor Account 06"
+        },
+        "industry": {
+          "type": "Text",
+          "value": "Logistics"
+        },
+        "region": {
+          "type": "Keyword",
+          "value": "APAC"
+        },
+        "segment": {
+          "type": "Keyword",
+          "value": "Mid-market"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Active"
+        },
+        "description": {
+          "type": "Text",
+          "value": "APAC customer profile 06 for CRM operations, covering renewals, service, and cross-sell coordination."
+        }
+      }
+    },
+    {
+      "id": "account-apac-07",
+      "type": "Account",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "acc-2007"
+        },
+        "name": {
+          "type": "Text",
+          "value": "APAC Corridor Account 07"
+        },
+        "industry": {
+          "type": "Text",
+          "value": "Manufacturing"
+        },
+        "region": {
+          "type": "Keyword",
+          "value": "APAC"
+        },
+        "segment": {
+          "type": "Keyword",
+          "value": "Enterprise"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Active"
+        },
+        "description": {
+          "type": "Text",
+          "value": "APAC customer profile 07 for CRM operations, covering renewals, service, and cross-sell coordination."
+        }
+      }
+    },
+    {
+      "id": "account-apac-08",
+      "type": "Account",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "acc-2008"
+        },
+        "name": {
+          "type": "Text",
+          "value": "APAC Corridor Account 08"
+        },
+        "industry": {
+          "type": "Text",
+          "value": "Retail"
+        },
+        "region": {
+          "type": "Keyword",
+          "value": "APAC"
+        },
+        "segment": {
+          "type": "Keyword",
+          "value": "Mid-market"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Active"
+        },
+        "description": {
+          "type": "Text",
+          "value": "APAC customer profile 08 for CRM operations, covering renewals, service, and cross-sell coordination."
+        }
+      }
+    },
+    {
+      "id": "account-amer-09",
+      "type": "Account",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "acc-2009"
+        },
+        "name": {
+          "type": "Text",
+          "value": "AMER Corridor Account 09"
+        },
+        "industry": {
+          "type": "Text",
+          "value": "Software"
+        },
+        "region": {
+          "type": "Keyword",
+          "value": "AMER"
+        },
+        "segment": {
+          "type": "Keyword",
+          "value": "Enterprise"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Active"
+        },
+        "description": {
+          "type": "Text",
+          "value": "AMER customer profile 09 for CRM operations, covering renewals, service, and cross-sell coordination."
+        }
+      }
+    },
+    {
+      "id": "account-amer-10",
+      "type": "Account",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "acc-2010"
+        },
+        "name": {
+          "type": "Text",
+          "value": "AMER Corridor Account 10"
+        },
+        "industry": {
+          "type": "Text",
+          "value": "Healthcare"
+        },
+        "region": {
+          "type": "Keyword",
+          "value": "AMER"
+        },
+        "segment": {
+          "type": "Keyword",
+          "value": "Mid-market"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Active"
+        },
+        "description": {
+          "type": "Text",
+          "value": "AMER customer profile 10 for CRM operations, covering renewals, service, and cross-sell coordination."
+        }
+      }
+    },
+    {
+      "id": "account-amer-11",
+      "type": "Account",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "acc-2011"
+        },
+        "name": {
+          "type": "Text",
+          "value": "AMER Corridor Account 11"
+        },
+        "industry": {
+          "type": "Text",
+          "value": "Logistics"
+        },
+        "region": {
+          "type": "Keyword",
+          "value": "AMER"
+        },
+        "segment": {
+          "type": "Keyword",
+          "value": "Enterprise"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Active"
+        },
+        "description": {
+          "type": "Text",
+          "value": "AMER customer profile 11 for CRM operations, covering renewals, service, and cross-sell coordination."
+        }
+      }
+    },
+    {
+      "id": "account-amer-12",
+      "type": "Account",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "acc-2012"
+        },
+        "name": {
+          "type": "Text",
+          "value": "AMER Corridor Account 12"
+        },
+        "industry": {
+          "type": "Text",
+          "value": "Manufacturing"
+        },
+        "region": {
+          "type": "Keyword",
+          "value": "AMER"
+        },
+        "segment": {
+          "type": "Keyword",
+          "value": "Mid-market"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Active"
+        },
+        "description": {
+          "type": "Text",
+          "value": "AMER customer profile 12 for CRM operations, covering renewals, service, and cross-sell coordination."
+        }
+      }
+    },
+    {
+      "id": "account-amer-13",
+      "type": "Account",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "acc-2013"
+        },
+        "name": {
+          "type": "Text",
+          "value": "AMER Corridor Account 13"
+        },
+        "industry": {
+          "type": "Text",
+          "value": "Retail"
+        },
+        "region": {
+          "type": "Keyword",
+          "value": "AMER"
+        },
+        "segment": {
+          "type": "Keyword",
+          "value": "Enterprise"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Active"
+        },
+        "description": {
+          "type": "Text",
+          "value": "AMER customer profile 13 for CRM operations, covering renewals, service, and cross-sell coordination."
+        }
+      }
+    },
+    {
+      "id": "account-amer-14",
+      "type": "Account",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "acc-2014"
+        },
+        "name": {
+          "type": "Text",
+          "value": "AMER Corridor Account 14"
+        },
+        "industry": {
+          "type": "Text",
+          "value": "Software"
+        },
+        "region": {
+          "type": "Keyword",
+          "value": "AMER"
+        },
+        "segment": {
+          "type": "Keyword",
+          "value": "Mid-market"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Active"
+        },
+        "description": {
+          "type": "Text",
+          "value": "AMER customer profile 14 for CRM operations, covering renewals, service, and cross-sell coordination."
+        }
+      }
+    },
+    {
+      "id": "account-amer-15",
+      "type": "Account",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "acc-2015"
+        },
+        "name": {
+          "type": "Text",
+          "value": "AMER Corridor Account 15"
+        },
+        "industry": {
+          "type": "Text",
+          "value": "Healthcare"
+        },
+        "region": {
+          "type": "Keyword",
+          "value": "AMER"
+        },
+        "segment": {
+          "type": "Keyword",
+          "value": "Enterprise"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Active"
+        },
+        "description": {
+          "type": "Text",
+          "value": "AMER customer profile 15 for CRM operations, covering renewals, service, and cross-sell coordination."
+        }
+      }
+    },
+    {
+      "id": "account-amer-16",
+      "type": "Account",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "acc-2016"
+        },
+        "name": {
+          "type": "Text",
+          "value": "AMER Corridor Account 16"
+        },
+        "industry": {
+          "type": "Text",
+          "value": "Logistics"
+        },
+        "region": {
+          "type": "Keyword",
+          "value": "AMER"
+        },
+        "segment": {
+          "type": "Keyword",
+          "value": "Mid-market"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Active"
+        },
+        "description": {
+          "type": "Text",
+          "value": "AMER customer profile 16 for CRM operations, covering renewals, service, and cross-sell coordination."
+        }
+      }
+    },
+    {
+      "id": "contact-synth-01",
+      "type": "Contact",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "con-3001"
+        },
+        "full_name": {
+          "type": "Text",
+          "value": "Amina Sadykova"
+        },
+        "title": {
+          "type": "Text",
+          "value": "Operations Director"
+        },
+        "email": {
+          "type": "Text",
+          "value": "amina.sadykova@apac-01.crm.example"
+        },
+        "phone": {
+          "type": "Text",
+          "value": "+7-700-001-1001"
+        }
+      }
+    },
+    {
+      "id": "contact-synth-02",
+      "type": "Contact",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "con-3002"
+        },
+        "full_name": {
+          "type": "Text",
+          "value": "Bulat Karimov"
+        },
+        "title": {
+          "type": "Text",
+          "value": "Procurement Lead"
+        },
+        "email": {
+          "type": "Text",
+          "value": "bulat.karimov@apac-02.crm.example"
+        },
+        "phone": {
+          "type": "Text",
+          "value": "+7-700-002-1002"
+        }
+      }
+    },
+    {
+      "id": "contact-synth-03",
+      "type": "Contact",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "con-3003"
+        },
+        "full_name": {
+          "type": "Text",
+          "value": "Elena Ivanova"
+        },
+        "title": {
+          "type": "Text",
+          "value": "Finance Manager"
+        },
+        "email": {
+          "type": "Text",
+          "value": "elena.ivanova@apac-03.crm.example"
+        },
+        "phone": {
+          "type": "Text",
+          "value": "+7-700-003-1003"
+        }
+      }
+    },
+    {
+      "id": "contact-synth-04",
+      "type": "Contact",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "con-3004"
+        },
+        "full_name": {
+          "type": "Text",
+          "value": "Sergey Orlov"
+        },
+        "title": {
+          "type": "Text",
+          "value": "IT Manager"
+        },
+        "email": {
+          "type": "Text",
+          "value": "sergey.orlov@apac-04.crm.example"
+        },
+        "phone": {
+          "type": "Text",
+          "value": "+7-700-004-1004"
+        }
+      }
+    },
+    {
+      "id": "contact-synth-05",
+      "type": "Contact",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "con-3005"
+        },
+        "full_name": {
+          "type": "Text",
+          "value": "Dana Suleimenova"
+        },
+        "title": {
+          "type": "Text",
+          "value": "Service Owner"
+        },
+        "email": {
+          "type": "Text",
+          "value": "dana.suleimenova@apac-05.crm.example"
+        },
+        "phone": {
+          "type": "Text",
+          "value": "+7-700-005-1005"
+        }
+      }
+    },
+    {
+      "id": "contact-synth-06",
+      "type": "Contact",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "con-3006"
+        },
+        "full_name": {
+          "type": "Text",
+          "value": "Nikolay Petrov"
+        },
+        "title": {
+          "type": "Text",
+          "value": "Sales Director"
+        },
+        "email": {
+          "type": "Text",
+          "value": "nikolay.petrov@apac-06.crm.example"
+        },
+        "phone": {
+          "type": "Text",
+          "value": "+7-700-006-1006"
+        }
+      }
+    },
+    {
+      "id": "contact-synth-07",
+      "type": "Contact",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "con-3007"
+        },
+        "full_name": {
+          "type": "Text",
+          "value": "Asel Khamit"
+        },
+        "title": {
+          "type": "Text",
+          "value": "Program Manager"
+        },
+        "email": {
+          "type": "Text",
+          "value": "asel.khamit@apac-07.crm.example"
+        },
+        "phone": {
+          "type": "Text",
+          "value": "+7-700-007-1007"
+        }
+      }
+    },
+    {
+      "id": "contact-synth-08",
+      "type": "Contact",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "con-3008"
+        },
+        "full_name": {
+          "type": "Text",
+          "value": "Ilya Morozov"
+        },
+        "title": {
+          "type": "Text",
+          "value": "Systems Engineer"
+        },
+        "email": {
+          "type": "Text",
+          "value": "ilya.morozov@apac-08.crm.example"
+        },
+        "phone": {
+          "type": "Text",
+          "value": "+7-700-008-1008"
+        }
+      }
+    },
+    {
+      "id": "contact-synth-09",
+      "type": "Contact",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "con-3009"
+        },
+        "full_name": {
+          "type": "Text",
+          "value": "Mira Tan"
+        },
+        "title": {
+          "type": "Text",
+          "value": "Operations Director"
+        },
+        "email": {
+          "type": "Text",
+          "value": "mira.tan@amer-09.crm.example"
+        },
+        "phone": {
+          "type": "Text",
+          "value": "+7-700-009-1009"
+        }
+      }
+    },
+    {
+      "id": "contact-synth-10",
+      "type": "Contact",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "con-3010"
+        },
+        "full_name": {
+          "type": "Text",
+          "value": "Arman Bek"
+        },
+        "title": {
+          "type": "Text",
+          "value": "Procurement Lead"
+        },
+        "email": {
+          "type": "Text",
+          "value": "arman.bek@amer-10.crm.example"
+        },
+        "phone": {
+          "type": "Text",
+          "value": "+7-700-010-1010"
+        }
+      }
+    },
+    {
+      "id": "contact-synth-11",
+      "type": "Contact",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "con-3011"
+        },
+        "full_name": {
+          "type": "Text",
+          "value": "Yelena Volkova"
+        },
+        "title": {
+          "type": "Text",
+          "value": "Finance Manager"
+        },
+        "email": {
+          "type": "Text",
+          "value": "yelena.volkova@amer-11.crm.example"
+        },
+        "phone": {
+          "type": "Text",
+          "value": "+7-700-011-1011"
+        }
+      }
+    },
+    {
+      "id": "contact-synth-12",
+      "type": "Contact",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "con-3012"
+        },
+        "full_name": {
+          "type": "Text",
+          "value": "Ruslan Akhmetov"
+        },
+        "title": {
+          "type": "Text",
+          "value": "IT Manager"
+        },
+        "email": {
+          "type": "Text",
+          "value": "ruslan.akhmetov@amer-12.crm.example"
+        },
+        "phone": {
+          "type": "Text",
+          "value": "+7-700-012-1012"
+        }
+      }
+    },
+    {
+      "id": "contact-synth-13",
+      "type": "Contact",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "con-3013"
+        },
+        "full_name": {
+          "type": "Text",
+          "value": "Sara Johnson"
+        },
+        "title": {
+          "type": "Text",
+          "value": "Service Owner"
+        },
+        "email": {
+          "type": "Text",
+          "value": "sara.johnson@amer-13.crm.example"
+        },
+        "phone": {
+          "type": "Text",
+          "value": "+7-700-013-1013"
+        }
+      }
+    },
+    {
+      "id": "contact-synth-14",
+      "type": "Contact",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "con-3014"
+        },
+        "full_name": {
+          "type": "Text",
+          "value": "Mark Evans"
+        },
+        "title": {
+          "type": "Text",
+          "value": "Sales Director"
+        },
+        "email": {
+          "type": "Text",
+          "value": "mark.evans@amer-14.crm.example"
+        },
+        "phone": {
+          "type": "Text",
+          "value": "+7-700-014-1014"
+        }
+      }
+    },
+    {
+      "id": "contact-synth-15",
+      "type": "Contact",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "con-3015"
+        },
+        "full_name": {
+          "type": "Text",
+          "value": "Priya Nair"
+        },
+        "title": {
+          "type": "Text",
+          "value": "Program Manager"
+        },
+        "email": {
+          "type": "Text",
+          "value": "priya.nair@amer-15.crm.example"
+        },
+        "phone": {
+          "type": "Text",
+          "value": "+7-700-015-1015"
+        }
+      }
+    },
+    {
+      "id": "contact-synth-16",
+      "type": "Contact",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "con-3016"
+        },
+        "full_name": {
+          "type": "Text",
+          "value": "Oleg Kuznetsov"
+        },
+        "title": {
+          "type": "Text",
+          "value": "Systems Engineer"
+        },
+        "email": {
+          "type": "Text",
+          "value": "oleg.kuznetsov@amer-16.crm.example"
+        },
+        "phone": {
+          "type": "Text",
+          "value": "+7-700-016-1016"
+        }
+      }
+    },
+    {
+      "id": "user-synth-01",
+      "type": "User",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "user-s01"
+        },
+        "name": {
+          "type": "Text",
+          "value": "CRM Rep 01"
+        },
+        "role": {
+          "type": "Keyword",
+          "value": "Sales Rep"
+        },
+        "team": {
+          "type": "Keyword",
+          "value": "Growth"
+        }
+      }
+    },
+    {
+      "id": "user-synth-02",
+      "type": "User",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "user-s02"
+        },
+        "name": {
+          "type": "Text",
+          "value": "CRM Rep 02"
+        },
+        "role": {
+          "type": "Keyword",
+          "value": "Account Manager"
+        },
+        "team": {
+          "type": "Keyword",
+          "value": "Enterprise"
+        }
+      }
+    },
+    {
+      "id": "user-synth-03",
+      "type": "User",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "user-s03"
+        },
+        "name": {
+          "type": "Text",
+          "value": "CRM Rep 03"
+        },
+        "role": {
+          "type": "Keyword",
+          "value": "Sales Rep"
+        },
+        "team": {
+          "type": "Keyword",
+          "value": "Growth"
+        }
+      }
+    },
+    {
+      "id": "user-synth-04",
+      "type": "User",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "user-s04"
+        },
+        "name": {
+          "type": "Text",
+          "value": "CRM Rep 04"
+        },
+        "role": {
+          "type": "Keyword",
+          "value": "Account Manager"
+        },
+        "team": {
+          "type": "Keyword",
+          "value": "Enterprise"
+        }
+      }
+    },
+    {
+      "id": "user-synth-05",
+      "type": "User",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "user-s05"
+        },
+        "name": {
+          "type": "Text",
+          "value": "CRM Rep 05"
+        },
+        "role": {
+          "type": "Keyword",
+          "value": "Sales Rep"
+        },
+        "team": {
+          "type": "Keyword",
+          "value": "Growth"
+        }
+      }
+    },
+    {
+      "id": "user-synth-06",
+      "type": "User",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "user-s06"
+        },
+        "name": {
+          "type": "Text",
+          "value": "CRM Rep 06"
+        },
+        "role": {
+          "type": "Keyword",
+          "value": "Account Manager"
+        },
+        "team": {
+          "type": "Keyword",
+          "value": "Enterprise"
+        }
+      }
+    },
+    {
+      "id": "user-synth-07",
+      "type": "User",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "user-s07"
+        },
+        "name": {
+          "type": "Text",
+          "value": "CRM Rep 07"
+        },
+        "role": {
+          "type": "Keyword",
+          "value": "Sales Rep"
+        },
+        "team": {
+          "type": "Keyword",
+          "value": "Growth"
+        }
+      }
+    },
+    {
+      "id": "product-synth-01",
+      "type": "Product",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "prod-4001"
+        },
+        "name": {
+          "type": "Text",
+          "value": "Analytics Core"
+        },
+        "category": {
+          "type": "Keyword",
+          "value": "Analytics"
+        }
+      }
+    },
+    {
+      "id": "product-synth-02",
+      "type": "Product",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "prod-4002"
+        },
+        "name": {
+          "type": "Text",
+          "value": "Workflow Suite"
+        },
+        "category": {
+          "type": "Keyword",
+          "value": "Automation"
+        }
+      }
+    },
+    {
+      "id": "product-synth-03",
+      "type": "Product",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "prod-4003"
+        },
+        "name": {
+          "type": "Text",
+          "value": "Support Hub"
+        },
+        "category": {
+          "type": "Keyword",
+          "value": "Support"
+        }
+      }
+    },
+    {
+      "id": "product-synth-04",
+      "type": "Product",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "prod-4004"
+        },
+        "name": {
+          "type": "Text",
+          "value": "Mobile Portal"
+        },
+        "category": {
+          "type": "Keyword",
+          "value": "Digital"
+        }
+      }
+    },
+    {
+      "id": "product-synth-05",
+      "type": "Product",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "prod-4005"
+        },
+        "name": {
+          "type": "Text",
+          "value": "RevOps Planner"
+        },
+        "category": {
+          "type": "Keyword",
+          "value": "Revenue"
+        }
+      }
+    },
+    {
+      "id": "product-synth-06",
+      "type": "Product",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "prod-4006"
+        },
+        "name": {
+          "type": "Text",
+          "value": "Service Console"
+        },
+        "category": {
+          "type": "Keyword",
+          "value": "Support"
+        }
+      }
+    },
+    {
+      "id": "product-synth-07",
+      "type": "Product",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "prod-4007"
+        },
+        "name": {
+          "type": "Text",
+          "value": "Data Sync Pack"
+        },
+        "category": {
+          "type": "Keyword",
+          "value": "Integration"
+        }
+      }
+    },
+    {
+      "id": "activity-synth-01",
+      "type": "Activity",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "act-8001"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "CRM follow-up 01 for synthetic account"
+        },
+        "type": {
+          "type": "Keyword",
+          "value": "Call"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Scheduled"
+        },
+        "due_date": {
+          "type": "Date",
+          "value": "2026-07-12"
+        }
+      }
+    },
+    {
+      "id": "activity-synth-02",
+      "type": "Activity",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "act-8002"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "CRM follow-up 02 for synthetic account"
+        },
+        "type": {
+          "type": "Keyword",
+          "value": "Meeting"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Scheduled"
+        },
+        "due_date": {
+          "type": "Date",
+          "value": "2026-07-14"
+        }
+      }
+    },
+    {
+      "id": "activity-synth-03",
+      "type": "Activity",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "act-8003"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "CRM follow-up 03 for synthetic account"
+        },
+        "type": {
+          "type": "Keyword",
+          "value": "Workshop"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Scheduled"
+        },
+        "due_date": {
+          "type": "Date",
+          "value": "2026-07-16"
+        }
+      }
+    },
+    {
+      "id": "activity-synth-04",
+      "type": "Activity",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "act-8004"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "CRM follow-up 04 for synthetic account"
+        },
+        "type": {
+          "type": "Keyword",
+          "value": "Demo"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Scheduled"
+        },
+        "due_date": {
+          "type": "Date",
+          "value": "2026-07-18"
+        }
+      }
+    },
+    {
+      "id": "activity-synth-05",
+      "type": "Activity",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "act-8005"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "CRM follow-up 05 for synthetic account"
+        },
+        "type": {
+          "type": "Keyword",
+          "value": "Call"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Scheduled"
+        },
+        "due_date": {
+          "type": "Date",
+          "value": "2026-07-20"
+        }
+      }
+    },
+    {
+      "id": "activity-synth-06",
+      "type": "Activity",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "act-8006"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "CRM follow-up 06 for synthetic account"
+        },
+        "type": {
+          "type": "Keyword",
+          "value": "Meeting"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Completed"
+        },
+        "due_date": {
+          "type": "Date",
+          "value": "2026-07-22"
+        }
+      }
+    },
+    {
+      "id": "activity-synth-07",
+      "type": "Activity",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "act-8007"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "CRM follow-up 07 for synthetic account"
+        },
+        "type": {
+          "type": "Keyword",
+          "value": "Workshop"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Completed"
+        },
+        "due_date": {
+          "type": "Date",
+          "value": "2026-07-24"
+        }
+      }
+    },
+    {
+      "id": "activity-synth-08",
+      "type": "Activity",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "act-8008"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "CRM follow-up 08 for synthetic account"
+        },
+        "type": {
+          "type": "Keyword",
+          "value": "Demo"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Completed"
+        },
+        "due_date": {
+          "type": "Date",
+          "value": "2026-07-26"
+        }
+      }
+    },
+    {
+      "id": "activity-synth-09",
+      "type": "Activity",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "act-8009"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "CRM follow-up 09 for synthetic account"
+        },
+        "type": {
+          "type": "Keyword",
+          "value": "Call"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Completed"
+        },
+        "due_date": {
+          "type": "Date",
+          "value": "2026-07-28"
+        }
+      }
+    },
+    {
+      "id": "activity-synth-10",
+      "type": "Activity",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "act-8010"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "CRM follow-up 10 for synthetic account"
+        },
+        "type": {
+          "type": "Keyword",
+          "value": "Meeting"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Completed"
+        },
+        "due_date": {
+          "type": "Date",
+          "value": "2026-07-30"
+        }
+      }
+    },
+    {
+      "id": "activity-synth-11",
+      "type": "Activity",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "act-8011"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "CRM follow-up 11 for synthetic account"
+        },
+        "type": {
+          "type": "Keyword",
+          "value": "Workshop"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Completed"
+        },
+        "due_date": {
+          "type": "Date",
+          "value": "2026-08-01"
+        }
+      }
+    },
+    {
+      "id": "activity-synth-12",
+      "type": "Activity",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "act-8012"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "CRM follow-up 12 for synthetic account"
+        },
+        "type": {
+          "type": "Keyword",
+          "value": "Demo"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Cancelled"
+        },
+        "due_date": {
+          "type": "Date",
+          "value": "2026-08-03"
+        }
+      }
+    },
+    {
+      "id": "activity-synth-13",
+      "type": "Activity",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "act-8013"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "CRM follow-up 13 for synthetic account"
+        },
+        "type": {
+          "type": "Keyword",
+          "value": "Call"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Cancelled"
+        },
+        "due_date": {
+          "type": "Date",
+          "value": "2026-08-05"
+        }
+      }
+    },
+    {
+      "id": "activity-synth-14",
+      "type": "Activity",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "act-8014"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "CRM follow-up 14 for synthetic account"
+        },
+        "type": {
+          "type": "Keyword",
+          "value": "Meeting"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Cancelled"
+        },
+        "due_date": {
+          "type": "Date",
+          "value": "2026-08-07"
+        }
+      }
+    },
+    {
+      "id": "activity-synth-15",
+      "type": "Activity",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "act-8015"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "CRM follow-up 15 for synthetic account"
+        },
+        "type": {
+          "type": "Keyword",
+          "value": "Workshop"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Cancelled"
+        },
+        "due_date": {
+          "type": "Date",
+          "value": "2026-08-09"
+        }
+      }
+    },
+    {
+      "id": "activity-synth-16",
+      "type": "Activity",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "act-8016"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "CRM follow-up 16 for synthetic account"
+        },
+        "type": {
+          "type": "Keyword",
+          "value": "Demo"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Cancelled"
+        },
+        "due_date": {
+          "type": "Date",
+          "value": "2026-08-11"
+        }
+      }
+    },
+    {
+      "id": "activity-synth-17",
+      "type": "Activity",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "act-8017"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "CRM follow-up 17 for synthetic account"
+        },
+        "type": {
+          "type": "Keyword",
+          "value": "Call"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Cancelled"
+        },
+        "due_date": {
+          "type": "Date",
+          "value": "2026-08-13"
+        }
+      }
+    },
+    {
+      "id": "ticket-synth-01",
+      "type": "Ticket",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "tck-9001"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "Synthetic support ticket 01"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Open"
+        },
+        "priority": {
+          "type": "Keyword",
+          "value": "Low"
+        },
+        "source": {
+          "type": "Keyword",
+          "value": "Portal"
+        },
+        "category": {
+          "type": "Keyword",
+          "value": "Access"
+        }
+      }
+    },
+    {
+      "id": "ticket-synth-02",
+      "type": "Ticket",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "tck-9002"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "Synthetic support ticket 02"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Open"
+        },
+        "priority": {
+          "type": "Keyword",
+          "value": "Medium"
+        },
+        "source": {
+          "type": "Keyword",
+          "value": "Email"
+        },
+        "category": {
+          "type": "Keyword",
+          "value": "Billing"
+        }
+      }
+    },
+    {
+      "id": "ticket-synth-03",
+      "type": "Ticket",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "tck-9003"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "Synthetic support ticket 03"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Open"
+        },
+        "priority": {
+          "type": "Keyword",
+          "value": "High"
+        },
+        "source": {
+          "type": "Keyword",
+          "value": "Phone"
+        },
+        "category": {
+          "type": "Keyword",
+          "value": "Integration"
+        }
+      }
+    },
+    {
+      "id": "ticket-synth-04",
+      "type": "Ticket",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "tck-9004"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "Synthetic support ticket 04"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Open"
+        },
+        "priority": {
+          "type": "Keyword",
+          "value": "Critical"
+        },
+        "source": {
+          "type": "Keyword",
+          "value": "Chat"
+        },
+        "category": {
+          "type": "Keyword",
+          "value": "Hardware"
+        }
+      }
+    },
+    {
+      "id": "ticket-synth-05",
+      "type": "Ticket",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "tck-9005"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "Synthetic support ticket 05"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Open"
+        },
+        "priority": {
+          "type": "Keyword",
+          "value": "Low"
+        },
+        "source": {
+          "type": "Keyword",
+          "value": "Portal"
+        },
+        "category": {
+          "type": "Keyword",
+          "value": "Access"
+        }
+      }
+    },
+    {
+      "id": "ticket-synth-06",
+      "type": "Ticket",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "tck-9006"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "Synthetic support ticket 06"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Open"
+        },
+        "priority": {
+          "type": "Keyword",
+          "value": "Medium"
+        },
+        "source": {
+          "type": "Keyword",
+          "value": "Email"
+        },
+        "category": {
+          "type": "Keyword",
+          "value": "Billing"
+        }
+      }
+    },
+    {
+      "id": "ticket-synth-07",
+      "type": "Ticket",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "tck-9007"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "Synthetic support ticket 07"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Open"
+        },
+        "priority": {
+          "type": "Keyword",
+          "value": "High"
+        },
+        "source": {
+          "type": "Keyword",
+          "value": "Phone"
+        },
+        "category": {
+          "type": "Keyword",
+          "value": "Integration"
+        }
+      }
+    },
+    {
+      "id": "ticket-synth-08",
+      "type": "Ticket",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "tck-9008"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "Synthetic support ticket 08"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Open"
+        },
+        "priority": {
+          "type": "Keyword",
+          "value": "Critical"
+        },
+        "source": {
+          "type": "Keyword",
+          "value": "Chat"
+        },
+        "category": {
+          "type": "Keyword",
+          "value": "Hardware"
+        }
+      }
+    },
+    {
+      "id": "ticket-synth-09",
+      "type": "Ticket",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "tck-9009"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "Synthetic support ticket 09"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Pending"
+        },
+        "priority": {
+          "type": "Keyword",
+          "value": "Low"
+        },
+        "source": {
+          "type": "Keyword",
+          "value": "Portal"
+        },
+        "category": {
+          "type": "Keyword",
+          "value": "Access"
+        }
+      }
+    },
+    {
+      "id": "ticket-synth-10",
+      "type": "Ticket",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "tck-9010"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "Synthetic support ticket 10"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Pending"
+        },
+        "priority": {
+          "type": "Keyword",
+          "value": "Medium"
+        },
+        "source": {
+          "type": "Keyword",
+          "value": "Email"
+        },
+        "category": {
+          "type": "Keyword",
+          "value": "Billing"
+        }
+      }
+    },
+    {
+      "id": "ticket-synth-11",
+      "type": "Ticket",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "tck-9011"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "Synthetic support ticket 11"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Pending"
+        },
+        "priority": {
+          "type": "Keyword",
+          "value": "High"
+        },
+        "source": {
+          "type": "Keyword",
+          "value": "Phone"
+        },
+        "category": {
+          "type": "Keyword",
+          "value": "Integration"
+        }
+      }
+    },
+    {
+      "id": "ticket-synth-12",
+      "type": "Ticket",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "tck-9012"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "Synthetic support ticket 12"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Pending"
+        },
+        "priority": {
+          "type": "Keyword",
+          "value": "Critical"
+        },
+        "source": {
+          "type": "Keyword",
+          "value": "Chat"
+        },
+        "category": {
+          "type": "Keyword",
+          "value": "Hardware"
+        }
+      }
+    },
+    {
+      "id": "ticket-synth-13",
+      "type": "Ticket",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "tck-9013"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "Synthetic support ticket 13"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Resolved"
+        },
+        "priority": {
+          "type": "Keyword",
+          "value": "Low"
+        },
+        "source": {
+          "type": "Keyword",
+          "value": "Portal"
+        },
+        "category": {
+          "type": "Keyword",
+          "value": "Access"
+        }
+      }
+    },
+    {
+      "id": "ticket-synth-14",
+      "type": "Ticket",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "tck-9014"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "Synthetic support ticket 14"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Resolved"
+        },
+        "priority": {
+          "type": "Keyword",
+          "value": "Medium"
+        },
+        "source": {
+          "type": "Keyword",
+          "value": "Email"
+        },
+        "category": {
+          "type": "Keyword",
+          "value": "Billing"
+        }
+      }
+    },
+    {
+      "id": "ticket-synth-15",
+      "type": "Ticket",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "tck-9015"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "Synthetic support ticket 15"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Resolved"
+        },
+        "priority": {
+          "type": "Keyword",
+          "value": "High"
+        },
+        "source": {
+          "type": "Keyword",
+          "value": "Phone"
+        },
+        "category": {
+          "type": "Keyword",
+          "value": "Integration"
+        }
+      }
+    },
+    {
+      "id": "ticket-synth-16",
+      "type": "Ticket",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "tck-9016"
+        },
+        "subject": {
+          "type": "Text",
+          "value": "Synthetic support ticket 16"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Resolved"
+        },
+        "priority": {
+          "type": "Keyword",
+          "value": "Critical"
+        },
+        "source": {
+          "type": "Keyword",
+          "value": "Chat"
+        },
+        "category": {
+          "type": "Keyword",
+          "value": "Hardware"
+        }
+      }
+    },
+    {
+      "id": "deal-synth-01",
+      "type": "Deal",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "deal-5101"
+        },
+        "name": {
+          "type": "Keyword",
+          "value": "Synthetic deal 01 for CRM expansion"
+        },
+        "stage": {
+          "type": "Keyword",
+          "value": "Discovery"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Open"
+        },
+        "amount": {
+          "type": "Number",
+          "value": 29500.0
+        },
+        "probability": {
+          "type": "Number",
+          "value": 0.35
+        },
+        "description": {
+          "type": "Text",
+          "value": "Synthetic opportunity for customer expansion package 01."
+        }
+      }
+    },
+    {
+      "id": "deal-synth-02",
+      "type": "Deal",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "deal-5102"
+        },
+        "name": {
+          "type": "Keyword",
+          "value": "Synthetic deal 02 for CRM expansion"
+        },
+        "stage": {
+          "type": "Keyword",
+          "value": "Proposal"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Open"
+        },
+        "amount": {
+          "type": "Number",
+          "value": 34000.0
+        },
+        "probability": {
+          "type": "Number",
+          "value": 0.45
+        },
+        "description": {
+          "type": "Text",
+          "value": "Synthetic opportunity for customer expansion package 02."
+        }
+      }
+    },
+    {
+      "id": "deal-synth-03",
+      "type": "Deal",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "deal-5103"
+        },
+        "name": {
+          "type": "Keyword",
+          "value": "Synthetic deal 03 for CRM expansion"
+        },
+        "stage": {
+          "type": "Keyword",
+          "value": "Negotiation"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Open"
+        },
+        "amount": {
+          "type": "Number",
+          "value": 38500.0
+        },
+        "probability": {
+          "type": "Number",
+          "value": 0.55
+        },
+        "description": {
+          "type": "Text",
+          "value": "Synthetic opportunity for customer expansion package 03."
+        }
+      }
+    },
+    {
+      "id": "deal-synth-04",
+      "type": "Deal",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "deal-5104"
+        },
+        "name": {
+          "type": "Keyword",
+          "value": "Synthetic deal 04 for CRM expansion"
+        },
+        "stage": {
+          "type": "Keyword",
+          "value": "Approval"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Open"
+        },
+        "amount": {
+          "type": "Number",
+          "value": 43000.0
+        },
+        "probability": {
+          "type": "Number",
+          "value": 0.65
+        },
+        "description": {
+          "type": "Text",
+          "value": "Synthetic opportunity for customer expansion package 04."
+        }
+      }
+    },
+    {
+      "id": "deal-synth-05",
+      "type": "Deal",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "deal-5105"
+        },
+        "name": {
+          "type": "Keyword",
+          "value": "Synthetic deal 05 for CRM expansion"
+        },
+        "stage": {
+          "type": "Keyword",
+          "value": "Discovery"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Open"
+        },
+        "amount": {
+          "type": "Number",
+          "value": 47500.0
+        },
+        "probability": {
+          "type": "Number",
+          "value": 0.75
+        },
+        "description": {
+          "type": "Text",
+          "value": "Synthetic opportunity for customer expansion package 05."
+        }
+      }
+    },
+    {
+      "id": "deal-synth-06",
+      "type": "Deal",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "deal-5106"
+        },
+        "name": {
+          "type": "Keyword",
+          "value": "Synthetic deal 06 for CRM expansion"
+        },
+        "stage": {
+          "type": "Keyword",
+          "value": "Proposal"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Open"
+        },
+        "amount": {
+          "type": "Number",
+          "value": 52000.0
+        },
+        "probability": {
+          "type": "Number",
+          "value": 0.35
+        },
+        "description": {
+          "type": "Text",
+          "value": "Synthetic opportunity for customer expansion package 06."
+        }
+      }
+    },
+    {
+      "id": "deal-synth-07",
+      "type": "Deal",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "deal-5107"
+        },
+        "name": {
+          "type": "Keyword",
+          "value": "Synthetic deal 07 for CRM expansion"
+        },
+        "stage": {
+          "type": "Keyword",
+          "value": "Negotiation"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Open"
+        },
+        "amount": {
+          "type": "Number",
+          "value": 56500.0
+        },
+        "probability": {
+          "type": "Number",
+          "value": 0.45
+        },
+        "description": {
+          "type": "Text",
+          "value": "Synthetic opportunity for customer expansion package 07."
+        }
+      }
+    },
+    {
+      "id": "deal-synth-08",
+      "type": "Deal",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "deal-5108"
+        },
+        "name": {
+          "type": "Keyword",
+          "value": "Synthetic deal 08 for CRM expansion"
+        },
+        "stage": {
+          "type": "Keyword",
+          "value": "Approval"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Open"
+        },
+        "amount": {
+          "type": "Number",
+          "value": 61000.0
+        },
+        "probability": {
+          "type": "Number",
+          "value": 0.55
+        },
+        "description": {
+          "type": "Text",
+          "value": "Synthetic opportunity for customer expansion package 08."
+        }
+      }
+    },
+    {
+      "id": "deal-synth-09",
+      "type": "Deal",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "deal-5109"
+        },
+        "name": {
+          "type": "Keyword",
+          "value": "Synthetic deal 09 for CRM expansion"
+        },
+        "stage": {
+          "type": "Keyword",
+          "value": "Discovery"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Open"
+        },
+        "amount": {
+          "type": "Number",
+          "value": 65500.0
+        },
+        "probability": {
+          "type": "Number",
+          "value": 0.65
+        },
+        "description": {
+          "type": "Text",
+          "value": "Synthetic opportunity for customer expansion package 09."
+        }
+      }
+    },
+    {
+      "id": "deal-synth-10",
+      "type": "Deal",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "deal-5110"
+        },
+        "name": {
+          "type": "Keyword",
+          "value": "Synthetic deal 10 for CRM expansion"
+        },
+        "stage": {
+          "type": "Keyword",
+          "value": "Proposal"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Open"
+        },
+        "amount": {
+          "type": "Number",
+          "value": 70000.0
+        },
+        "probability": {
+          "type": "Number",
+          "value": 0.75
+        },
+        "description": {
+          "type": "Text",
+          "value": "Synthetic opportunity for customer expansion package 10."
+        }
+      }
+    },
+    {
+      "id": "deal-synth-11",
+      "type": "Deal",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "deal-5111"
+        },
+        "name": {
+          "type": "Keyword",
+          "value": "Synthetic deal 11 for CRM expansion"
+        },
+        "stage": {
+          "type": "Keyword",
+          "value": "Negotiation"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Open"
+        },
+        "amount": {
+          "type": "Number",
+          "value": 74500.0
+        },
+        "probability": {
+          "type": "Number",
+          "value": 0.35
+        },
+        "description": {
+          "type": "Text",
+          "value": "Synthetic opportunity for customer expansion package 11."
+        }
+      }
+    },
+    {
+      "id": "deal-synth-12",
+      "type": "Deal",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "deal-5112"
+        },
+        "name": {
+          "type": "Keyword",
+          "value": "Synthetic deal 12 for CRM expansion"
+        },
+        "stage": {
+          "type": "Keyword",
+          "value": "Approval"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Open"
+        },
+        "amount": {
+          "type": "Number",
+          "value": 79000.0
+        },
+        "probability": {
+          "type": "Number",
+          "value": 0.45
+        },
+        "description": {
+          "type": "Text",
+          "value": "Synthetic opportunity for customer expansion package 12."
+        }
+      }
+    },
+    {
+      "id": "deal-synth-13",
+      "type": "Deal",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "deal-5113"
+        },
+        "name": {
+          "type": "Keyword",
+          "value": "Synthetic deal 13 for CRM expansion"
+        },
+        "stage": {
+          "type": "Keyword",
+          "value": "Discovery"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Closed"
+        },
+        "amount": {
+          "type": "Number",
+          "value": 83500.0
+        },
+        "probability": {
+          "type": "Number",
+          "value": 0.55
+        },
+        "description": {
+          "type": "Text",
+          "value": "Synthetic opportunity for customer expansion package 13."
+        }
+      }
+    },
+    {
+      "id": "deal-synth-14",
+      "type": "Deal",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "deal-5114"
+        },
+        "name": {
+          "type": "Keyword",
+          "value": "Synthetic deal 14 for CRM expansion"
+        },
+        "stage": {
+          "type": "Keyword",
+          "value": "Proposal"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Closed"
+        },
+        "amount": {
+          "type": "Number",
+          "value": 88000.0
+        },
+        "probability": {
+          "type": "Number",
+          "value": 0.65
+        },
+        "description": {
+          "type": "Text",
+          "value": "Synthetic opportunity for customer expansion package 14."
+        }
+      }
+    },
+    {
+      "id": "deal-synth-15",
+      "type": "Deal",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "deal-5115"
+        },
+        "name": {
+          "type": "Keyword",
+          "value": "Synthetic deal 15 for CRM expansion"
+        },
+        "stage": {
+          "type": "Keyword",
+          "value": "Negotiation"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Closed"
+        },
+        "amount": {
+          "type": "Number",
+          "value": 92500.0
+        },
+        "probability": {
+          "type": "Number",
+          "value": 0.75
+        },
+        "description": {
+          "type": "Text",
+          "value": "Synthetic opportunity for customer expansion package 15."
+        }
+      }
+    },
+    {
+      "id": "deal-synth-16",
+      "type": "Deal",
+      "labels": [
+        "crm_domain"
+      ],
+      "primary_key": "id",
+      "properties": {
+        "id": {
+          "type": "Keyword",
+          "value": "deal-5116"
+        },
+        "name": {
+          "type": "Keyword",
+          "value": "Synthetic deal 16 for CRM expansion"
+        },
+        "stage": {
+          "type": "Keyword",
+          "value": "Approval"
+        },
+        "status": {
+          "type": "Keyword",
+          "value": "Closed"
+        },
+        "amount": {
+          "type": "Number",
+          "value": 97000.0
+        },
+        "probability": {
+          "type": "Number",
+          "value": 0.35
+        },
+        "description": {
+          "type": "Text",
+          "value": "Synthetic opportunity for customer expansion package 16."
+        }
+      }
+    }
+  ],
+  "relations": [
+    {
+      "from": "account-northwind",
+      "to": "user-anna",
+      "type": "ACCOUNT_OWNER"
+    },
+    {
+      "from": "account-eastline",
+      "to": "user-pavel",
+      "type": "ACCOUNT_OWNER"
+    },
+    {
+      "from": "account-fabrikam",
+      "to": "user-anna",
+      "type": "ACCOUNT_OWNER"
+    },
+    {
+      "from": "account-globex",
+      "to": "user-pavel",
+      "type": "ACCOUNT_OWNER"
+    },
+    {
+      "from": "contact-irina",
+      "to": "account-northwind",
+      "type": "CONTACT_ACCOUNT"
+    },
+    {
+      "from": "contact-timur",
+      "to": "account-eastline",
+      "type": "CONTACT_ACCOUNT"
+    },
+    {
+      "from": "contact-dina",
+      "to": "account-fabrikam",
+      "type": "CONTACT_ACCOUNT"
+    },
+    {
+      "from": "contact-sergey",
+      "to": "account-globex",
+      "type": "CONTACT_ACCOUNT"
+    },
+    {
+      "from": "account-northwind",
+      "to": "contact-irina",
+      "type": "PRIMARY_CONTACT"
+    },
+    {
+      "from": "account-eastline",
+      "to": "contact-timur",
+      "type": "PRIMARY_CONTACT"
+    },
+    {
+      "from": "account-fabrikam",
+      "to": "contact-dina",
+      "type": "PRIMARY_CONTACT"
+    },
+    {
+      "from": "account-globex",
+      "to": "contact-sergey",
+      "type": "PRIMARY_CONTACT"
+    },
+    {
+      "from": "account-northwind",
+      "to": "deal-northwind-renewal",
+      "type": "ACCOUNT_DEAL"
+    },
+    {
+      "from": "account-northwind",
+      "to": "deal-northwind-expansion",
+      "type": "ACCOUNT_DEAL"
+    },
+    {
+      "from": "account-eastline",
+      "to": "deal-eastline-automation",
+      "type": "ACCOUNT_DEAL"
+    },
+    {
+      "from": "account-fabrikam",
+      "to": "deal-fabrikam-service",
+      "type": "ACCOUNT_DEAL"
+    },
+    {
+      "from": "deal-northwind-renewal",
+      "to": "user-anna",
+      "type": "DEAL_OWNER"
+    },
+    {
+      "from": "deal-northwind-expansion",
+      "to": "user-anna",
+      "type": "DEAL_OWNER"
+    },
+    {
+      "from": "deal-eastline-automation",
+      "to": "user-pavel",
+      "type": "DEAL_OWNER"
+    },
+    {
+      "from": "deal-fabrikam-service",
+      "to": "user-anna",
+      "type": "DEAL_OWNER"
+    },
+    {
+      "from": "deal-northwind-renewal",
+      "to": "product-crm",
+      "type": "DEAL_PRODUCT"
+    },
+    {
+      "from": "deal-northwind-expansion",
+      "to": "product-analytics",
+      "type": "DEAL_PRODUCT"
+    },
+    {
+      "from": "deal-eastline-automation",
+      "to": "product-crm",
+      "type": "DEAL_PRODUCT"
+    },
+    {
+      "from": "deal-fabrikam-service",
+      "to": "product-servicedesk",
+      "type": "DEAL_PRODUCT"
+    },
+    {
+      "from": "ticket-invoice",
+      "to": "account-northwind",
+      "type": "TICKET_ACCOUNT"
+    },
+    {
+      "from": "ticket-vpn",
+      "to": "account-eastline",
+      "type": "TICKET_ACCOUNT"
+    },
+    {
+      "from": "ticket-api",
+      "to": "account-fabrikam",
+      "type": "TICKET_ACCOUNT"
+    },
+    {
+      "from": "ticket-billing-contact",
+      "to": "account-globex",
+      "type": "TICKET_ACCOUNT"
+    },
+    {
+      "from": "ticket-invoice",
+      "to": "user-olga",
+      "type": "TICKET_OWNER"
+    },
+    {
+      "from": "ticket-vpn",
+      "to": "user-olga",
+      "type": "TICKET_OWNER"
+    },
+    {
+      "from": "ticket-api",
+      "to": "user-pavel",
+      "type": "TICKET_OWNER"
+    },
+    {
+      "from": "ticket-billing-contact",
+      "to": "user-olga",
+      "type": "TICKET_OWNER"
+    },
+    {
+      "from": "deal-northwind-renewal",
+      "to": "activity-northwind-qbr",
+      "type": "NEXT_ACTIVITY"
+    },
+    {
+      "from": "deal-eastline-automation",
+      "to": "activity-eastline-demo",
+      "type": "NEXT_ACTIVITY"
+    },
+    {
+      "from": "deal-fabrikam-service",
+      "to": "activity-fabrikam-kickoff",
+      "type": "NEXT_ACTIVITY"
+    },
+    {
+      "from": "account-apac-01",
+      "to": "user-anna",
+      "type": "ACCOUNT_OWNER"
+    },
+    {
+      "from": "account-apac-01",
+      "to": "contact-synth-01",
+      "type": "PRIMARY_CONTACT"
+    },
+    {
+      "from": "contact-synth-01",
+      "to": "account-apac-01",
+      "type": "CONTACT_ACCOUNT"
+    },
+    {
+      "from": "account-apac-02",
+      "to": "user-pavel",
+      "type": "ACCOUNT_OWNER"
+    },
+    {
+      "from": "account-apac-02",
+      "to": "contact-synth-02",
+      "type": "PRIMARY_CONTACT"
+    },
+    {
+      "from": "contact-synth-02",
+      "to": "account-apac-02",
+      "type": "CONTACT_ACCOUNT"
+    },
+    {
+      "from": "account-apac-03",
+      "to": "user-olga",
+      "type": "ACCOUNT_OWNER"
+    },
+    {
+      "from": "account-apac-03",
+      "to": "contact-synth-03",
+      "type": "PRIMARY_CONTACT"
+    },
+    {
+      "from": "contact-synth-03",
+      "to": "account-apac-03",
+      "type": "CONTACT_ACCOUNT"
+    },
+    {
+      "from": "account-apac-04",
+      "to": "user-synth-01",
+      "type": "ACCOUNT_OWNER"
+    },
+    {
+      "from": "account-apac-04",
+      "to": "contact-synth-04",
+      "type": "PRIMARY_CONTACT"
+    },
+    {
+      "from": "contact-synth-04",
+      "to": "account-apac-04",
+      "type": "CONTACT_ACCOUNT"
+    },
+    {
+      "from": "account-apac-05",
+      "to": "user-synth-02",
+      "type": "ACCOUNT_OWNER"
+    },
+    {
+      "from": "account-apac-05",
+      "to": "contact-synth-05",
+      "type": "PRIMARY_CONTACT"
+    },
+    {
+      "from": "contact-synth-05",
+      "to": "account-apac-05",
+      "type": "CONTACT_ACCOUNT"
+    },
+    {
+      "from": "account-apac-06",
+      "to": "user-synth-03",
+      "type": "ACCOUNT_OWNER"
+    },
+    {
+      "from": "account-apac-06",
+      "to": "contact-synth-06",
+      "type": "PRIMARY_CONTACT"
+    },
+    {
+      "from": "contact-synth-06",
+      "to": "account-apac-06",
+      "type": "CONTACT_ACCOUNT"
+    },
+    {
+      "from": "account-apac-07",
+      "to": "user-synth-04",
+      "type": "ACCOUNT_OWNER"
+    },
+    {
+      "from": "account-apac-07",
+      "to": "contact-synth-07",
+      "type": "PRIMARY_CONTACT"
+    },
+    {
+      "from": "contact-synth-07",
+      "to": "account-apac-07",
+      "type": "CONTACT_ACCOUNT"
+    },
+    {
+      "from": "account-apac-08",
+      "to": "user-synth-05",
+      "type": "ACCOUNT_OWNER"
+    },
+    {
+      "from": "account-apac-08",
+      "to": "contact-synth-08",
+      "type": "PRIMARY_CONTACT"
+    },
+    {
+      "from": "contact-synth-08",
+      "to": "account-apac-08",
+      "type": "CONTACT_ACCOUNT"
+    },
+    {
+      "from": "account-amer-09",
+      "to": "user-synth-06",
+      "type": "ACCOUNT_OWNER"
+    },
+    {
+      "from": "account-amer-09",
+      "to": "contact-synth-09",
+      "type": "PRIMARY_CONTACT"
+    },
+    {
+      "from": "contact-synth-09",
+      "to": "account-amer-09",
+      "type": "CONTACT_ACCOUNT"
+    },
+    {
+      "from": "account-amer-10",
+      "to": "user-synth-07",
+      "type": "ACCOUNT_OWNER"
+    },
+    {
+      "from": "account-amer-10",
+      "to": "contact-synth-10",
+      "type": "PRIMARY_CONTACT"
+    },
+    {
+      "from": "contact-synth-10",
+      "to": "account-amer-10",
+      "type": "CONTACT_ACCOUNT"
+    },
+    {
+      "from": "account-amer-11",
+      "to": "user-anna",
+      "type": "ACCOUNT_OWNER"
+    },
+    {
+      "from": "account-amer-11",
+      "to": "contact-synth-11",
+      "type": "PRIMARY_CONTACT"
+    },
+    {
+      "from": "contact-synth-11",
+      "to": "account-amer-11",
+      "type": "CONTACT_ACCOUNT"
+    },
+    {
+      "from": "account-amer-12",
+      "to": "user-pavel",
+      "type": "ACCOUNT_OWNER"
+    },
+    {
+      "from": "account-amer-12",
+      "to": "contact-synth-12",
+      "type": "PRIMARY_CONTACT"
+    },
+    {
+      "from": "contact-synth-12",
+      "to": "account-amer-12",
+      "type": "CONTACT_ACCOUNT"
+    },
+    {
+      "from": "account-amer-13",
+      "to": "user-olga",
+      "type": "ACCOUNT_OWNER"
+    },
+    {
+      "from": "account-amer-13",
+      "to": "contact-synth-13",
+      "type": "PRIMARY_CONTACT"
+    },
+    {
+      "from": "contact-synth-13",
+      "to": "account-amer-13",
+      "type": "CONTACT_ACCOUNT"
+    },
+    {
+      "from": "account-amer-14",
+      "to": "user-synth-01",
+      "type": "ACCOUNT_OWNER"
+    },
+    {
+      "from": "account-amer-14",
+      "to": "contact-synth-14",
+      "type": "PRIMARY_CONTACT"
+    },
+    {
+      "from": "contact-synth-14",
+      "to": "account-amer-14",
+      "type": "CONTACT_ACCOUNT"
+    },
+    {
+      "from": "account-amer-15",
+      "to": "user-synth-02",
+      "type": "ACCOUNT_OWNER"
+    },
+    {
+      "from": "account-amer-15",
+      "to": "contact-synth-15",
+      "type": "PRIMARY_CONTACT"
+    },
+    {
+      "from": "contact-synth-15",
+      "to": "account-amer-15",
+      "type": "CONTACT_ACCOUNT"
+    },
+    {
+      "from": "account-amer-16",
+      "to": "user-synth-03",
+      "type": "ACCOUNT_OWNER"
+    },
+    {
+      "from": "account-amer-16",
+      "to": "contact-synth-16",
+      "type": "PRIMARY_CONTACT"
+    },
+    {
+      "from": "contact-synth-16",
+      "to": "account-amer-16",
+      "type": "CONTACT_ACCOUNT"
+    },
+    {
+      "from": "account-apac-01",
+      "to": "deal-synth-01",
+      "type": "ACCOUNT_DEAL"
+    },
+    {
+      "from": "deal-synth-01",
+      "to": "user-olga",
+      "type": "DEAL_OWNER"
+    },
+    {
+      "from": "deal-synth-01",
+      "to": "product-crm",
+      "type": "DEAL_PRODUCT"
+    },
+    {
+      "from": "deal-synth-01",
+      "to": "activity-synth-01",
+      "type": "NEXT_ACTIVITY"
+    },
+    {
+      "from": "account-apac-02",
+      "to": "deal-synth-02",
+      "type": "ACCOUNT_DEAL"
+    },
+    {
+      "from": "deal-synth-02",
+      "to": "user-synth-01",
+      "type": "DEAL_OWNER"
+    },
+    {
+      "from": "deal-synth-02",
+      "to": "product-analytics",
+      "type": "DEAL_PRODUCT"
+    },
+    {
+      "from": "deal-synth-02",
+      "to": "activity-synth-02",
+      "type": "NEXT_ACTIVITY"
+    },
+    {
+      "from": "account-apac-03",
+      "to": "deal-synth-03",
+      "type": "ACCOUNT_DEAL"
+    },
+    {
+      "from": "deal-synth-03",
+      "to": "user-synth-02",
+      "type": "DEAL_OWNER"
+    },
+    {
+      "from": "deal-synth-03",
+      "to": "product-servicedesk",
+      "type": "DEAL_PRODUCT"
+    },
+    {
+      "from": "deal-synth-03",
+      "to": "activity-synth-03",
+      "type": "NEXT_ACTIVITY"
+    },
+    {
+      "from": "account-apac-04",
+      "to": "deal-synth-04",
+      "type": "ACCOUNT_DEAL"
+    },
+    {
+      "from": "deal-synth-04",
+      "to": "user-synth-03",
+      "type": "DEAL_OWNER"
+    },
+    {
+      "from": "deal-synth-04",
+      "to": "product-synth-01",
+      "type": "DEAL_PRODUCT"
+    },
+    {
+      "from": "deal-synth-04",
+      "to": "activity-synth-04",
+      "type": "NEXT_ACTIVITY"
+    },
+    {
+      "from": "account-apac-05",
+      "to": "deal-synth-05",
+      "type": "ACCOUNT_DEAL"
+    },
+    {
+      "from": "deal-synth-05",
+      "to": "user-synth-04",
+      "type": "DEAL_OWNER"
+    },
+    {
+      "from": "deal-synth-05",
+      "to": "product-synth-02",
+      "type": "DEAL_PRODUCT"
+    },
+    {
+      "from": "deal-synth-05",
+      "to": "activity-synth-05",
+      "type": "NEXT_ACTIVITY"
+    },
+    {
+      "from": "account-apac-06",
+      "to": "deal-synth-06",
+      "type": "ACCOUNT_DEAL"
+    },
+    {
+      "from": "deal-synth-06",
+      "to": "user-synth-05",
+      "type": "DEAL_OWNER"
+    },
+    {
+      "from": "deal-synth-06",
+      "to": "product-synth-03",
+      "type": "DEAL_PRODUCT"
+    },
+    {
+      "from": "deal-synth-06",
+      "to": "activity-synth-06",
+      "type": "NEXT_ACTIVITY"
+    },
+    {
+      "from": "account-apac-07",
+      "to": "deal-synth-07",
+      "type": "ACCOUNT_DEAL"
+    },
+    {
+      "from": "deal-synth-07",
+      "to": "user-synth-06",
+      "type": "DEAL_OWNER"
+    },
+    {
+      "from": "deal-synth-07",
+      "to": "product-synth-04",
+      "type": "DEAL_PRODUCT"
+    },
+    {
+      "from": "deal-synth-07",
+      "to": "activity-synth-07",
+      "type": "NEXT_ACTIVITY"
+    },
+    {
+      "from": "account-apac-08",
+      "to": "deal-synth-08",
+      "type": "ACCOUNT_DEAL"
+    },
+    {
+      "from": "deal-synth-08",
+      "to": "user-synth-07",
+      "type": "DEAL_OWNER"
+    },
+    {
+      "from": "deal-synth-08",
+      "to": "product-synth-05",
+      "type": "DEAL_PRODUCT"
+    },
+    {
+      "from": "deal-synth-08",
+      "to": "activity-synth-08",
+      "type": "NEXT_ACTIVITY"
+    },
+    {
+      "from": "account-amer-09",
+      "to": "deal-synth-09",
+      "type": "ACCOUNT_DEAL"
+    },
+    {
+      "from": "deal-synth-09",
+      "to": "user-anna",
+      "type": "DEAL_OWNER"
+    },
+    {
+      "from": "deal-synth-09",
+      "to": "product-synth-06",
+      "type": "DEAL_PRODUCT"
+    },
+    {
+      "from": "deal-synth-09",
+      "to": "activity-synth-09",
+      "type": "NEXT_ACTIVITY"
+    },
+    {
+      "from": "account-amer-10",
+      "to": "deal-synth-10",
+      "type": "ACCOUNT_DEAL"
+    },
+    {
+      "from": "deal-synth-10",
+      "to": "user-pavel",
+      "type": "DEAL_OWNER"
+    },
+    {
+      "from": "deal-synth-10",
+      "to": "product-synth-07",
+      "type": "DEAL_PRODUCT"
+    },
+    {
+      "from": "deal-synth-10",
+      "to": "activity-synth-10",
+      "type": "NEXT_ACTIVITY"
+    },
+    {
+      "from": "account-amer-11",
+      "to": "deal-synth-11",
+      "type": "ACCOUNT_DEAL"
+    },
+    {
+      "from": "deal-synth-11",
+      "to": "user-olga",
+      "type": "DEAL_OWNER"
+    },
+    {
+      "from": "deal-synth-11",
+      "to": "product-crm",
+      "type": "DEAL_PRODUCT"
+    },
+    {
+      "from": "deal-synth-11",
+      "to": "activity-synth-11",
+      "type": "NEXT_ACTIVITY"
+    },
+    {
+      "from": "account-amer-12",
+      "to": "deal-synth-12",
+      "type": "ACCOUNT_DEAL"
+    },
+    {
+      "from": "deal-synth-12",
+      "to": "user-synth-01",
+      "type": "DEAL_OWNER"
+    },
+    {
+      "from": "deal-synth-12",
+      "to": "product-analytics",
+      "type": "DEAL_PRODUCT"
+    },
+    {
+      "from": "deal-synth-12",
+      "to": "activity-synth-12",
+      "type": "NEXT_ACTIVITY"
+    },
+    {
+      "from": "account-amer-13",
+      "to": "deal-synth-13",
+      "type": "ACCOUNT_DEAL"
+    },
+    {
+      "from": "deal-synth-13",
+      "to": "user-synth-02",
+      "type": "DEAL_OWNER"
+    },
+    {
+      "from": "deal-synth-13",
+      "to": "product-servicedesk",
+      "type": "DEAL_PRODUCT"
+    },
+    {
+      "from": "deal-synth-13",
+      "to": "activity-synth-13",
+      "type": "NEXT_ACTIVITY"
+    },
+    {
+      "from": "account-amer-14",
+      "to": "deal-synth-14",
+      "type": "ACCOUNT_DEAL"
+    },
+    {
+      "from": "deal-synth-14",
+      "to": "user-synth-03",
+      "type": "DEAL_OWNER"
+    },
+    {
+      "from": "deal-synth-14",
+      "to": "product-synth-01",
+      "type": "DEAL_PRODUCT"
+    },
+    {
+      "from": "deal-synth-14",
+      "to": "activity-synth-14",
+      "type": "NEXT_ACTIVITY"
+    },
+    {
+      "from": "account-amer-15",
+      "to": "deal-synth-15",
+      "type": "ACCOUNT_DEAL"
+    },
+    {
+      "from": "deal-synth-15",
+      "to": "user-synth-04",
+      "type": "DEAL_OWNER"
+    },
+    {
+      "from": "deal-synth-15",
+      "to": "product-synth-02",
+      "type": "DEAL_PRODUCT"
+    },
+    {
+      "from": "deal-synth-15",
+      "to": "activity-synth-15",
+      "type": "NEXT_ACTIVITY"
+    },
+    {
+      "from": "account-amer-16",
+      "to": "deal-synth-16",
+      "type": "ACCOUNT_DEAL"
+    },
+    {
+      "from": "deal-synth-16",
+      "to": "user-synth-05",
+      "type": "DEAL_OWNER"
+    },
+    {
+      "from": "deal-synth-16",
+      "to": "product-synth-03",
+      "type": "DEAL_PRODUCT"
+    },
+    {
+      "from": "deal-synth-16",
+      "to": "activity-synth-16",
+      "type": "NEXT_ACTIVITY"
+    },
+    {
+      "from": "ticket-synth-01",
+      "to": "account-apac-01",
+      "type": "TICKET_ACCOUNT"
+    },
+    {
+      "from": "ticket-synth-01",
+      "to": "user-synth-02",
+      "type": "TICKET_OWNER"
+    },
+    {
+      "from": "ticket-synth-02",
+      "to": "account-apac-02",
+      "type": "TICKET_ACCOUNT"
+    },
+    {
+      "from": "ticket-synth-02",
+      "to": "user-synth-03",
+      "type": "TICKET_OWNER"
+    },
+    {
+      "from": "ticket-synth-03",
+      "to": "account-apac-03",
+      "type": "TICKET_ACCOUNT"
+    },
+    {
+      "from": "ticket-synth-03",
+      "to": "user-synth-04",
+      "type": "TICKET_OWNER"
+    },
+    {
+      "from": "ticket-synth-04",
+      "to": "account-apac-04",
+      "type": "TICKET_ACCOUNT"
+    },
+    {
+      "from": "ticket-synth-04",
+      "to": "user-synth-05",
+      "type": "TICKET_OWNER"
+    },
+    {
+      "from": "ticket-synth-05",
+      "to": "account-apac-05",
+      "type": "TICKET_ACCOUNT"
+    },
+    {
+      "from": "ticket-synth-05",
+      "to": "user-synth-06",
+      "type": "TICKET_OWNER"
+    },
+    {
+      "from": "ticket-synth-06",
+      "to": "account-apac-06",
+      "type": "TICKET_ACCOUNT"
+    },
+    {
+      "from": "ticket-synth-06",
+      "to": "user-synth-07",
+      "type": "TICKET_OWNER"
+    },
+    {
+      "from": "ticket-synth-07",
+      "to": "account-apac-07",
+      "type": "TICKET_ACCOUNT"
+    },
+    {
+      "from": "ticket-synth-07",
+      "to": "user-anna",
+      "type": "TICKET_OWNER"
+    },
+    {
+      "from": "ticket-synth-08",
+      "to": "account-apac-08",
+      "type": "TICKET_ACCOUNT"
+    },
+    {
+      "from": "ticket-synth-08",
+      "to": "user-pavel",
+      "type": "TICKET_OWNER"
+    },
+    {
+      "from": "ticket-synth-09",
+      "to": "account-amer-09",
+      "type": "TICKET_ACCOUNT"
+    },
+    {
+      "from": "ticket-synth-09",
+      "to": "user-olga",
+      "type": "TICKET_OWNER"
+    },
+    {
+      "from": "ticket-synth-10",
+      "to": "account-amer-10",
+      "type": "TICKET_ACCOUNT"
+    },
+    {
+      "from": "ticket-synth-10",
+      "to": "user-synth-01",
+      "type": "TICKET_OWNER"
+    },
+    {
+      "from": "ticket-synth-11",
+      "to": "account-amer-11",
+      "type": "TICKET_ACCOUNT"
+    },
+    {
+      "from": "ticket-synth-11",
+      "to": "user-synth-02",
+      "type": "TICKET_OWNER"
+    },
+    {
+      "from": "ticket-synth-12",
+      "to": "account-amer-12",
+      "type": "TICKET_ACCOUNT"
+    },
+    {
+      "from": "ticket-synth-12",
+      "to": "user-synth-03",
+      "type": "TICKET_OWNER"
+    },
+    {
+      "from": "ticket-synth-13",
+      "to": "account-amer-13",
+      "type": "TICKET_ACCOUNT"
+    },
+    {
+      "from": "ticket-synth-13",
+      "to": "user-synth-04",
+      "type": "TICKET_OWNER"
+    },
+    {
+      "from": "ticket-synth-14",
+      "to": "account-amer-14",
+      "type": "TICKET_ACCOUNT"
+    },
+    {
+      "from": "ticket-synth-14",
+      "to": "user-synth-05",
+      "type": "TICKET_OWNER"
+    },
+    {
+      "from": "ticket-synth-15",
+      "to": "account-amer-15",
+      "type": "TICKET_ACCOUNT"
+    },
+    {
+      "from": "ticket-synth-15",
+      "to": "user-synth-06",
+      "type": "TICKET_OWNER"
+    },
+    {
+      "from": "ticket-synth-16",
+      "to": "account-amer-16",
+      "type": "TICKET_ACCOUNT"
+    },
+    {
+      "from": "ticket-synth-16",
+      "to": "user-synth-07",
+      "type": "TICKET_OWNER"
+    }
+  ]
+}

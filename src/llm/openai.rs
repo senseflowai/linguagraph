@@ -96,7 +96,10 @@ impl LlmClient for OpenAiClient {
             req = req.bearer_auth(key);
         }
 
-        let resp = req.send().await.map_err(|e| LlmError::Http(e.to_string()))?;
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| LlmError::Http(e.to_string()))?;
         let status = resp.status();
         let text = resp
             .text()

@@ -145,7 +145,10 @@ mod tests {
             "places": [{"id": "p1"}]
         });
         let cs = detect_collections(&data);
-        assert_eq!(names(&cs), vec!["cameras".to_string(), "places".to_string()]);
+        assert_eq!(
+            names(&cs),
+            vec!["cameras".to_string(), "places".to_string()]
+        );
         let cam = cs.iter().find(|c| c.name == "cameras").unwrap();
         assert_eq!(cam.path, "$.cameras");
         assert_eq!(cam.len, 2);
@@ -233,7 +236,7 @@ mod tests {
         assert_eq!(cams.len(), 2); // top-level capped
         let lenses = cams[0]["lenses"].as_array().unwrap();
         assert_eq!(lenses.len(), 2); // nested capped too
-        // Keys and scalars preserved.
+                                     // Keys and scalars preserved.
         assert_eq!(cams[0]["id"], json!(1));
     }
 

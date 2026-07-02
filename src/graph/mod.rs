@@ -10,11 +10,11 @@ mod types;
 pub use builder::{
     ChunkBuilder, EntityBuilder, Graph, GraphBuilder, RelationshipBuilder, CANONICAL_FIELD,
 };
-pub use canonical::build_canonical_text;
 pub use builtins::{
     is_builtin_entity, new_chunk, new_source, new_v4_id, CHUNK_LABEL, MENTION_REL, PART_OF_REL,
     SOURCE_LABEL,
 };
+pub use canonical::build_canonical_text;
 pub use ontology::{
     DomainOntology, EntityTypeMatch, EntityTypeSpec, OntologyCatalog, OntologyError,
     OntologyPropertyType, PropertySpec, RelationTypeSpec,

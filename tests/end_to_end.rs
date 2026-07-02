@@ -518,12 +518,7 @@ async fn entity_type_search_returns_unique_types_with_domains_and_scopes() {
     // Vector leg: one Person hit from semantic_text___canonical with a
     // high score and scope_text.
     mock.enqueue(QueryResult {
-        columns: vec![
-            "nid".into(),
-            "labs".into(),
-            "score".into(),
-            "coll".into(),
-        ],
+        columns: vec!["nid".into(), "labs".into(), "score".into(), "coll".into()],
         rows: vec![Row {
             fields: BTreeMap::from([
                 ("nid".to_string(), Value::Json(serde_json::json!(7))),
@@ -557,9 +552,10 @@ async fn entity_type_search_returns_unique_types_with_domains_and_scopes() {
     let person = &result.matches[0];
     assert_eq!(person.entity_type, "Person");
     assert_eq!(person.domain.as_deref(), Some("legal"));
-    assert!(person.scopes.iter().any(|s| {
-        matches!(s, linguagraph::graph::Scope::Text)
-    }));
+    assert!(person
+        .scopes
+        .iter()
+        .any(|s| { matches!(s, linguagraph::graph::Scope::Text) }));
     assert_eq!(
         person.per_collection.get("semantic_text___canonical"),
         Some(&0.82_f32)
@@ -570,9 +566,10 @@ async fn entity_type_search_returns_unique_types_with_domains_and_scopes() {
     let company = &result.neighbors[0];
     assert_eq!(company.entity_type, "Company");
     assert_eq!(company.domain.as_deref(), Some("legal"));
-    assert!(company.scopes.iter().any(|s| {
-        matches!(s, linguagraph::graph::Scope::Structured)
-    }));
+    assert!(company
+        .scopes
+        .iter()
+        .any(|s| { matches!(s, linguagraph::graph::Scope::Structured) }));
     // Neighbours carry no vector signal.
     assert!(company.vector_score.is_none());
     assert!(company.per_collection.is_empty());

@@ -208,14 +208,14 @@ where
     let mut by_type: BTreeMap<String, EntityTypeHit> = BTreeMap::new();
 
     for row in rows {
-        let (entity_type, domain, scopes) =
-            classify_labels(&row.labels, catalog, prefix_label);
+        let (entity_type, domain, scopes) = classify_labels(&row.labels, catalog, prefix_label);
         let Some(entity_type) = entity_type else {
             continue;
         };
 
-        let hit = by_type.entry(entity_type.clone()).or_insert_with(|| {
-            EntityTypeHit {
+        let hit = by_type
+            .entry(entity_type.clone())
+            .or_insert_with(|| EntityTypeHit {
                 entity_type: entity_type.clone(),
                 domain: domain.clone(),
                 scopes: BTreeSet::new(),
@@ -223,8 +223,7 @@ where
                 per_collection: BTreeMap::new(),
                 catalog_score: None,
                 sample_node_ids: Vec::new(),
-            }
-        });
+            });
         // Domain is filled lazily; the catalog wins over later rows.
         if hit.domain.is_none() {
             hit.domain = domain;
@@ -347,8 +346,7 @@ mod tests {
             "scope_table".to_string(),
             "tenantA".to_string(),
         ];
-        let (entity, domain, scopes) =
-            classify_labels(&labels, Some(&cat), Some("tenantA"));
+        let (entity, domain, scopes) = classify_labels(&labels, Some(&cat), Some("tenantA"));
         assert_eq!(entity.as_deref(), Some("Person"));
         assert_eq!(domain.as_deref(), Some("legal"));
         let mut expected = BTreeSet::new();
@@ -415,10 +413,7 @@ mod tests {
         let person = hits.iter().find(|h| h.entity_type == "Person").unwrap();
         assert_eq!(person.domain.as_deref(), Some("legal"));
         assert_eq!(person.vector_score, Some(0.8));
-        assert_eq!(
-            person.per_collection.get("semantic_text__name"),
-            Some(&0.8)
-        );
+        assert_eq!(person.per_collection.get("semantic_text__name"), Some(&0.8));
         assert_eq!(
             person.per_collection.get("semantic_text___canonical"),
             Some(&0.55)

@@ -1,0 +1,414 @@
+{
+  "source": "erp-e2e-sandbox",
+  "entities": [
+    {
+      "id": "customer-northwind",
+      "type": "Customer",
+      "labels": ["erp_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "cust-1001" },
+        "name": { "type": "Text", "value": "Нортвинд Казахстан" },
+        "description": { "type": "Text", "value": "Оптовый дистрибьютор в Алматы, который каждый квартал обновляет ERP-оборудование и складскую инфраструктуру." },
+        "region": { "type": "Keyword", "value": "CIS" },
+        "segment": { "type": "Keyword", "value": "Enterprise" },
+        "status": { "type": "Keyword", "value": "активный" }
+      }
+    },
+    {
+      "id": "customer-globex",
+      "type": "Customer",
+      "labels": ["erp_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "cust-1002" },
+        "name": { "type": "Text", "value": "Глобекс Ритейл Казахстан" },
+        "description": { "type": "Text", "value": "Омниканальная розничная сеть в Астане с сезонным планированием поставок и автоматизацией финансов." },
+        "region": { "type": "Keyword", "value": "CIS" },
+        "segment": { "type": "Keyword", "value": "Mid-market" },
+        "status": { "type": "Keyword", "value": "активный" }
+      }
+    },
+    {
+      "id": "customer-sigma",
+      "type": "Customer",
+      "labels": ["erp_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "cust-1003" },
+        "name": { "type": "Text", "value": "Сигма Производственные Услуги" },
+        "description": { "type": "Text", "value": "Производственное предприятие в Шымкенте с высоким спросом на запасные части и закупки для обслуживания." },
+        "region": { "type": "Keyword", "value": "CIS" },
+        "segment": { "type": "Keyword", "value": "Enterprise" },
+        "status": { "type": "Keyword", "value": "активный" }
+      }
+    },
+    {
+      "id": "employee-pavel",
+      "type": "Employee",
+      "labels": ["erp_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "emp-2001" },
+        "name": { "type": "Text", "value": "Павел Ким" },
+        "role": { "type": "Keyword", "value": "Account Manager" },
+        "team": { "type": "Keyword", "value": "ERP Sales" }
+      }
+    },
+    {
+      "id": "employee-alina",
+      "type": "Employee",
+      "labels": ["erp_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "emp-2002" },
+        "name": { "type": "Text", "value": "Alina Sadykova" },
+        "role": { "type": "Keyword", "value": "Customer Success Lead" },
+        "team": { "type": "Keyword", "value": "ERP Sales" }
+      }
+    },
+    {
+      "id": "employee-madina",
+      "type": "Employee",
+      "labels": ["erp_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "emp-2003" },
+        "name": { "type": "Text", "value": "Madina Tulegenova" },
+        "role": { "type": "Keyword", "value": "Procurement Lead" },
+        "team": { "type": "Keyword", "value": "Supply Chain" }
+      }
+    },
+    {
+      "id": "product-inventory",
+      "type": "Product",
+      "labels": ["erp_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "prod-3001" },
+        "name": { "type": "Text", "value": "Комплект управления запасами" },
+        "category": { "type": "Keyword", "value": "Software" },
+        "description": { "type": "Text", "value": "Отслеживание складских запасов и планирование пополнения для команд ERP." }
+      }
+    },
+    {
+      "id": "product-finance",
+      "type": "Product",
+      "labels": ["erp_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "prod-3002" },
+        "name": { "type": "Text", "value": "Финансовый центр" },
+        "category": { "type": "Keyword", "value": "Software" },
+        "description": { "type": "Text", "value": "Автоматизация дебиторской задолженности и выставления счетов для ERP-финансов." }
+      }
+    },
+    {
+      "id": "product-procure",
+      "type": "Product",
+      "labels": ["erp_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "prod-3003" },
+        "name": { "type": "Text", "value": "Система закупок" },
+        "category": { "type": "Keyword", "value": "Software" },
+        "description": { "type": "Text", "value": "Управление закупочными заказами и поставщиками для закупок." }
+      }
+    },
+    {
+      "id": "product-pump",
+      "type": "Product",
+      "labels": ["erp_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "prod-3004" },
+        "name": { "type": "Text", "value": "Комплект уплотнений для насоса" },
+        "category": { "type": "Keyword", "value": "Spare Parts" },
+        "description": { "type": "Text", "value": "Комплект запасных уплотнений для промышленных заказов на обслуживание." }
+      }
+    },
+    {
+      "id": "warehouse-astana",
+      "type": "Warehouse",
+      "labels": ["erp_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "wh-4001" },
+        "name": { "type": "Text", "value": "Астанинский центр комплектации" },
+        "city": { "type": "Keyword", "value": "Astana" },
+        "description": { "type": "Text", "value": "Основной распределительный центр для пополнения розницы и готовой продукции." }
+      }
+    },
+    {
+      "id": "warehouse-almaty",
+      "type": "Warehouse",
+      "labels": ["erp_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "wh-4002" },
+        "name": { "type": "Text", "value": "Алматинский распределительный центр" },
+        "city": { "type": "Keyword", "value": "Almaty" },
+        "description": { "type": "Text", "value": "Сквозной склад, который обрабатывает холодовую цепочку и розничные отгрузки." }
+      }
+    },
+    {
+      "id": "warehouse-shymkent",
+      "type": "Warehouse",
+      "labels": ["erp_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "wh-4003" },
+        "name": { "type": "Text", "value": "Шымкентский склад запасных частей" },
+        "city": { "type": "Keyword", "value": "Shymkent" },
+        "description": { "type": "Text", "value": "Склад запасных частей для обслуживания и срочных отгрузок." }
+      }
+    },
+    {
+      "id": "supplier-aru",
+      "type": "Supplier",
+      "labels": ["erp_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "sup-5001" },
+        "name": { "type": "Text", "value": "Ару Логистикс" },
+        "category": { "type": "Keyword", "value": "Packaging" },
+        "description": { "type": "Text", "value": "Поставщик упаковочных материалов и расходников для холодовой цепочки." }
+      }
+    },
+    {
+      "id": "supplier-delta",
+      "type": "Supplier",
+      "labels": ["erp_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "sup-5002" },
+        "name": { "type": "Text", "value": "Группа Delta Parts" },
+        "category": { "type": "Keyword", "value": "Spare Parts" },
+        "description": { "type": "Text", "value": "Поставщик промышленных деталей для насосов, уплотнений и ремонтных комплектов." }
+      }
+    },
+    {
+      "id": "order-northwind",
+      "type": "SalesOrder",
+      "labels": ["erp_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "so-5001" },
+        "name": { "type": "Text", "value": "Обновление оборудования Нортвинд" },
+        "status": { "type": "Keyword", "value": "открыт" },
+        "stage": { "type": "Keyword", "value": "Proposal" },
+        "description": { "type": "Text", "value": "Квартальное обновление складских терминалов и сканеров." }
+      }
+    },
+    {
+      "id": "order-globex",
+      "type": "SalesOrder",
+      "labels": ["erp_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "so-5002" },
+        "name": { "type": "Text", "value": "Годовой договор поставок Глобекс" },
+        "status": { "type": "Keyword", "value": "ожидает" },
+        "stage": { "type": "Keyword", "value": "Negotiation" },
+        "description": { "type": "Text", "value": "Годовой договор на пополнение розницы с условиями выставления счетов." }
+      }
+    },
+    {
+      "id": "order-sigma",
+      "type": "SalesOrder",
+      "labels": ["erp_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "so-5003" },
+        "name": { "type": "Text", "value": "Срочный заказ запасных частей Сигма" },
+        "status": { "type": "Keyword", "value": "открыт" },
+        "stage": { "type": "Keyword", "value": "Approval" },
+        "description": { "type": "Text", "value": "Срочный заказ на обслуживание для уплотнений насосов и полевых комплектов." }
+      }
+    },
+    {
+      "id": "line-northwind",
+      "type": "SalesOrderLine",
+      "labels": ["erp_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "sol-6001" },
+        "line_name": { "type": "Text", "value": "Пакет обновления складских терминалов" },
+        "quantity": { "type": "Number", "value": 24 },
+        "description": { "type": "Text", "value": "Обновление ручных терминалов и сканеров для склада Нортвинд." }
+      }
+    },
+    {
+      "id": "line-globex",
+      "type": "SalesOrderLine",
+      "labels": ["erp_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "sol-6002" },
+        "line_name": { "type": "Text", "value": "Пакет ежегодного пополнения" },
+        "quantity": { "type": "Number", "value": 120 },
+        "description": { "type": "Text", "value": "Строка пополнения розницы по годовому договору Глобекс." }
+      }
+    },
+    {
+      "id": "line-sigma",
+      "type": "SalesOrderLine",
+      "labels": ["erp_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "sol-6003" },
+        "line_name": { "type": "Text", "value": "Срочная позиция комплекта уплотнений для насоса" },
+        "quantity": { "type": "Number", "value": 18 },
+        "description": { "type": "Text", "value": "Срочная строка запасных частей для обслуживания Сигма." }
+      }
+    },
+    {
+      "id": "invoice-northwind",
+      "type": "Invoice",
+      "labels": ["erp_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "inv-7001" },
+        "invoice_number": { "type": "Keyword", "value": "INV-1001" },
+        "invoice_date": { "type": "Date", "value": "2026-07-01" },
+        "subject": { "type": "Text", "value": "Инвойс за обновление оборудования Нортвинд" },
+        "status": { "type": "Keyword", "value": "просрочен" },
+        "description": { "type": "Text", "value": "Инвойс выставлен за обновление складских терминалов." }
+      }
+    },
+    {
+      "id": "invoice-globex",
+      "type": "Invoice",
+      "labels": ["erp_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "inv-7002" },
+        "invoice_number": { "type": "Keyword", "value": "INV-1002" },
+        "invoice_date": { "type": "Date", "value": "2026-07-02" },
+        "subject": { "type": "Text", "value": "Инвойс по годовому договору поставок Глобекс" },
+        "status": { "type": "Keyword", "value": "оплачен" },
+        "description": { "type": "Text", "value": "Оплаченный инвойс за ежегодное пополнение." }
+      }
+    },
+    {
+      "id": "invoice-sigma",
+      "type": "Invoice",
+      "labels": ["erp_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "inv-7003" },
+        "invoice_number": { "type": "Keyword", "value": "INV-1003" },
+        "invoice_date": { "type": "Date", "value": "2026-07-03" },
+        "subject": { "type": "Text", "value": "Инвойс по срочному заказу Сигма" },
+        "status": { "type": "Keyword", "value": "открыт" },
+        "description": { "type": "Text", "value": "Открытый инвойс, ожидающий согласования обслуживания." }
+      }
+    },
+    {
+      "id": "payment-globex",
+      "type": "Payment",
+      "labels": ["erp_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "pay-9001" },
+        "reference": { "type": "Keyword", "value": "PAY-9001" },
+        "status": { "type": "Keyword", "value": "получен" },
+        "method": { "type": "Keyword", "value": "банковский перевод" },
+        "description": { "type": "Text", "value": "Платёж зарегистрирован по годовому договору поставок Глобекс." }
+      }
+    },
+    {
+      "id": "payment-northwind",
+      "type": "Payment",
+      "labels": ["erp_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "pay-9002" },
+        "reference": { "type": "Keyword", "value": "PAY-9002" },
+        "status": { "type": "Keyword", "value": "ожидает" },
+        "method": { "type": "Keyword", "value": "банковский перевод" },
+        "description": { "type": "Text", "value": "Ожидающий платёж по просроченному инвойсу Нортвинд." }
+      }
+    },
+    {
+      "id": "purchase-aru",
+      "type": "PurchaseOrder",
+      "labels": ["erp_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "po-7781" },
+        "number": { "type": "Keyword", "value": "PO-7781" },
+        "status": { "type": "Keyword", "value": "одобрен" },
+        "description": { "type": "Text", "value": "Заказ на пополнение упаковки для доставки по холодовой цепочке." }
+      }
+    },
+    {
+      "id": "purchase-delta",
+      "type": "PurchaseOrder",
+      "labels": ["erp_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "po-7782" },
+        "number": { "type": "Keyword", "value": "PO-7782" },
+        "status": { "type": "Keyword", "value": "открыт" },
+        "description": { "type": "Text", "value": "Заказ запасных частей для обслуживания насосов." }
+      }
+    },
+    {
+      "id": "shipment-northwind",
+      "type": "Shipment",
+      "labels": ["erp_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "SHP-9001" },
+        "reference": { "type": "Keyword", "value": "SHP-9001" },
+        "status": { "type": "Keyword", "value": "в пути" },
+        "carrier": { "type": "Keyword", "value": "KazPost Freight" },
+        "description": { "type": "Text", "value": "Отгрузка из Астаны для внедрения у Нортвинд." }
+      }
+    },
+    {
+      "id": "shipment-sigma",
+      "type": "Shipment",
+      "labels": ["erp_domain"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "SHP-9002" },
+        "reference": { "type": "Keyword", "value": "SHP-9002" },
+        "status": { "type": "Keyword", "value": "доставлено" },
+        "carrier": { "type": "Keyword", "value": "Direct Express" },
+        "description": { "type": "Text", "value": "Отгрузка направлена на Шымкентский склад запасных частей." }
+      }
+    }
+  ],
+  "relations": [
+    { "from": "customer-northwind", "to": "employee-alina", "type": "CUSTOMER_MANAGER" },
+    { "from": "customer-globex", "to": "employee-pavel", "type": "CUSTOMER_MANAGER" },
+    { "from": "customer-sigma", "to": "employee-madina", "type": "CUSTOMER_MANAGER" },
+    { "from": "customer-northwind", "to": "order-northwind", "type": "CUSTOMER_ORDER" },
+    { "from": "customer-globex", "to": "order-globex", "type": "CUSTOMER_ORDER" },
+    { "from": "customer-sigma", "to": "order-sigma", "type": "CUSTOMER_ORDER" },
+    { "from": "order-northwind", "to": "employee-alina", "type": "ORDER_OWNER" },
+    { "from": "order-globex", "to": "employee-pavel", "type": "ORDER_OWNER" },
+    { "from": "order-sigma", "to": "employee-madina", "type": "ORDER_OWNER" },
+    { "from": "order-northwind", "to": "line-northwind", "type": "ORDER_LINE" },
+    { "from": "order-globex", "to": "line-globex", "type": "ORDER_LINE" },
+    { "from": "order-sigma", "to": "line-sigma", "type": "ORDER_LINE" },
+    { "from": "line-northwind", "to": "product-inventory", "type": "LINE_PRODUCT" },
+    { "from": "line-globex", "to": "product-finance", "type": "LINE_PRODUCT" },
+    { "from": "line-sigma", "to": "product-pump", "type": "LINE_PRODUCT" },
+    { "from": "order-northwind", "to": "invoice-northwind", "type": "ORDER_INVOICE" },
+    { "from": "order-globex", "to": "invoice-globex", "type": "ORDER_INVOICE" },
+    { "from": "order-sigma", "to": "invoice-sigma", "type": "ORDER_INVOICE" },
+    { "from": "invoice-globex", "to": "payment-globex", "type": "INVOICE_PAYMENT" },
+    { "from": "invoice-northwind", "to": "payment-northwind", "type": "INVOICE_PAYMENT" },
+    { "from": "purchase-aru", "to": "supplier-aru", "type": "PURCHASE_ORDER_SUPPLIER" },
+    { "from": "purchase-delta", "to": "supplier-delta", "type": "PURCHASE_ORDER_SUPPLIER" },
+    { "from": "purchase-aru", "to": "warehouse-almaty", "type": "PURCHASE_ORDER_WAREHOUSE" },
+    { "from": "purchase-delta", "to": "warehouse-shymkent", "type": "PURCHASE_ORDER_WAREHOUSE" },
+    { "from": "order-northwind", "to": "shipment-northwind", "type": "ORDER_SHIPMENT" },
+    { "from": "order-sigma", "to": "shipment-sigma", "type": "ORDER_SHIPMENT" },
+    { "from": "shipment-northwind", "to": "warehouse-astana", "type": "SHIPMENT_WAREHOUSE" },
+    { "from": "shipment-sigma", "to": "warehouse-shymkent", "type": "SHIPMENT_WAREHOUSE" }
+  ]
+}

@@ -107,8 +107,8 @@ pub async fn describe_properties(
 
     // 2. Run the requests concurrently, bounded by `max_concurrency`.
     let concurrency = opts.max_concurrency.max(1);
-    let results: Vec<(usize, usize, Option<String>)> = stream::iter(jobs.into_iter().map(|job| {
-        async move {
+    let results: Vec<(usize, usize, Option<String>)> =
+        stream::iter(jobs.into_iter().map(|job| async move {
             match llm.complete(&job.system, &job.user).await {
                 Ok(raw) => (job.entity_idx, job.prop_idx, Some(clean_description(&raw))),
                 Err(e) => {
@@ -120,11 +120,10 @@ pub async fn describe_properties(
                     (job.entity_idx, job.prop_idx, None)
                 }
             }
-        }
-    }))
-    .buffer_unordered(concurrency)
-    .collect()
-    .await;
+        }))
+        .buffer_unordered(concurrency)
+        .collect()
+        .await;
 
     // 3. Write the descriptions back (mutable borrow).
     let mut written = 0;
@@ -198,7 +197,11 @@ fn build_describe_prompt(
         let _ = writeln!(user, "Sample values: (none available)");
     } else {
         let rendered: Vec<String> = samples.iter().map(|s| format!("`{s}`")).collect();
-        let _ = writeln!(user, "Sample value(s) from the data: {}", rendered.join(", "));
+        let _ = writeln!(
+            user,
+            "Sample value(s) from the data: {}",
+            rendered.join(", ")
+        );
     }
     user.push_str("\nWrite the description now.");
     (system, user)
@@ -270,9 +273,15 @@ mod tests {
     async fn fills_missing_descriptions_only() {
         let mut m = mapping();
         let llm = MockLlmClient::single("Minimum seconds between events for a region.");
-        let n = describe_properties(&mut m, &ontology(), &data(), &llm, &DescribeOptions::default())
-            .await
-            .unwrap();
+        let n = describe_properties(
+            &mut m,
+            &ontology(),
+            &data(),
+            &llm,
+            &DescribeOptions::default(),
+        )
+        .await
+        .unwrap();
         assert_eq!(n, 1, "only the property without a description is filled");
         // Existing description preserved.
         assert_eq!(

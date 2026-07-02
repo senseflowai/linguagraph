@@ -81,7 +81,10 @@ impl TypeHandler for KeywordHandler {
     }
 
     fn capabilities(&self) -> Capabilities {
-        Capabilities::INGEST | Capabilities::EXACT_MATCH | Capabilities::RANGE | Capabilities::CONTAINS
+        Capabilities::INGEST
+            | Capabilities::EXACT_MATCH
+            | Capabilities::RANGE
+            | Capabilities::CONTAINS
     }
 
     fn supported_ops(&self) -> Vec<TypedOp> {
@@ -126,7 +129,6 @@ impl TypeHandler for KeywordHandler {
         Self::check_value_shape(pred.op, &pred.value)?;
 
         let lhs = render_property(&pred.field);
-        let placeholder = ctx.bind(pred.value.clone());
         let op = match pred.op {
             TypedOp::Eq => "=",
             TypedOp::Neq => "<>",
@@ -134,7 +136,25 @@ impl TypeHandler for KeywordHandler {
             TypedOp::Gte => ">=",
             TypedOp::Lt => "<",
             TypedOp::Lte => "<=",
-            TypedOp::In => "IN",
+            TypedOp::In => {
+                let Literal::List(items) = &pred.value else {
+                    return Err(TypeError::InvalidValue {
+                        ty: "Keyword".into(),
+                        reason: "in expects an array value".into(),
+                    });
+                };
+                if items.is_empty() {
+                    ctx.set_where("false".to_string());
+                    return Ok(());
+                }
+                let clauses = items
+                    .iter()
+                    .map(|item| format!("{lhs} = {}", ctx.bind(item.clone())))
+                    .collect::<Vec<_>>()
+                    .join(" OR ");
+                ctx.set_where(format!("({clauses})"));
+                return Ok(());
+            }
             TypedOp::Contains => "CONTAINS",
             TypedOp::StartsWith => "STARTS WITH",
             TypedOp::EndsWith => "ENDS WITH",
@@ -146,6 +166,7 @@ impl TypeHandler for KeywordHandler {
                 })
             }
         };
+        let placeholder = ctx.bind(pred.value.clone());
         ctx.set_where(format!("{lhs} {op} {placeholder}"));
         Ok(())
     }
@@ -278,7 +299,8 @@ mod tests {
 
     #[test]
     fn keyword_emits_regex_match() {
-        let (where_inline, params) = emit_pred(TypedOp::Matches, Literal::String("(?i)bmw.*".into()));
+        let (where_inline, params) =
+            emit_pred(TypedOp::Matches, Literal::String("(?i)bmw.*".into()));
         assert_eq!(where_inline.as_deref(), Some("c.name =~ $p0"));
         assert_eq!(params.get("p0"), Some(&Literal::String("(?i)bmw.*".into())));
     }
@@ -292,13 +314,17 @@ mod tests {
                 Literal::String("Audi-Q7".into()),
             ]),
         );
-        assert_eq!(where_inline.as_deref(), Some("c.name IN $p0"));
+        assert_eq!(
+            where_inline.as_deref(),
+            Some("(c.name = $p0 OR c.name = $p1)")
+        );
         assert_eq!(
             params.get("p0"),
-            Some(&Literal::List(vec![
-                Literal::String("BMW X".into()),
-                Literal::String("Audi-Q7".into())
-            ]))
+            Some(&Literal::String("BMW X".into()))
+        );
+        assert_eq!(
+            params.get("p1"),
+            Some(&Literal::String("Audi-Q7".into()))
         );
     }
 

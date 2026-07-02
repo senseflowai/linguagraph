@@ -1,0 +1,506 @@
+{
+  "questions": [
+    {
+      "id": "contact_account",
+      "question": "К какому аккаунту относится контакт Irina Sokolova?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "dsl_expect": {
+          "start_label": "Contact",
+          "required_traversal_labels": [
+            "CONTACT_ACCOUNT"
+          ]
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Northwind Kazakhstan"
+          }
+        ]
+      }
+    },
+    {
+      "id": "account_owner",
+      "question": "Кто владеет аккаунтом Eastline Logistics?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "dsl_expect": {
+          "start_label": "Account",
+          "required_traversal_labels": [
+            "ACCOUNT_OWNER"
+          ]
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Pavel Kim"
+          }
+        ]
+      }
+    },
+    {
+      "id": "eastline_deal_owner",
+      "question": "Кто отвечает за сделку с id deal-5003?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "dsl_expect": {
+          "start_label": "Deal",
+          "required_filter_fields": [
+            "id"
+          ],
+          "required_filter_ops": [
+            "eq"
+          ],
+          "required_traversal_labels": [
+            "DEAL_OWNER"
+          ]
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Pavel Kim"
+          }
+        ]
+      }
+    },
+    {
+      "id": "deal_product",
+      "question": "Какой продукт связан со сделкой с id deal-5002?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "dsl_expect": {
+          "start_label": "Deal",
+          "required_filter_fields": [
+            "id"
+          ],
+          "required_filter_ops": [
+            "eq"
+          ],
+          "required_traversal_labels": [
+            "DEAL_PRODUCT"
+          ]
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Analytics Plus"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ticket_status",
+      "question": "Какой статус у тикета Invoice not applied to order?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "dsl_expect": {
+          "start_label": "Ticket",
+          "required_filter_fields": [
+            "subject"
+          ]
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Open"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ticket_account",
+      "question": "К какому аккаунту относится тикет VPN access for customer portal?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "dsl_expect": {
+          "start_label": "Ticket",
+          "required_traversal_labels": [
+            "TICKET_ACCOUNT"
+          ]
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Eastline Logistics"
+          }
+        ]
+      }
+    },
+    {
+      "id": "regional_accounts",
+      "question": "Какие аккаунты находятся в регионах CIS или EMEA?",
+      "validation": {
+        "row_count": {
+          "exact": 4
+        },
+        "dsl_expect": {
+          "start_label": "Account",
+          "required_filter_fields": [
+            "region"
+          ],
+          "required_filter_ops": [
+            "in"
+          ]
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Northwind Kazakhstan"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Eastline Logistics"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Fabrikam Manufacturing"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Globex Retail Kazakhstan"
+          }
+        ]
+      }
+    },
+    {
+      "id": "eastline_primary_contact",
+      "question": "Кто является основным контактом для Eastline Logistics?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "dsl_expect": {
+          "start_label": "Account",
+          "required_traversal_labels": [
+            "PRIMARY_CONTACT"
+          ]
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Timur Nurgaliyev"
+          }
+        ]
+      }
+    },
+    {
+      "id": "eastline_activity",
+      "question": "Какая следующая активность связана со сделкой с id deal-5003?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "dsl_expect": {
+          "start_label": "Deal",
+          "required_filter_fields": [
+            "id"
+          ],
+          "required_filter_ops": [
+            "eq"
+          ],
+          "required_traversal_labels": [
+            "NEXT_ACTIVITY"
+          ]
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Proposal demo follow-up"
+          }
+        ]
+      }
+    },
+    {
+      "id": "eastline_segment",
+      "question": "Какой сегмент у аккаунта Eastline Logistics?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "dsl_expect": {
+          "start_label": "Account",
+          "required_filter_fields": [
+            "name"
+          ]
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Mid-market"
+          }
+        ]
+      }
+    },
+    {
+      "id": "activity_by_due_date",
+      "question": "Какая активность запланирована на 2026-07-08?",
+      "dsl": {
+        "action": "find",
+        "start": {
+          "label": "Activity",
+          "alias": "a"
+        },
+        "filters": [
+          {
+            "field": "a.due_date",
+            "op": "eq",
+            "value": "2026-07-08"
+          }
+        ],
+        "return": [
+          {
+            "field": "a.subject",
+            "alias": "subject"
+          },
+          {
+            "field": "a.due_date",
+            "alias": "due_date"
+          }
+        ],
+        "limit": 1
+      },
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "dsl_expect": {
+          "start_label": "Activity",
+          "required_filter_fields": [
+            "due_date"
+          ],
+          "required_filter_ops": [
+            "eq"
+          ]
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Proposal demo follow-up"
+          }
+        ]
+      }
+    },
+    {
+      "id": "scheduled_activity_count",
+      "question": "Сколько активностей имеют статус scheduled?",
+      "dsl": {
+        "action": "aggregate",
+        "start": {
+          "label": "Activity",
+          "alias": "a"
+        },
+        "filters": [
+          {
+            "field": "a.status",
+            "op": "eq",
+            "value": "Scheduled"
+          }
+        ],
+        "return": [
+          {
+            "aggregate": "count",
+            "field": "a.id",
+            "alias": "activity_count"
+          }
+        ],
+        "group_by": []
+      },
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "dsl_expect": {
+          "start_label": "Activity",
+          "required_filter_fields": [
+            "status"
+          ],
+          "required_filter_ops": [
+            "eq"
+          ],
+          "required_return_fields": [
+            "activity_count"
+          ]
+        },
+        "numbers": [
+          {
+            "column": "activity_count",
+            "op": "eq",
+            "value": 7
+          }
+        ]
+      }
+    },
+    {
+      "id": "active_accounts_count",
+      "question": "Сколько активных аккаунтов в CRM?",
+      "dsl": {
+        "action": "aggregate",
+        "start": {
+          "label": "Account",
+          "alias": "a"
+        },
+        "filters": [
+          {
+            "field": "a.status",
+            "op": "eq",
+            "value": "Active"
+          }
+        ],
+        "return": [
+          {
+            "aggregate": "count",
+            "field": "a.id",
+            "alias": "active_accounts_count"
+          }
+        ],
+        "group_by": []
+      },
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "dsl_expect": {
+          "start_label": "Account",
+          "required_filter_fields": [
+            "status"
+          ],
+          "required_filter_ops": [
+            "eq"
+          ],
+          "required_return_fields": [
+            "active_accounts_count"
+          ]
+        },
+        "numbers": [
+          {
+            "column": "active_accounts_count",
+            "op": "eq",
+            "value": 19
+          }
+        ]
+      }
+    },
+    {
+      "id": "open_tickets_count",
+      "question": "Сколько тикетов сейчас открыты?",
+      "dsl": {
+        "action": "aggregate",
+        "start": {
+          "label": "Ticket",
+          "alias": "t"
+        },
+        "filters": [
+          {
+            "field": "t.status",
+            "op": "eq",
+            "value": "Open"
+          }
+        ],
+        "return": [
+          {
+            "aggregate": "count",
+            "field": "t.id",
+            "alias": "open_tickets_count"
+          }
+        ],
+        "group_by": []
+      },
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "dsl_expect": {
+          "start_label": "Ticket",
+          "required_filter_fields": [
+            "status"
+          ],
+          "required_filter_ops": [
+            "eq"
+          ],
+          "required_return_fields": [
+            "open_tickets_count"
+          ]
+        },
+        "numbers": [
+          {
+            "column": "open_tickets_count",
+            "op": "eq",
+            "value": 10
+          }
+        ]
+      }
+    },
+    {
+      "id": "open_deals_count",
+      "question": "Сколько сделок находятся в открытом статусе?",
+      "dsl": {
+        "action": "aggregate",
+        "start": {
+          "label": "Deal",
+          "alias": "d"
+        },
+        "filters": [
+          {
+            "field": "d.status",
+            "op": "eq",
+            "value": "Open"
+          }
+        ],
+        "return": [
+          {
+            "aggregate": "count",
+            "field": "d.id",
+            "alias": "open_deals_count"
+          }
+        ],
+        "group_by": []
+      },
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "dsl_expect": {
+          "start_label": "Deal",
+          "required_filter_fields": [
+            "status"
+          ],
+          "required_filter_ops": [
+            "eq"
+          ],
+          "required_return_fields": [
+            "open_deals_count"
+          ]
+        },
+        "numbers": [
+          { "column": "open_deals_count", "op": "gt", "value": 0 }
+        ]
+      }
+    }
+  ]
+}

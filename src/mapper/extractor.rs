@@ -554,14 +554,20 @@ mod tests {
 
         let cam = &by_label("Camera").rows[0];
         // from_key (FK to place) and to_key (own id, target of CAPTURED_BY).
-        assert_eq!(cam.join_keys.get("$.cameras[*].place_id"), Some(&Literal::Int(72)));
+        assert_eq!(
+            cam.join_keys.get("$.cameras[*].place_id"),
+            Some(&Literal::Int(72))
+        );
         assert_eq!(
             cam.join_keys.get("$.cameras[*].id"),
             Some(&Literal::String("cam-1".into()))
         );
 
         let place = &by_label("Place").rows[0];
-        assert_eq!(place.join_keys.get("$.places[*].id"), Some(&Literal::Int(72)));
+        assert_eq!(
+            place.join_keys.get("$.places[*].id"),
+            Some(&Literal::Int(72))
+        );
 
         // Nested foreign-key path resolves too.
         let ev = &by_label("Event").rows[0];

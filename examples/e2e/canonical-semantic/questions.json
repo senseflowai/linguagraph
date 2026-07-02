@@ -1,0 +1,80 @@
+{
+  "questions": [
+    {
+      "id": "place_by_location_phrase",
+      "question": "Найди место по фразе из его описания: проспект Мангилик Ел, 55/22, Астана",
+      "dsl": {
+        "action": "find",
+        "start": { "label": "Place", "alias": "p" },
+        "filters": [
+          {
+            "field": "p.description",
+            "type": "SemanticText",
+            "op": "search",
+            "value": "проспект Мангилик Ел, 55/22, Астана"
+          }
+        ],
+        "return": [
+          { "field": "p.name", "alias": "name" },
+          { "field": "p.description", "alias": "description" }
+        ],
+        "limit": 1
+      },
+      "validation": {
+        "row_count": { "exact": 1 },
+        "rows": [
+          {
+            "fields": {
+              "name": "Office",
+              "description": "проспект Мангилик Ел, 55/22, Астана"
+            }
+          }
+        ],
+        "dsl_expect": {
+          "start_label": "Place",
+          "required_filter_fields": ["description"],
+          "required_filter_ops": ["search"],
+          "forbidden_filter_ops": ["eq"]
+        }
+      }
+    },
+    {
+      "id": "person_by_list_name_phrase",
+      "question": "Найди человека по фразе из его списка сотрудников: Employees at TargetAI Limited",
+      "dsl": {
+        "action": "find",
+        "start": { "label": "Person", "alias": "p" },
+        "filters": [
+          {
+            "field": "p.name",
+            "type": "SemanticText",
+            "op": "search",
+            "value": "Employees at TargetAI Limited"
+          }
+        ],
+        "return": [
+          { "field": "p.name", "alias": "name" },
+          { "field": "p.list_name", "alias": "list_name" }
+        ],
+        "limit": 1
+      },
+      "validation": {
+        "row_count": { "exact": 1 },
+        "rows": [
+          {
+            "fields": {
+              "name": "Марат Божебаев",
+              "list_name": "Employees at TargetAI Limited/Сотрудники TargetAI Limited"
+            }
+          }
+        ],
+        "dsl_expect": {
+          "start_label": "Person",
+          "required_filter_fields": ["name"],
+          "required_filter_ops": ["search"],
+          "forbidden_filter_ops": ["eq"]
+        }
+      }
+    }
+  ]
+}

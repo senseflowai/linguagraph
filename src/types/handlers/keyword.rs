@@ -7,7 +7,7 @@
 //! other short categorical values. Free-form / natural-language text that
 //! should be searchable belongs to the `SemanticText` type instead.
 
-use crate::ast::query::{Literal, PropertyRef};
+use crate::ast::query::Literal;
 use crate::types::context::{EmitCtx, IngestCtx, LowerCtx};
 use crate::types::{
     BuiltinType, Capabilities, TypeError, TypeHandler, TypeId, TypedOp, TypedPredicate,
@@ -128,7 +128,7 @@ impl TypeHandler for KeywordHandler {
         // The stored predicate already carries the raw value.
         Self::check_value_shape(pred.op, &pred.value)?;
 
-        let lhs = render_property(&pred.field);
+        let lhs = super::render_property(&pred.field);
         let op = match pred.op {
             TypedOp::Eq => "=",
             TypedOp::Neq => "<>",
@@ -177,16 +177,10 @@ pub fn keyword_handler() -> KeywordHandler {
     KeywordHandler::new()
 }
 
-fn render_property(p: &PropertyRef) -> String {
-    match &p.property {
-        Some(prop) => format!("{}.{}", p.alias, prop),
-        None => p.alias.to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast::query::PropertyRef;
     use std::collections::BTreeMap;
 
     use serde_json::json;

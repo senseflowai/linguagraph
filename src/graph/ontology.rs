@@ -400,7 +400,7 @@ impl OntologyCatalog {
 
     /// Semantic match: embed `text`, compare to every entity type's
     /// embedding, and return the ones above `threshold` (optionally
-    /// rerank-filtered). Mirrors the historical `GraphSpecification::find`.
+    /// rerank-filtered).
     pub fn find(
         &self,
         text: impl AsRef<str>,
@@ -428,7 +428,7 @@ impl OntologyCatalog {
                         query.len()
                     )));
                 }
-                let score = cosine_similarity(&query, embedding);
+                let score = crate::embeddings::cosine_similarity(&query, embedding);
                 if score >= threshold {
                     matches.push(EntityTypeMatch {
                         domain: domain.as_str(),
@@ -582,23 +582,6 @@ fn entity_embedding_text(spec: &EntityTypeSpec) -> String {
         }
     }
     out
-}
-
-fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    debug_assert_eq!(a.len(), b.len());
-    let mut dot = 0.0f32;
-    let mut a_norm = 0.0f32;
-    let mut b_norm = 0.0f32;
-    for (x, y) in a.iter().zip(b.iter()) {
-        dot += x * y;
-        a_norm += x * x;
-        b_norm += y * y;
-    }
-    if a_norm == 0.0 || b_norm == 0.0 {
-        0.0
-    } else {
-        dot / (a_norm.sqrt() * b_norm.sqrt())
-    }
 }
 
 #[derive(Debug, Error)]

@@ -58,22 +58,12 @@ pub fn lower(dsl: d::DslQuery, max_depth: u32) -> Result<ReadQuery, AstError> {
     lower_full(dsl, max_depth, &TypeRegistry::empty(), None)
 }
 
-/// Lower a DSL query, dispatching typed filters through `registry`.
-/// Equivalent to [`lower_full`] without a graph specification snapshot.
-pub fn lower_with_registry(
-    dsl: d::DslQuery,
-    max_depth: u32,
-    registry: &TypeRegistry,
-) -> Result<ReadQuery, AstError> {
-    lower_full(dsl, max_depth, registry, None)
-}
-
 /// Lower a DSL query, dispatching typed filters through `registry`,
 /// and **auto-resolve** the type for filters that omit `"type"` by
 /// looking the field up in `catalog`.
 ///
 /// The lookup key is `<node-label>.<property>` — the same shape
-/// [`crate::graph::GraphSpecification`] writes. Aliases bound to a
+/// [`crate::graph::OntologyCatalog`] indexes. Aliases bound to a
 /// node take their label from the MATCH pattern; aliases bound to an
 /// edge use the edge label.
 ///
@@ -91,7 +81,7 @@ pub fn lower_full(
     bound.insert(dsl.start.alias.clone(), ());
 
     // Track which graph label each alias resolves to. Used to look up
-    // typed properties in GraphSpecification as `<label>.<property>`.
+    // typed properties in the OntologyCatalog as `<label>.<property>`.
     let mut alias_labels: HashMap<String, String> = HashMap::new();
     alias_labels.insert(dsl.start.alias.clone(), dsl.start.label.clone());
 
@@ -271,7 +261,7 @@ fn lower_filters(
         // Order of precedence:
         //   1. Explicit `"type"` in the DSL (always wins; lets the LLM
         //      override the mapping when it knows better).
-        //   2. The registered field-type from `GraphSpecification`,
+        //   2. The registered field-type from the `OntologyCatalog`,
         //      keyed on `<alias-label>.<property>`.
         //   3. None — falls back to plain ops.
         //
@@ -474,7 +464,6 @@ fn parse_typed_op(s: &str) -> Option<TypedOp> {
         "search" => TypedOp::Search,
         "search_reranked" => TypedOp::SearchReranked,
         "hybrid_search" | "hybrid" => TypedOp::HybridSearch,
-        "near" => TypedOp::Near,
         _ => return None,
     })
 }

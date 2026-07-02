@@ -2,12 +2,11 @@
 //!
 //! The default backend, [`JsonFileOntologyCatalogStorage`], reads and
 //! writes a single JSON file. Custom backends (Postgres, S3, an HTTP
-//! service) implement the [`OntologyCatalogStorage`] trait and can be
-//! plugged into [`crate::prompt::PromptGenerator`] via
-//! [`crate::prompt::PromptGenerator::from_storage`].
+//! service) implement the [`OntologyCatalogStorage`] trait and are wired
+//! into the [`crate::core::Pipeline`] via
+//! [`crate::core::Pipeline::with_ontology_catalog_storage`].
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use async_trait::async_trait;
 use tokio::fs;
@@ -32,11 +31,6 @@ pub trait OntologyCatalogStorage: Send + Sync + std::fmt::Debug {
         Err(OntologyError::Unsupported("save".into()))
     }
 }
-
-/// A shared, dynamically-typed storage handle. Convenient for wiring a
-/// backend into [`crate::prompt::PromptGenerator`] without leaking the concrete
-/// type through call sites.
-pub type SharedOntologyCatalogStorage = Arc<dyn OntologyCatalogStorage>;
 
 /// Default on-disk location for the JSON catalog cache.
 pub const DEFAULT_ONTOLOGY_CATALOG_CACHE_PATH: &str = ".linguagraph/ontology_catalog.json";

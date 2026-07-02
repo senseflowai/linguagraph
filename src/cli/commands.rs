@@ -5,7 +5,6 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::ast::Literal;
 use crate::config::{self, Config};
 use crate::core::Pipeline;
 use crate::db::{introspect, Column, GraphClient, MemgraphClient, QueryResult, Value};
@@ -13,12 +12,10 @@ use crate::dsl;
 use crate::embeddings::{self, SharedEmbedder};
 use crate::error::Result;
 use crate::graph::{
-    DomainOntology, EntityTypeSpec, GraphBuilder, JsonFileOntologyCatalogStorage, OntologyCatalog,
-    OntologyCatalogStorage, RelationTypeSpec, DEFAULT_ONTOLOGY_CATALOG_CACHE_PATH,
+    GraphBuilder, JsonFileOntologyCatalogStorage, OntologyCatalogStorage,
+    DEFAULT_ONTOLOGY_CATALOG_CACHE_PATH,
 };
-use crate::llm::LlmClient;
-use crate::mapper::{self, Mapping};
-use crate::prompt::{self, GraphSchema, PromptGenerator, PromptOptions};
+use crate::prompt::{self, GraphSchema, PromptOptions};
 use crate::types::{self, SharedRegistry};
 use clap::{Parser, Subcommand, ValueEnum};
 use tabled::{builder::Builder, settings::Style};
@@ -152,30 +149,6 @@ pub enum Command {
         #[arg(long)]
         no_examples: bool,
     },
-    /// Compile a (data, mapper) pair into a graph, update the graph
-    /// specification cache, and ingest the graph into the configured
-    /// database.
-    IngestJson {
-        /// Path to the raw data JSON file.
-        data: PathBuf,
-        /// Path to the mapper JSON file.
-        mapper: PathBuf,
-        /// Path to the graph specification cache file.
-        #[arg(long = "spec-cache", default_value = DEFAULT_ONTOLOGY_CATALOG_CACHE_PATH)]
-        spec_cache: PathBuf,
-        /// Maximum rows per UNWIND batch.
-        #[arg(long, default_value_t = 1000)]
-        batch_size: usize,
-        /// Optional Cypher label stamped onto every ingested entity.
-        /// Entities only merge with same-prefix siblings.
-        #[arg(long)]
-        prefix_label: Option<String>,
-        /// Optional prefix folded into embedding-index / Qdrant
-        /// collection names so vectors from different prefixes don't
-        /// share an index.
-        #[arg(long)]
-        prefix_index: Option<String>,
-    },
     /// Ingest a GraphBuilder JSON file directly into the configured database.
     ///
     /// The file must contain `entities` and `relations`/`relationships`
@@ -196,41 +169,6 @@ pub enum Command {
         /// share an index.
         #[arg(long)]
         prefix_index: Option<String>,
-    },
-    /// Compile a DSL JSON file with the configured type registry and
-    /// print the generated Cypher (including any qlink fragments).
-    /// Does not connect to the database.
-    Query {
-        /// Path to the DSL JSON file.
-        path: PathBuf,
-        /// Optional Cypher label appended to every node pattern so the
-        /// query only matches entities ingested under the same
-        /// `prefix_label`.
-        #[arg(long)]
-        prefix_label: Option<String>,
-        /// Optional prefix folded into embedding-index / Qdrant
-        /// collection names. Must match the ingest-side `prefix_index`.
-        #[arg(long)]
-        prefix_index: Option<String>,
-    },
-    /// Analyse an arbitrary JSON document and emit a prompt that
-    /// instructs an LLM to produce a linguagraph mapping JSON for it.
-    GeneratePrompt {
-        /// Path to the input JSON file.
-        path: PathBuf,
-        /// Free-form domain hints (repeatable). Rendered verbatim
-        /// under a "Domain hints" section.
-        #[arg(long = "hint")]
-        hints: Vec<String>,
-        /// Preferred field types (repeatable; ordered).
-        #[arg(long = "prefer")]
-        prefer: Vec<String>,
-        /// Skip the worked example block.
-        #[arg(long)]
-        no_examples: bool,
-        /// Skip the inferred-structure section.
-        #[arg(long)]
-        no_summary: bool,
     },
     /// Delete every node belonging to a single ingest `Source`:
     /// chunks attached via `:part_of` (always — they're 1:1 with the
@@ -304,93 +242,6 @@ pub enum Command {
         #[arg(long)]
         prefix_index: Option<String>,
     },
-    /// Emit a system prompt instructing an LLM to extract entities and
-    /// relations in the JSON shape consumed by `ingest-document`.
-    KnowledgePrompt {
-        /// Domain whose ontology should be used (e.g. `legal`).
-        /// Falls back to `[prompt].default_domain` from config.
-        /// Ignored when `--entity-type`/`--relation-type` are passed.
-        #[arg(long)]
-        domain: Option<String>,
-        /// Allowed entity type (repeatable). When passed, fully
-        /// overrides the domain ontology for this run.
-        #[arg(long = "entity-type")]
-        entity_types: Vec<String>,
-        /// Allowed relation type (repeatable). When passed, fully
-        /// overrides the domain ontology for this run.
-        #[arg(long = "relation-type")]
-        relation_types: Vec<String>,
-        /// Write the prompt to this path instead of stdout.
-        #[arg(long, short = 'o')]
-        output: Option<PathBuf>,
-    },
-    /// Generate a linguagraph **mapping** JSON for a data document using
-    /// an LLM, constrained to an ontology's entity types.
-    ///
-    /// Inputs: the data document, a (mandatory) ontology, and optionally
-    /// the live graph schema. Entity `type`s are strictly whitelisted to
-    /// the ontology; the model may invent relationships and additional
-    /// properties. The result is parsed, validated, and verified (primary
-    /// keys must resolve against the data) before being emitted. With
-    /// `--interactive`, the mapping is refined on the terminal.
-    GenerateMapping {
-        /// Path to the input data JSON file.
-        data: PathBuf,
-        /// Comma-separated list of top-level collections to map (e.g.
-        /// `--collections cameras,places`). When omitted, you're asked
-        /// interactively on a TTY; otherwise all collections are used.
-        #[arg(long, value_delimiter = ',')]
-        collections: Vec<String>,
-        /// Number of sample items kept per array when inlining the input
-        /// document into the prompt (structural example, not the full set).
-        #[arg(long = "sample-items", default_value_t = 2)]
-        sample_items: usize,
-        /// Ontology domain to use (resolved against the configured
-        /// catalog or the built-in one).
-        #[arg(long = "ontology-domain")]
-        ontology_domain: Option<String>,
-        /// Path to a JSON file holding a `DomainOntology` (or an
-        /// `OntologyCatalog`; combine with `--ontology-domain` to pick
-        /// one of its domains).
-        #[arg(long = "ontology-file")]
-        ontology_file: Option<PathBuf>,
-        /// Skip fetching the live graph schema (avoids needing a DB
-        /// connection). By default the schema is fetched and included so
-        /// the model reuses existing labels / relationships.
-        #[arg(long = "no-schema")]
-        no_schema: bool,
-        /// Refine the generated mapping interactively on the terminal.
-        #[arg(long)]
-        interactive: bool,
-        /// Override the configured model id.
-        #[arg(long)]
-        model: Option<String>,
-        /// Override the configured OpenAI-compatible base URL.
-        #[arg(long = "base-url")]
-        base_url: Option<String>,
-        /// Maximum number of repair retries after an invalid generation.
-        #[arg(long, default_value_t = 2)]
-        max_repairs: usize,
-        /// After generating, ask the LLM to write a short `description`
-        /// for each property using the ontology's entity description plus
-        /// 1–2 real sample values from the data. One request per property,
-        /// run concurrently.
-        #[arg(long)]
-        describe: bool,
-        /// Re-describe properties that already have a description (implies
-        /// `--describe`).
-        #[arg(long = "describe-overwrite")]
-        describe_overwrite: bool,
-        /// Maximum number of concurrent description requests.
-        #[arg(long = "describe-concurrency", default_value_t = 8)]
-        describe_concurrency: usize,
-        /// Write the mapping to this path instead of stdout.
-        #[arg(long, short = 'o')]
-        output: Option<PathBuf>,
-        /// Optional Cypher label scoping the live-schema fetch.
-        #[arg(long)]
-        prefix_label: Option<String>,
-    },
 }
 
 pub async fn run(cli: Cli) -> Result<()> {
@@ -423,43 +274,12 @@ pub async fn run(cli: Cli) -> Result<()> {
             output,
             no_examples,
         } => cmd_schema(&cli.config, sample_size, format, output, no_examples).await,
-        Command::IngestJson {
-            data,
-            mapper,
-            spec_cache,
-            batch_size,
-            prefix_label,
-            prefix_index,
-        } => {
-            cmd_ingest_json(
-                &cli.config,
-                data,
-                mapper,
-                spec_cache,
-                batch_size,
-                prefix_label,
-                prefix_index,
-            )
-            .await
-        }
         Command::IngestGraph {
             path,
             batch_size,
             prefix_label,
             prefix_index,
         } => cmd_ingest_graph(&cli.config, path, batch_size, prefix_label, prefix_index).await,
-        Command::Query {
-            path,
-            prefix_label,
-            prefix_index,
-        } => cmd_query(&cli.config, path, prefix_label, prefix_index).await,
-        Command::GeneratePrompt {
-            path,
-            hints,
-            prefer,
-            no_examples,
-            no_summary,
-        } => cmd_generate_prompt(&cli.config, path, hints, prefer, no_examples, no_summary).await,
         Command::EntityTypeSearch {
             text,
             top_k,
@@ -487,49 +307,6 @@ pub async fn run(cli: Cli) -> Result<()> {
                 fields,
                 prefix_label,
                 prefix_index,
-            )
-            .await
-        }
-        Command::KnowledgePrompt {
-            domain,
-            entity_types,
-            relation_types,
-            output,
-        } => cmd_knowledge_prompt(&cli.config, domain, entity_types, relation_types, output).await,
-        Command::GenerateMapping {
-            data,
-            collections,
-            sample_items,
-            ontology_domain,
-            ontology_file,
-            no_schema,
-            interactive,
-            model,
-            base_url,
-            max_repairs,
-            describe,
-            describe_overwrite,
-            describe_concurrency,
-            output,
-            prefix_label,
-        } => {
-            cmd_generate_mapping(
-                &cli.config,
-                data,
-                collections,
-                sample_items,
-                ontology_domain,
-                ontology_file,
-                !no_schema,
-                interactive,
-                model,
-                base_url,
-                max_repairs,
-                describe || describe_overwrite,
-                describe_overwrite,
-                describe_concurrency,
-                output,
-                prefix_label,
             )
             .await
         }
@@ -629,62 +406,7 @@ async fn cmd_cypher(
     println!("\n-- Parameters --");
     for (k, v) in &cypher.params {
         println!("${k} = {}", serde_json::to_string(v)?);
-        match v {
-            Literal::List(vec) => {
-                let emb: Vec<f32> = vec
-                    .iter()
-                    .filter_map(|value| match value {
-                        Literal::Float(f) => Some(*f as f32),
-                        _ => None,
-                    })
-                    .collect();
-            }
-            _ => {}
-        }
     }
-    Ok(())
-}
-
-async fn cmd_query(
-    config_path: &std::path::Path,
-    path: PathBuf,
-    prefix_label: Option<String>,
-    prefix_index: Option<String>,
-) -> Result<()> {
-    // Same as `cypher` today; kept as a separate command so future
-    // natural-language pipelines can hang off the more obvious name.
-    cmd_cypher(config_path, path, prefix_label, prefix_index).await
-}
-
-async fn cmd_generate_prompt(
-    config_path: &std::path::Path,
-    path: PathBuf,
-    hints: Vec<String>,
-    prefer: Vec<String>,
-    no_examples: bool,
-    no_summary: bool,
-) -> Result<()> {
-    use crate::promptgen::{generate_prompt, PromptGenOptions};
-
-    let raw = fs::read_to_string(&path).await?;
-    let value: serde_json::Value = serde_json::from_str(&raw)?;
-
-    // The registry is best-effort: when config is missing or wrong
-    // we still want the CLI to work, falling back to the bundled
-    // catalogue.
-    let cfg = load_config_or_default(config_path).await;
-    let registry = build_registry(&cfg).ok().map(|(r, _)| (*r).clone());
-
-    let opts = PromptGenOptions {
-        domain_hints: hints,
-        preferred_types: prefer,
-        include_examples: !no_examples,
-        include_inferred_summary: !no_summary,
-        registry,
-        ..PromptGenOptions::default()
-    };
-    let prompt = generate_prompt(&value, &opts);
-    print!("{prompt}");
     Ok(())
 }
 
@@ -1040,50 +762,6 @@ async fn cmd_schema(
     Ok(())
 }
 
-async fn cmd_ingest_json(
-    config_path: &std::path::Path,
-    data: PathBuf,
-    mapper: PathBuf,
-    spec_cache: PathBuf,
-    batch_size: usize,
-    prefix_label: Option<String>,
-    prefix_index: Option<String>,
-) -> Result<()> {
-    let cfg = config::load(config_path).await?;
-    let mapping = Mapping::load(&mapper).await?;
-    let raw = fs::read_to_string(&data).await?;
-    let value: serde_json::Value = serde_json::from_str(&raw)?;
-    let mapped = mapper::to_graph(&mapping, &value)?;
-    let (registry, embedder) = build_registry(&cfg)?;
-    let ontology_catalog_embedder = build_ontology_catalog_embedder(&cfg)?;
-
-    let catalog_storage = JsonFileOntologyCatalogStorage::new(spec_cache);
-    let mut catalog = catalog_storage.load().await.unwrap_or_default();
-    catalog.merge(&mapped.catalog);
-    catalog
-        .compute(ontology_catalog_embedder.as_ref())
-        .map_err(|e| {
-            crate::error::Error::Ingest(crate::ingest::IngestError::Type(format!(
-                "ontology catalog embedding: {e}"
-            )))
-        })?;
-    catalog_storage.save(&catalog).await?;
-
-    let client = MemgraphClient::connect(&cfg.database).await?;
-    let mut pipeline = Pipeline::new(Arc::new(client), &cfg)
-        .with_ingest_batch_size(batch_size)
-        .with_registry(registry)
-        .with_prefix_label(prefix_label)
-        .with_prefix_index(prefix_index);
-    if let Some(e) = embedder {
-        pipeline = pipeline.with_embedder(e);
-    }
-
-    let summary = pipeline.ingest(&mapped.graph).await?;
-    println!("{}", serde_json::to_string_pretty(&summary)?);
-    Ok(())
-}
-
 async fn cmd_ingest_graph(
     config_path: &std::path::Path,
     path: PathBuf,
@@ -1189,323 +867,6 @@ async fn cmd_entity_type_search(
     let result = pipeline.run_entity_type_search(query).await?;
     println!("{}", serde_json::to_string_pretty(&result)?);
     Ok(())
-}
-
-async fn cmd_knowledge_prompt(
-    config_path: &std::path::Path,
-    domain: Option<String>,
-    entity_types: Vec<String>,
-    relation_types: Vec<String>,
-    output: Option<PathBuf>,
-) -> Result<()> {
-    let cfg = load_config_or_default(config_path).await;
-    let generator = PromptGenerator::from_config(&cfg.prompt).await?;
-
-    let prompt = if !entity_types.is_empty() || !relation_types.is_empty() {
-        let ontology = DomainOntology {
-            entity_types: entity_types.into_iter().map(EntityTypeSpec::new).collect(),
-            relation_types: relation_types
-                .into_iter()
-                .map(RelationTypeSpec::new)
-                .collect(),
-        };
-        // Use the explicit --domain when supplied so the prompt's
-        // framing matches; otherwise fall back to the config default
-        // or a neutral "custom" label.
-        let label = domain
-            .as_deref()
-            .or(cfg.prompt.default_domain.as_deref())
-            .unwrap_or("custom");
-        generator.knowledge_extract_prompt_with(label, &ontology)
-    } else {
-        generator.knowledge_extract_prompt(domain.as_deref())?
-    };
-
-    match output {
-        Some(p) => {
-            fs::write(&p, &prompt).await?;
-            tracing::info!(target: "linguagraph::cli", path = %p.display(), "wrote knowledge-extract prompt");
-        }
-        None => print!("{prompt}"),
-    }
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn cmd_generate_mapping(
-    config_path: &std::path::Path,
-    data: PathBuf,
-    collections: Vec<String>,
-    sample_items: usize,
-    ontology_domain: Option<String>,
-    ontology_file: Option<PathBuf>,
-    fetch_schema: bool,
-    interactive: bool,
-    model: Option<String>,
-    base_url: Option<String>,
-    max_repairs: usize,
-    describe: bool,
-    describe_overwrite: bool,
-    describe_concurrency: usize,
-    output: Option<PathBuf>,
-    prefix_label: Option<String>,
-) -> Result<()> {
-    use crate::mapgen::{
-        describe_properties, detect_collections, filter_collections, generate_mapping,
-        DescribeOptions, MapGenOptions, MapGenPromptOptions,
-    };
-    use std::io::IsTerminal;
-
-    let cfg = load_config_or_default(config_path).await;
-
-    // Input data.
-    let raw = fs::read_to_string(&data).await?;
-    let value: serde_json::Value = serde_json::from_str(&raw)?;
-
-    // Choose which top-level collections to map. Precedence: explicit
-    // `--collections` flag → auto-select when there's only one → interactive
-    // multi-select on a TTY → otherwise all (non-interactive default).
-    let available = detect_collections(&value);
-    if available.is_empty() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!("no mappable collections found in {}", data.display()),
-        )
-        .into());
-    }
-    let selected: Vec<String> = if !collections.is_empty() {
-        let names: Vec<&str> = available.iter().map(|c| c.name.as_str()).collect();
-        for c in &collections {
-            if !names.contains(&c.as_str()) {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    format!("unknown collection `{c}`; available: {}", names.join(", ")),
-                )
-                .into());
-            }
-        }
-        collections
-    } else if available.len() == 1 {
-        vec![available[0].name.clone()]
-    } else if std::io::stdin().is_terminal() {
-        select_collections_interactively(&available)?
-    } else {
-        available.iter().map(|c| c.name.clone()).collect()
-    };
-    tracing::info!(target: "linguagraph::cli", collections = ?selected, "mapping selected collections");
-    // From here on, operate on just the selected collections (full rows);
-    // only the prompt payload is later down-sampled.
-    let value = filter_collections(&value, &selected);
-
-    // Ontology (mandatory).
-    let ontology = resolve_ontology(&cfg, ontology_domain, ontology_file).await?;
-
-    // Optional live schema — best-effort: a missing DB shouldn't block
-    // generation, it just omits the "reuse existing schema" hints.
-    let schema: Option<GraphSchema> = if fetch_schema {
-        match fetch_live_schema(&cfg, prefix_label).await {
-            Ok(s) => Some(s),
-            Err(e) => {
-                tracing::warn!(
-                    target: "linguagraph::cli",
-                    error = %e,
-                    "live schema unavailable; continuing without it (use --no-schema to silence)"
-                );
-                None
-            }
-        }
-    } else {
-        None
-    };
-
-    // LLM backend + type registry (drives the field-type catalogue).
-    let llm = build_llm_client(&cfg, model, base_url)?;
-    let registry = build_registry(&cfg).ok().map(|(r, _)| (*r).clone());
-
-    let opts = MapGenOptions {
-        max_repair_attempts: max_repairs,
-        prompt: MapGenPromptOptions {
-            registry,
-            max_items_per_collection: sample_items,
-            ..MapGenPromptOptions::default()
-        },
-    };
-
-    let mapping = generate_mapping(&value, &ontology, schema.as_ref(), llm.as_ref(), &opts).await?;
-
-    let mut mapping = if interactive {
-        refine_mapping_interactively(mapping, &value, &ontology)?
-    } else {
-        mapping
-    };
-
-    // Optional enrichment: fill property descriptions from the ontology
-    // entity description + real sample values, one concurrent request per
-    // property. Best-effort — failures leave descriptions unset.
-    if describe {
-        let opts = DescribeOptions {
-            max_concurrency: describe_concurrency,
-            overwrite_existing: describe_overwrite,
-            ..DescribeOptions::default()
-        };
-        let n = describe_properties(&mut mapping, &ontology, &value, llm.as_ref(), &opts).await?;
-        tracing::info!(target: "linguagraph::cli", described = n, "wrote property descriptions");
-    }
-
-    let body = serde_json::to_string_pretty(&mapping)?;
-    match output {
-        Some(p) => {
-            fs::write(&p, &body).await?;
-            tracing::info!(target: "linguagraph::cli", path = %p.display(), "wrote mapping");
-        }
-        None => println!("{body}"),
-    }
-    Ok(())
-}
-
-/// Resolve the (mandatory) ontology from either a domain name or a file.
-async fn resolve_ontology(
-    cfg: &Config,
-    domain: Option<String>,
-    file: Option<PathBuf>,
-) -> Result<DomainOntology> {
-    if let Some(path) = file {
-        let raw = fs::read_to_string(&path).await?;
-        // A bare DomainOntology (has entity_types)?
-        if let Ok(onto) = serde_json::from_str::<DomainOntology>(&raw) {
-            if !onto.entity_types.is_empty() {
-                return Ok(onto);
-            }
-        }
-        // Otherwise treat the file as a catalog and pick a domain.
-        let catalog = OntologyCatalog::load_from_str(&raw)?;
-        return pick_catalog_domain(catalog, domain);
-    }
-
-    if let Some(name) = domain {
-        let generator = PromptGenerator::from_config(&cfg.prompt).await?;
-        return generator
-            .catalog()
-            .get(&name)
-            .cloned()
-            .ok_or_else(|| crate::graph::OntologyError::UnknownDomain(name).into());
-    }
-
-    Err(std::io::Error::new(
-        std::io::ErrorKind::InvalidInput,
-        "ontology is required: pass --ontology-domain <name> or --ontology-file <path>",
-    )
-    .into())
-}
-
-fn pick_catalog_domain(catalog: OntologyCatalog, domain: Option<String>) -> Result<DomainOntology> {
-    if let Some(name) = domain {
-        return catalog
-            .get(&name)
-            .cloned()
-            .ok_or_else(|| crate::graph::OntologyError::UnknownDomain(name).into());
-    }
-    let domains: Vec<String> = catalog.domains().map(str::to_string).collect();
-    match domains.as_slice() {
-        [only] => Ok(catalog.get(only).cloned().unwrap()),
-        _ => Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!(
-                "ontology file holds {} domains ({}); choose one with --ontology-domain",
-                domains.len(),
-                domains.join(", ")
-            ),
-        )
-        .into()),
-    }
-}
-
-/// Fetch the live graph schema through a freshly connected pipeline.
-async fn fetch_live_schema(cfg: &Config, prefix_label: Option<String>) -> Result<GraphSchema> {
-    let client = MemgraphClient::connect(&cfg.database).await?;
-    let (registry, embedder) = build_registry(cfg)?;
-    let spec_storage: Arc<dyn OntologyCatalogStorage> = Arc::new(
-        JsonFileOntologyCatalogStorage::new(&cfg.ontology_catalog.cache_path),
-    );
-    let mut pipeline = Pipeline::new(Arc::new(client), cfg)
-        .with_registry(registry)
-        .with_ontology_catalog_storage(spec_storage)
-        .with_prefix_label(prefix_label);
-    if let Some(e) = embedder {
-        pipeline = pipeline.with_embedder(e);
-    }
-    // Enriching the schema with ontology descriptions is best-effort.
-    let _ = pipeline.load_ontology_catalog().await;
-    pipeline.live_schema::<&str>(&[]).await
-}
-
-#[cfg(feature = "openai")]
-fn build_llm_client(
-    cfg: &Config,
-    model: Option<String>,
-    base_url: Option<String>,
-) -> Result<Arc<dyn LlmClient>> {
-    let mut client = crate::llm::OpenAiClient::from_config(&cfg.llm);
-    if let Some(m) = model {
-        client = client.with_model(m);
-    }
-    if let Some(b) = base_url {
-        client = client.with_base_url(b);
-    }
-    Ok(Arc::new(client))
-}
-
-#[cfg(not(feature = "openai"))]
-fn build_llm_client(
-    _cfg: &Config,
-    _model: Option<String>,
-    _base_url: Option<String>,
-) -> Result<Arc<dyn LlmClient>> {
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Unsupported,
-        "the `openai` feature is disabled; rebuild with `--features openai` to call an LLM",
-    )
-    .into())
-}
-
-#[cfg(feature = "interactive")]
-fn refine_mapping_interactively(
-    mapping: Mapping,
-    data: &serde_json::Value,
-    ontology: &DomainOntology,
-) -> Result<Mapping> {
-    Ok(crate::mapgen::refine_interactively(
-        mapping, data, ontology,
-    )?)
-}
-
-#[cfg(not(feature = "interactive"))]
-fn refine_mapping_interactively(
-    _mapping: Mapping,
-    _data: &serde_json::Value,
-    _ontology: &DomainOntology,
-) -> Result<Mapping> {
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Unsupported,
-        "the `interactive` feature is disabled; rebuild with `--features interactive`",
-    )
-    .into())
-}
-
-#[cfg(feature = "interactive")]
-fn select_collections_interactively(
-    items: &[crate::mapgen::CollectionInfo],
-) -> Result<Vec<String>> {
-    Ok(crate::mapgen::select_collections(items)?)
-}
-
-#[cfg(not(feature = "interactive"))]
-fn select_collections_interactively(
-    items: &[crate::mapgen::CollectionInfo],
-) -> Result<Vec<String>> {
-    // Without the interactive feature there's no TTY menu; fall back to
-    // mapping every detected collection.
-    Ok(items.iter().map(|c| c.name.clone()).collect())
 }
 
 /// For commands that don't need a live DB, missing config falls back to

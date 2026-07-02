@@ -10,7 +10,7 @@ use crate::graph::{MENTION_REL, PART_OF_REL, SOURCE_LABEL};
 use crate::types::{TypeError, TypeRegistry};
 
 use super::cursor::{Cursor, CypherQuery};
-use super::insert::{build_insert, InsertError};
+use super::insert::InsertError;
 use super::{match_part, return_part, where_part};
 
 /// Column name used for the always-on Sources projection added by
@@ -208,11 +208,6 @@ fn render_aggregate_name(func: &AggregateFn, field: &PropertyRef) -> String {
     }
 }
 
-/// Backwards-compatible alias for [`build_read`].
-pub fn build(query: &ReadQuery) -> Result<CypherQuery, BuilderError> {
-    build_read(query)
-}
-
 /// Emit the WITH / OPTIONAL MATCH stage that gathers the unique set
 /// of `:Source` nodes reachable from any of the query's matched node
 /// aliases, exposing them as `__sources__`.
@@ -311,22 +306,6 @@ fn is_plain_cypher_ident(s: &str) -> bool {
     };
     (first == '_' || first.is_ascii_alphabetic())
         && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
-}
-
-/// Compile any [`Query`] variant with no registered handlers.
-pub fn compile(query: &Query) -> Result<Vec<CypherQuery>, BuilderError> {
-    compile_with(query, &TypeRegistry::empty())
-}
-
-/// Compile any [`Query`] variant using `registry`.
-pub fn compile_with(
-    query: &Query,
-    registry: &TypeRegistry,
-) -> Result<Vec<CypherQuery>, BuilderError> {
-    match query {
-        Query::Read(r) => Ok(vec![build_read_with(r, registry)?]),
-        Query::Insert(i) => Ok(build_insert(i)?),
-    }
 }
 
 #[cfg(test)]

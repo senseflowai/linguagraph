@@ -1,35 +1,44 @@
 //! Ingestion orchestration.
 //!
-//! This is the layer between the [`crate::mapper`] (raw data → normalised
-//! rows) and the [`crate::ast`] (typed query). It owns the *internal*
-//! ingestion DSL — a JSON-shaped intermediate that callers and tests can
-//! inspect — and the planner that turns extracted rows into
-//! deterministic [`crate::ast::query::InsertQuery`] batches.
+//! Turns a [`crate::graph::Graph`] into deterministic
+//! [`crate::ast::query::InsertQuery`] batches via
+//! [`plan_graph_with_registry_and_prefixes`], applying the type-handler
+//! registry and prefix scoping. The graph itself is built by
+//! [`crate::graph::GraphBuilder`].
 
 pub mod delete;
-pub mod dsl;
 pub mod graph;
-pub mod planner;
 pub mod soft_merge;
 
 use thiserror::Error;
 
 pub use delete::{DeletePlan, DeletePlanError, DiscoveredNodes};
-pub use dsl::{InsertPlan, NodePlan, RelationPlan};
 pub use graph::{
     plan_graph_with_registry, plan_graph_with_registry_and_prefix,
     plan_graph_with_registry_and_prefixes,
 };
-pub use planner::{plan, plan_with_options, plan_with_registry, PlannerOptions};
 
 use crate::ast::AstError;
-use crate::mapper::MapperError;
+
+/// Configurable planner knobs.
+///
+/// `max_batch_size` caps the number of rows in a single Cypher batch so
+/// huge ingests don't blow past Memgraph's parameter or memory limits.
+#[derive(Debug, Clone, Copy)]
+pub struct PlannerOptions {
+    pub max_batch_size: usize,
+}
+
+impl Default for PlannerOptions {
+    fn default() -> Self {
+        Self {
+            max_batch_size: 256,
+        }
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum IngestError {
-    #[error(transparent)]
-    Mapper(#[from] MapperError),
-
     #[error(transparent)]
     Ast(#[from] AstError),
 

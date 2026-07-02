@@ -69,6 +69,8 @@ use crate::types::{
     TypeId, TypedOp, TypedPredicate,
 };
 
+use super::core::json_kind;
+
 /// Default cosine cutoff for stage-1 retrieval inside
 /// `libqlink.search_hybrid`. A modest 0.8 keeps obvious near-
 /// duplicates in and aggressively prunes the long tail; raise it for
@@ -421,17 +423,6 @@ impl TypeHandler for SemanticTextHandler {
     }
 }
 
-fn json_kind(v: &Value) -> &'static str {
-    match v {
-        Value::Null => "null",
-        Value::Bool(_) => "bool",
-        Value::Number(_) => "number",
-        Value::String(_) => "string",
-        Value::Array(_) => "array",
-        Value::Object(_) => "object",
-    }
-}
-
 fn semantic_text_operand_text(op: TypedOp, value: &Value) -> Result<String, TypeError> {
     match (op, value) {
         (TypedOp::In, Value::Array(items)) => {
@@ -529,37 +520,6 @@ pub(crate) fn with_prefix_index(prefix_index: Option<&str>, base: &str) -> Strin
         Some(p) if !p.is_empty() => format!("{p}__{base}"),
         _ => base.to_string(),
     }
-}
-
-/// Build the hybrid recall + rerank query for qlink.
-///
-/// Renders `CALL libqlink.search_hybrid_reranked(...) YIELD id, score`
-/// — the full hybrid retrieval and rerank path inside qlink.
-///
-/// The five value params are the same `Literal`s `lower` stashed in the
-/// predicate (`collection`, `query_str`, `embedding`, `label`,
-/// `reranker_threshold`, `candidate_k`), so no re-embedding happens.
-pub fn build_hybrid_reranked_query(
-    collection: Literal,
-    query_str: Literal,
-    embedding: Literal,
-    label: Literal,
-    reranker_threshold: Literal,
-    candidate_k: Literal,
-) -> crate::builder::CypherQuery {
-    let mut params: BTreeMap<String, Literal> = BTreeMap::new();
-    params.insert("coll".to_string(), collection);
-    params.insert("q".to_string(), query_str);
-    params.insert("emb".to_string(), embedding);
-    params.insert("label".to_string(), label);
-    params.insert("th".to_string(), reranker_threshold);
-    params.insert("k".to_string(), candidate_k);
-    crate::builder::CypherQuery::new(
-        "CALL libqlink.search_hybrid_reranked($coll, $q, $emb, $label, $th, $k) \
-         YIELD id, score RETURN id, score"
-            .to_string(),
-        params,
-    )
 }
 
 /// Errors produced by [`build_embed_insert_batch`]. Kept separate from

@@ -37,8 +37,18 @@ pub use semantic_text::{
 use std::sync::Arc;
 
 use super::{RegistryBuilder, TypeRegistry};
+use crate::ast::query::PropertyRef;
 use crate::config::Config;
 use crate::embeddings::SharedEmbedder;
+
+/// Render a [`PropertyRef`] as a Cypher `alias.property` (or bare `alias`)
+/// accessor. Shared by the scalar filter handlers.
+pub(super) fn render_property(p: &PropertyRef) -> String {
+    match &p.property {
+        Some(prop) => format!("{}.{}", p.alias, prop),
+        None => p.alias.to_string(),
+    }
+}
 
 /// Build the default registry from `config` and a shared embedder.
 ///

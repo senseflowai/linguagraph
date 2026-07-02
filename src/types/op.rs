@@ -49,8 +49,6 @@ pub enum TypedOp {
     /// SemanticText filters that share an alias — never written directly
     /// in a DSL filter, and deliberately not advertised in `prompt_hint`.
     EntitySearch,
-    /// Geo proximity (reserved for future GeoLocation handler).
-    Near,
 }
 
 impl TypedOp {

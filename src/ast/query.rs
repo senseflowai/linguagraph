@@ -49,19 +49,6 @@ impl PropertyRef {
     }
 }
 
-/// Top-level AST node.
-///
-/// Read and insert queries are deliberately kept in the same enum so that
-/// callers (CLI, pipeline, future planners) can hold a single value and
-/// dispatch on its kind. Each variant carries a self-contained, validated
-/// structure — by the time it exists, the builder may compile it without
-/// further checks.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Query {
-    Read(ReadQuery),
-    Insert(InsertQuery),
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReadQuery {
     pub action: Action,

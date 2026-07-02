@@ -32,7 +32,6 @@ impl Capabilities {
     pub const EXACT_MATCH: Self = Capabilities(1 << 1);
     pub const SEMANTIC_SEARCH: Self = Capabilities(1 << 2);
     pub const HYBRID_SEARCH: Self = Capabilities(1 << 3);
-    pub const GEO_SEARCH: Self = Capabilities(1 << 4);
     pub const RANGE: Self = Capabilities(1 << 5);
     pub const CONTAINS: Self = Capabilities(1 << 6);
 
@@ -54,7 +53,6 @@ impl Capabilities {
             Capabilities::EXACT_MATCH,
             Capabilities::SEMANTIC_SEARCH,
             Capabilities::HYBRID_SEARCH,
-            Capabilities::GEO_SEARCH,
             Capabilities::RANGE,
             Capabilities::CONTAINS,
         ];
@@ -79,9 +77,6 @@ impl Capabilities {
         }
         if self.contains(Self::HYBRID_SEARCH) {
             out.push(TypedOp::HybridSearch);
-        }
-        if self.contains(Self::GEO_SEARCH) {
-            out.push(TypedOp::Near);
         }
         out
     }
@@ -117,7 +112,6 @@ fn name(c: Capabilities) -> &'static str {
         Capabilities::EXACT_MATCH => "exact_match",
         Capabilities::SEMANTIC_SEARCH => "semantic_search",
         Capabilities::HYBRID_SEARCH => "hybrid_search",
-        Capabilities::GEO_SEARCH => "geo_search",
         Capabilities::RANGE => "range",
         Capabilities::CONTAINS => "contains",
         _ => "?",

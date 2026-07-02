@@ -5,8 +5,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::ast::query::Literal;
-use crate::ast::{from_dsl, query::InsertQuery, query::ReadQuery};
+use crate::ast::{query::InsertQuery, query::ReadQuery};
 use crate::builder::{self, CypherQuery};
+use crate::resolve;
 use crate::config::{Config, SoftMergeConfig};
 use crate::db::{GraphClient, QueryResult, Row, Value as DbValue};
 use crate::dsl::{Direction as DslDirection, DslQuery, TraversalQuery};
@@ -358,7 +359,7 @@ impl Pipeline {
                 dsl.prefix_index = Some(p.clone());
             }
         }
-        let mut q = from_dsl::lower_full(dsl, self.max_depth, &self.registry, catalog.as_deref())?;
+        let mut q = resolve::lower_full(dsl, self.max_depth, &self.registry, catalog.as_deref())?;
         if q.limit.is_none() {
             q.limit = Some(self.default_limit);
         }

@@ -1,0 +1,93 @@
+{
+  "questions": [
+    {
+      "id": "cameras_at_main_entrance",
+      "question": "Покажи список камер в месте Главный вход БЦ Астана.",
+      "validation": {
+        "row_count": { "exact": 3 },
+        "dsl_expect": {
+          "required_traversal_labels": ["LOCATED_AT"]
+        },
+        "contains": [
+          { "column": "*", "mode": "contains", "value": "AST Entrance FR-01" },
+          { "column": "*", "mode": "contains", "value": "AST Entrance Overview-02" },
+          { "column": "*", "mode": "contains", "value": "AST Entrance LPR-03" }
+        ]
+      }
+    },
+    {
+      "id": "event_count_for_camera_interval",
+      "question": "Сколько событий было по камере AST Entrance FR-01 в интервале с 2026-07-01T08:00:00 до 2026-07-01T13:00:00?",
+      "validation": {
+        "row_count": { "exact": 1 },
+        "dsl_expect": {
+          "required_traversal_labels": ["CAPTURED_BY"],
+          "required_filter_fields": ["occurred_at"]
+        },
+        "numbers": [
+          { "column": "*", "op": "eq", "value": 2 }
+        ]
+      }
+    },
+    {
+      "id": "camera_count_at_main_entrance",
+      "question": "Сколько камер находится в месте Главный вход БЦ Астана?",
+      "validation": {
+        "row_count": { "exact": 1 },
+        "dsl_expect": {
+          "required_traversal_labels": ["LOCATED_AT"]
+        },
+        "numbers": [
+          { "column": "*", "op": "eq", "value": 3 }
+        ]
+      }
+    },
+    {
+      "id": "face_recognition_cameras",
+      "question": "На каких камерах включена функция распознавания лиц?",
+      "validation": {
+        "row_count": { "exact": 3 },
+        "dsl_expect": {
+          "required_traversal_labels": ["USES_MODULE"]
+        },
+        "contains": [
+          { "column": "*", "mode": "contains", "value": "AST Entrance FR-01" },
+          { "column": "*", "mode": "contains", "value": "WH North Dock FR-01" },
+          { "column": "*", "mode": "contains", "value": "AA Hall FR-01" }
+        ],
+        "not_contains": [
+          { "column": "*", "mode": "contains", "value": "AST Entrance LPR-03" }
+        ]
+      }
+    },
+    {
+      "id": "license_plate_cameras",
+      "question": "На каких камерах включено распознавание автомобильных номеров?",
+      "validation": {
+        "row_count": { "exact": 2 },
+        "dsl_expect": {
+          "required_traversal_labels": ["USES_MODULE"]
+        },
+        "contains": [
+          { "column": "*", "mode": "contains", "value": "AST Entrance LPR-03" },
+          { "column": "*", "mode": "contains", "value": "Parking P1 LPR-01" }
+        ]
+      }
+    },
+    {
+      "id": "inactive_cameras",
+      "question": "Какие камеры сейчас имеют состояние inactive?",
+      "validation": {
+        "row_count": { "exact": 1 },
+        "dsl_expect": {
+          "start_label": "Camera",
+          "required_filter_fields": ["state"],
+          "required_filter_ops": ["eq"]
+        },
+        "contains": [
+          { "column": "*", "mode": "contains", "value": "WH North Storage SA-02" }
+        ]
+      }
+    }
+  ]
+}

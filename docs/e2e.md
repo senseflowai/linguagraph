@@ -23,8 +23,8 @@ Equivalent explicit command:
 ```bash
 cargo run --bin linguagraph-e2e -- \
   --config config.e2e.toml \
-  --suite examples/e2e/camera.suite.json \
-  --report target/e2e/camera.report.json
+  --suite examples/e2e/cameras.suite.json \
+  --report target/e2e/cameras.report.json
 ```
 
 The default e2e config uses:
@@ -37,16 +37,16 @@ The default e2e config uses:
 
 ## Suite Format
 
-`camera.suite.json`:
+`cameras.suite.json`:
 
 ```json
 {
-  "name": "camera-basic",
-  "graph": "camera.graph.json",
-  "ontology": "camera.ontology.json",
-  "questions": "camera.questions.json",
+  "name": "cameras-basic",
+  "graph": "cameras/graph.json",
+  "ontology": "cameras/ontology.json",
+  "questions": "cameras/questions.json",
   "settings": {
-    "prefix": "E2E_CAMERA_BASIC",
+    "prefix": "E2E_CAMERAS_BASIC",
     "cleanup_before": true,
     "cleanup_after": false,
     "answer_with_llm": true,
@@ -118,21 +118,21 @@ The ontology file is an `OntologyCatalog`:
 {
   "questions": [
     {
-      "id": "camera_at_sales",
-      "question": "Какая камера установлена в месте Sales?",
+      "id": "face_recognition_cameras",
+      "question": "На каких камерах включена функция распознавания лиц?",
       "validation": {
-        "row_count": { "exact": 1 },
+        "row_count": { "exact": 3 },
         "dsl_expect": {
-          "start_label": "Place",
-          "required_traversal_labels": ["LOCATED_AT"]
+          "required_traversal_labels": ["USES_MODULE"]
         },
         "contains": [
-          { "column": "*", "mode": "contains", "value": "TargetAI - Face (RTSP)" }
+          { "column": "*", "mode": "contains", "value": "AST Entrance FR-01" },
+          { "column": "*", "mode": "contains", "value": "WH North Dock FR-01" },
+          { "column": "*", "mode": "contains", "value": "AA Hall FR-01" }
         ],
-        "numbers": [
-          { "column": "*", "op": "eq", "value": 2 }
-        ],
-        "answer_contains": ["TargetAI"]
+        "not_contains": [
+          { "column": "*", "mode": "contains", "value": "AST Entrance LPR-03" }
+        ]
       }
     }
   ]

@@ -1,0 +1,210 @@
+{
+  "camera_domain": {
+    "entity_types": [
+      {
+        "name": "Camera",
+        "description": "Камера видеонаблюдения из TargetEYE API CameraGet. Камера принадлежит одному месту через отношение LOCATED_AT и может иметь несколько включенных модулей видеоаналитики через USES_MODULE.",
+        "properties": [
+          {
+            "name": "id",
+            "property_type": "keyword",
+            "required": true,
+            "description": "UUID камеры. Используется только для точного совпадения."
+          },
+          {
+            "name": "name",
+            "property_type": "text",
+            "required": true,
+            "description": "Название камеры, например AST Entrance FR-01 или Parking P1 LPR-01. Используется для поиска камеры по человеческому названию."
+          },
+          {
+            "name": "state",
+            "property_type": "keyword",
+            "required": true,
+            "description": "Статус камеры из CameraState. Строго допустимые значения: active означает камера работает, inactive означает камера отключена или недоступна."
+          },
+          {
+            "name": "state_reason",
+            "property_type": "keyword",
+            "required": false,
+            "description": "Причина текущего состояния из CameraStateReason: user_action, scheduler_capacity, scheduler_action, scheduler_deadline, scheduler_restriction или license_restriction."
+          },
+          {
+            "name": "is_dvr",
+            "property_type": "bool",
+            "required": false,
+            "description": "Признак DVR-камеры из CameraGet."
+          },
+          {
+            "name": "edge",
+            "property_type": "bool",
+            "required": false,
+            "description": "Признак, что камера обрабатывается на edge-узле."
+          },
+          {
+            "name": "scheduler_group",
+            "property_type": "keyword",
+            "required": false,
+            "description": "Группа планировщика камеры."
+          },
+          {
+            "name": "capacitygroup_token",
+            "property_type": "keyword",
+            "required": false,
+            "description": "Токен capacity group камеры."
+          }
+        ]
+      },
+      {
+        "name": "Place",
+        "description": "Физическое место установки камер из TargetEYE API PlaceGet. Одно место может содержать несколько камер.",
+        "properties": [
+          {
+            "name": "id",
+            "property_type": "keyword",
+            "required": true,
+            "description": "Идентификатор места из API. Используется только для точного совпадения."
+          },
+          {
+            "name": "name",
+            "property_type": "text",
+            "required": true,
+            "description": "Название места установки, например Главный вход БЦ Астана или Парковка P1."
+          },
+          {
+            "name": "description",
+            "property_type": "text",
+            "required": false,
+            "description": "Свободное описание места: зона, адрес, назначение или контекст установки камер."
+          },
+          {
+            "name": "latitude",
+            "property_type": "float",
+            "required": false,
+            "description": "Широта места."
+          },
+          {
+            "name": "longitude",
+            "property_type": "float",
+            "required": false,
+            "description": "Долгота места."
+          },
+          {
+            "name": "cohort_tracking",
+            "property_type": "bool",
+            "required": false,
+            "description": "Признак включенного cohort tracking для места."
+          }
+        ]
+      },
+      {
+        "name": "AnalyticsModule",
+        "description": "Модуль видеоаналитики, нормализованный из CameraVideoModule. Камера связана с включенным модулем через USES_MODULE.",
+        "properties": [
+          {
+            "name": "id",
+            "property_type": "keyword",
+            "required": true,
+            "description": "Стабильный идентификатор модуля."
+          },
+          {
+            "name": "code",
+            "property_type": "keyword",
+            "required": true,
+            "description": "Код модуля из CameraVideoModule. Строго допустимые значения: fr означает распознавание лиц, lpr означает распознавание автомобильных номеров, sa означает ситуационная аналитика, ao означает детекция оставленных объектов, tp означает подсчет людей."
+          },
+          {
+            "name": "name",
+            "property_type": "text",
+            "required": true,
+            "description": "Человеческое название модуля, например Распознавание лиц."
+          }
+        ]
+      },
+      {
+        "name": "CameraTag",
+        "description": "Тег камеры из CameraTagGet. Используется для группировки камер по назначению или зоне.",
+        "properties": [
+          {
+            "name": "id",
+            "property_type": "keyword",
+            "required": true,
+            "description": "Идентификатор тега камеры."
+          },
+          {
+            "name": "name",
+            "property_type": "text",
+            "required": true,
+            "description": "Название тега камеры, например вход, склад, периметр или критичная зона."
+          }
+        ]
+      },
+      {
+        "name": "CameraEvent",
+        "description": "Событие видеоаналитики, похожее на EventFR/EventLPR/EventSA из TargetEYE API. Событие связано с камерой через CAPTURED_BY.",
+        "properties": [
+          {
+            "name": "id",
+            "property_type": "keyword",
+            "required": true,
+            "description": "UUID события. Используется только для точного совпадения."
+          },
+          {
+            "name": "event_type",
+            "property_type": "keyword",
+            "required": true,
+            "description": "Тип события из EventType. Строго допустимые значения: fr, lpr, sa, ao, tp."
+          },
+          {
+            "name": "label",
+            "property_type": "keyword",
+            "required": false,
+            "description": "Метка объекта события, например person, vehicle, plate, object или crowd."
+          },
+          {
+            "name": "occurred_at",
+            "property_type": "datetime",
+            "required": true,
+            "description": "Время события в ISO-8601 формате. Используется для запросов за интервал времени."
+          },
+          {
+            "name": "ts",
+            "property_type": "int",
+            "required": false,
+            "description": "Unix timestamp события в миллисекундах, как в EventFR.ts."
+          },
+          {
+            "name": "match_similarity",
+            "property_type": "float",
+            "required": false,
+            "description": "Уверенность совпадения для событий распознавания лиц."
+          },
+          {
+            "name": "obsolete",
+            "property_type": "bool",
+            "required": false,
+            "description": "Признак устаревшего события."
+          }
+        ]
+      }
+    ],
+    "relation_types": [
+      {
+        "name": "LOCATED_AT",
+        "description": "Направление Camera -> Place. Соединяет камеру с местом установки."
+      },
+      {
+        "name": "USES_MODULE",
+        "description": "Направление Camera -> AnalyticsModule. Соединяет камеру с включенным модулем видеоаналитики."
+      },
+      {
+        "name": "TAGGED_WITH",
+        "description": "Направление Camera -> CameraTag. Соединяет камеру с тегом."
+      },
+      {
+        "name": "CAPTURED_BY",
+        "description": "Направление CameraEvent -> Camera. Соединяет событие с камерой, которая его зафиксировала."
+      }
+    ]
+  }
+}

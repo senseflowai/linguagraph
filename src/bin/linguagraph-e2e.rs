@@ -14,7 +14,7 @@ struct Args {
     config: PathBuf,
 
     /// Suite JSON. Relative graph/ontology/questions paths resolve from its directory.
-    #[arg(long, short = 's', default_value = "examples/e2e/camera.suite.json")]
+    #[arg(long, short = 's', default_value = "examples/e2e/cameras.suite.json")]
     suite: PathBuf,
 
     /// Override the graph JSON path declared by the suite.

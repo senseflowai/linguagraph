@@ -1,0 +1,25 @@
+{
+  "name": "cameras-basic",
+  "graph": "cameras/graph.json",
+  "ontology": "cameras/ontology.json",
+  "questions": "cameras/questions.json",
+  "settings": {
+    "prefix": "E2E_CAMERAS_BASIC",
+    "cleanup_before": true,
+    "cleanup_after": false,
+    "cleanup_vectors": true,
+    "answer_with_llm": false,
+    "judge_with_llm": false,
+    "max_repairs": 1,
+    "indexes": [
+      { "label": "Camera", "property": "id" },
+      { "label": "Camera", "property": "name" },
+      { "label": "Camera", "property": "state" },
+      { "label": "Place", "property": "id" },
+      { "label": "Place", "property": "name" },
+      { "label": "AnalyticsModule", "property": "code" },
+      { "label": "CameraEvent", "property": "id" },
+      { "label": "CameraEvent", "property": "occurred_at" }
+    ]
+  }
+}

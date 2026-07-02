@@ -35,6 +35,85 @@ The current default e2e stack uses:
 
 ## Domain Coverage
 
+### Cameras sandbox
+
+The cameras suite is the default e2e domain for video analytics scenarios. It
+is generated from the shape of the TargetEYE OpenAPI schema: `CameraGet`,
+`PlaceGet`, `CameraVideoModule`, `CameraTagGet`, and event payloads such as
+`EventFR`.
+
+Suite files:
+
+- `examples/e2e/cameras.suite.json`
+- `examples/e2e/cameras/graph.json`
+- `examples/e2e/cameras/ontology.json`
+- `examples/e2e/cameras/questions.json`
+
+Data shape:
+
+- cameras
+- places
+- analytics modules
+- camera tags
+- camera events
+
+Ontology emphasis:
+
+- camera and place names are `Text`, so users can ask by natural names;
+- `Camera.state` is a `Keyword` with strict values `active` / `inactive`;
+- `AnalyticsModule.code` is a `Keyword` with strict OpenAPI module values:
+  `fr`, `lpr`, `sa`, `ao`, `tp`;
+- event time is `DateTime`, so questions can use real time intervals;
+- relations encode installation place, enabled analytics modules, tags and
+  captured events.
+
+Question classes:
+
+- list cameras installed at a place;
+- count events for a camera within a time interval;
+- count cameras in a place;
+- list cameras with face recognition enabled;
+- list cameras with license-plate recognition enabled;
+- find inactive cameras.
+
+Current result:
+
+- `cameras-basic`: `6/6` passed
+
+Verified command:
+
+```bash
+./scripts/run-e2e.sh examples/e2e/cameras.suite.json
+```
+
+Example:
+
+```text
+NL
+Сколько событий было по камере AST Entrance FR-01 в интервале
+с 2026-07-01T08:00:00 до 2026-07-01T13:00:00?
+
+DSL
+find Camera where cam.name = "AST Entrance FR-01"
+traverse CAPTURED_BY <- CameraEvent
+where evt.occurred_at >= "2026-07-01T08:00:00"
+  and evt.occurred_at <= "2026-07-01T13:00:00"
+return count(evt.id)
+
+Cypher
+MATCH (cam:Camera:E2E_CAMERAS_BASIC)<-[cap:CAPTURED_BY]-(evt:CameraEvent:E2E_CAMERAS_BASIC)
+WHERE evt.occurred_at >= $p0 AND evt.occurred_at <= $p1
+RETURN count(evt) AS event_count
+```
+
+What this shows business users: video analytics data can be queried in the
+same language they use operationally: "cameras in this place", "events for this
+camera", "where is face recognition enabled".
+
+What this shows engineers: OpenAPI-shaped entities can be normalized into a
+graph ontology, while module codes, timestamps and relationships remain
+strongly typed and testable.
+
 ### CRM sandbox
 
 The CRM suite is the best example of a compact operational sandbox.
@@ -260,6 +339,7 @@ Run the default suite:
 Run a specific domain suite:
 
 ```bash
+./scripts/run-e2e.sh examples/e2e/cameras.suite.json
 ./scripts/run-e2e.sh examples/e2e/crm.suite.json
 ./scripts/run-e2e.sh examples/e2e/erp.suite.json
 ./scripts/run-e2e.sh examples/e2e/canonical-semantic.suite.json
@@ -270,8 +350,8 @@ Generate a report:
 ```bash
 cargo run --bin linguagraph-e2e -- \
   --config config.e2e.toml \
-  --suite examples/e2e/crm.suite.json \
-  --report /tmp/crm.report.json
+  --suite examples/e2e/cameras.suite.json \
+  --report /tmp/cameras.report.json
 ```
 
 ## Practical Takeaway
@@ -286,4 +366,4 @@ domain data into a stable semantic interface:
 - the report captures both the generated DSL and the final Cypher.
 
 That is what makes the system suitable as a real integration layer for CRM,
-ERP, and other operational datasets.
+ERP, cameras / video analytics, and other operational datasets.

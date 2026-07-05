@@ -24,7 +24,6 @@
 //!   `scope_structured`) attached alongside the entity's type label.
 
 use serde::{Deserialize, Serialize};
-use strum::VariantNames;
 
 /// Origin of an [`EntityGraph`](crate::graph::EntityGraph): the kind of
 /// source it was extracted from. See the [module docs](self) for
@@ -76,14 +75,10 @@ impl Scope {
     }
 }
 
-/// Every Cypher label reserved by [`Scope`], in enum-declaration order.
-/// Consumers (e.g. introspection) can use this to partition raw label
-/// strings into scope vs non-scope labels without re-deriving the set.
-pub const SCOPE_LABELS: &[&str] = Scope::VARIANTS;
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use strum::VariantNames;
 
     #[test]
     fn serde_round_trip_uses_lowercase() {
@@ -119,11 +114,11 @@ mod tests {
 
     #[test]
     fn scope_labels_covers_every_variant() {
-        // Defence against forgetting to update SCOPE_LABELS when a new
-        // variant is added: every label must round-trip to Some(_).
-        for label in SCOPE_LABELS {
+        // Defence against forgetting to update the label mapping when a
+        // new variant is added: every label must round-trip to Some(_).
+        for label in Scope::VARIANTS {
             assert!(Scope::from_cypher_label(label).is_some(), "{label}");
         }
-        assert_eq!(SCOPE_LABELS.len(), 3);
+        assert_eq!(Scope::VARIANTS.len(), 3);
     }
 }

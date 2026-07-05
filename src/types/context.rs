@@ -5,8 +5,6 @@
 //! caller (planner, AST lowering, builder), passed by `&mut`, and
 //! discarded.
 
-use std::collections::BTreeMap;
-
 use serde_json::Value;
 
 use crate::ast::query::{Literal, PropertyRef};
@@ -361,8 +359,3 @@ impl Default for PromptHint {
         }
     }
 }
-
-// ─── Helpers ────────────────────────────────────────────────────────
-
-/// Trivially accept a property-info map for tests / examples.
-pub fn _unused_param_kept_for_doc(_: BTreeMap<String, String>) {}

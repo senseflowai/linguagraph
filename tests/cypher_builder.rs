@@ -1,14 +1,14 @@
 //! End-to-end DSL → Cypher tests using only the public API.
 
-use linguagraph::ast::from_dsl;
 use linguagraph::ast::query::Literal;
 use linguagraph::builder;
 use linguagraph::dsl;
+use linguagraph::resolve;
 
 fn compile(json: &str) -> linguagraph::builder::CypherQuery {
     let dsl = dsl::parse_str(json).expect("dsl parses");
-    let ast = from_dsl::lower(dsl, /* max_depth */ 6).expect("lowers");
-    builder::build(&ast).expect("builds")
+    let ast = resolve::lower(dsl, /* max_depth */ 6).expect("lowers");
+    builder::build_read(&ast).expect("builds")
 }
 
 #[test]
@@ -289,7 +289,7 @@ fn infers_aggregate_when_find_action_contains_aggregation() {
         "return": [{ "aggregate": "count", "field": "p", "alias": "n" }]
     }"#;
     let dsl = dsl::parse_str(json).unwrap();
-    let query = from_dsl::lower(dsl, 6).expect("aggregate projection should determine action");
+    let query = resolve::lower(dsl, 6).expect("aggregate projection should determine action");
     assert_eq!(query.action, linguagraph::ast::query::Action::Aggregate);
 }
 
@@ -301,7 +301,7 @@ fn infers_aggregate_when_action_is_omitted() {
     }"#;
     let dsl = dsl::parse_str(json).unwrap();
     let query =
-        from_dsl::lower(dsl, 6).expect("action should be optional for aggregate projections");
+        resolve::lower(dsl, 6).expect("action should be optional for aggregate projections");
     assert_eq!(query.action, linguagraph::ast::query::Action::Aggregate);
 }
 
@@ -318,7 +318,7 @@ fn rejects_excessive_depth() {
         "return": [{ "field": "p.name" }]
     }"#;
     let dsl = dsl::parse_str(json).unwrap();
-    let err = from_dsl::lower(dsl, 6).unwrap_err();
+    let err = resolve::lower(dsl, 6).unwrap_err();
     assert!(matches!(
         err,
         linguagraph::ast::AstError::DepthTooLarge { .. }
@@ -334,7 +334,7 @@ fn rejects_unknown_alias_in_filter() {
         "return": [{ "field": "p.name" }]
     }"#;
     let dsl = dsl::parse_str(json).unwrap();
-    let err = from_dsl::lower(dsl, 6).unwrap_err();
+    let err = resolve::lower(dsl, 6).unwrap_err();
     assert!(matches!(err, linguagraph::ast::AstError::UnknownAlias(_)));
 }
 
@@ -489,6 +489,6 @@ fn from_must_reference_a_bound_alias() {
         "return": [{ "field": "p2.name" }]
     }"#;
     let dsl = dsl::parse_str(json).unwrap();
-    let err = from_dsl::lower(dsl, 6).unwrap_err();
+    let err = resolve::lower(dsl, 6).unwrap_err();
     assert!(matches!(err, linguagraph::ast::AstError::UnknownAlias(_)));
 }

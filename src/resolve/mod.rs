@@ -15,4 +15,4 @@
 
 mod ast;
 
-pub use ast::{lower, lower_full, lower_with_registry, AstError};
+pub use ast::{lower, lower_full, AstError};

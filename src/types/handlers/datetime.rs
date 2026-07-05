@@ -25,7 +25,7 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
-use crate::ast::query::{Literal, PropertyRef};
+use crate::ast::query::Literal;
 use crate::types::context::{EmitCtx, IngestCtx, LowerCtx, PromptHint};
 use crate::types::{
     BuiltinType, Capabilities, TypeError, TypeHandler, TypeId, TypedOp, TypedPredicate,
@@ -129,7 +129,7 @@ impl TypeHandler for DateTimeHandler {
     }
 
     fn emit(&self, ctx: &mut EmitCtx<'_>, pred: &TypedPredicate) -> Result<(), TypeError> {
-        let lhs = render_property(&pred.field);
+        let lhs = super::render_property(&pred.field);
 
         // Whole-day predicate: lowered to a half-open day range.
         if let Some(Literal::String(start)) = pred.params.get("start") {
@@ -386,13 +386,6 @@ fn unsupported(type_id: &TypeId, op: TypedOp) -> TypeError {
     TypeError::UnsupportedOp {
         ty: type_id.to_string(),
         op: op.to_string(),
-    }
-}
-
-fn render_property(p: &PropertyRef) -> String {
-    match &p.property {
-        Some(prop) => format!("{}.{}", p.alias, prop),
-        None => p.alias.to_string(),
     }
 }
 

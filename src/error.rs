@@ -41,6 +41,9 @@ pub enum Error {
     #[error("LLM error: {0}")]
     Llm(#[from] crate::llm::LlmError),
 
+    #[error("natural-language query error: {0}")]
+    Nl(String),
+
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 

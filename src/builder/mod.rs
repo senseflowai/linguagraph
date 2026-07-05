@@ -14,5 +14,8 @@ mod return_part;
 mod where_part;
 
 pub use cursor::CypherQuery;
-pub use cypher::{build_read, build_read_with, BuilderError, SOURCES_COLUMN};
+pub use cypher::{
+    build_read, build_read_graph, build_read_with, BuilderError, GRAPH_EDGES_COLUMN,
+    GRAPH_NODES_COLUMN, SOURCES_COLUMN,
+};
 pub use insert::{build_insert, InsertError};

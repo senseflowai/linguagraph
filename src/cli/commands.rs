@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::config::{self, Config};
+use crate::core::factory::{build_query_pipeline, build_registry};
 use crate::core::Pipeline;
 use crate::db::{introspect, Column, GraphClient, MemgraphClient, QueryResult, Value};
 use crate::dsl;
@@ -16,7 +17,6 @@ use crate::graph::{
     DEFAULT_ONTOLOGY_CATALOG_CACHE_PATH,
 };
 use crate::prompt::{self, GraphSchema, PromptOptions};
-use crate::types::{self, SharedRegistry};
 use clap::{Parser, Subcommand, ValueEnum};
 use tabled::{builder::Builder, settings::Style};
 use tokio::fs;
@@ -242,6 +242,25 @@ pub enum Command {
         #[arg(long)]
         prefix_index: Option<String>,
     },
+    /// Answer a natural-language question as an entity/relationship graph.
+    ///
+    /// A reference consumer of [`crate::service::GraphService`]: it runs
+    /// the NL → DSL → graph query and prints the resulting
+    /// `{nodes, edges, cypher}` as JSON — exactly the shape a REST handler
+    /// would return. Requires an LLM (the `openai` feature, on by default).
+    Ask {
+        /// The plain-language question.
+        question: String,
+        /// Optional Cypher label scoping the query to one tenant / dataset.
+        #[arg(long)]
+        prefix_label: Option<String>,
+        /// Optional embedding-index prefix, paired with `prefix_label`.
+        #[arg(long)]
+        prefix_index: Option<String>,
+        /// Optional row-limit override.
+        #[arg(long)]
+        limit: Option<u32>,
+    },
 }
 
 pub async fn run(cli: Cli) -> Result<()> {
@@ -318,32 +337,36 @@ pub async fn run(cli: Cli) -> Result<()> {
         } => {
             cmd_delete_by_source(&cli.config, source, prefix_label, prefix_index, spec_cache).await
         }
+        Command::Ask {
+            question,
+            prefix_label,
+            prefix_index,
+            limit,
+        } => cmd_ask(&cli.config, question, prefix_label, prefix_index, limit).await,
     }
 }
 
-/// Build a [`SharedRegistry`] from `cfg`. Always returns a registry
-/// (possibly empty) so callers can pass it through unconditionally.
-fn build_registry(cfg: &Config) -> Result<(SharedRegistry, Option<SharedEmbedder>)> {
-    let dim = cfg
-        .types
-        .get("SemanticText")
-        .and_then(|t| t.embedding_dim)
-        .unwrap_or(384);
-    let model = cfg
-        .types
-        .get("SemanticText")
-        .and_then(|t| t.embedding_model.clone());
-    let embedder = embeddings::default_embedder(model.as_deref(), dim).map_err(|e| {
-        crate::error::Error::Ingest(crate::ingest::IngestError::Type(format!(
-            "embedder init: {e}"
-        )))
-    })?;
-    let registry = types::handlers::register_default(cfg, embedder.clone()).map_err(|e| {
-        crate::error::Error::Ingest(crate::ingest::IngestError::Type(format!(
-            "registry init: {e}"
-        )))
-    })?;
-    Ok((std::sync::Arc::new(registry), Some(embedder)))
+/// Reference adapter: build a [`GraphService`] and print the graph-shaped
+/// answer as JSON. Any other transport (REST, gRPC) is the same 1:1 wrap.
+async fn cmd_ask(
+    config_path: &std::path::Path,
+    question: String,
+    prefix_label: Option<String>,
+    prefix_index: Option<String>,
+    limit: Option<u32>,
+) -> Result<()> {
+    let cfg = config::load(config_path).await?;
+    let service = crate::service::GraphService::from_config(&cfg).await?;
+    let view = service
+        .ask(crate::service::AskRequest {
+            question,
+            prefix_label,
+            prefix_index,
+            limit,
+        })
+        .await?;
+    println!("{}", serde_json::to_string_pretty(&view)?);
+    Ok(())
 }
 
 fn build_ontology_catalog_embedder(cfg: &Config) -> Result<SharedEmbedder> {
@@ -417,54 +440,11 @@ async fn cmd_run(
     prefix_index: Option<String>,
 ) -> Result<()> {
     let cfg = config::load(config_path).await?;
-    let client = MemgraphClient::connect(&cfg.database).await?;
-    let (registry, embedder) = build_registry(&cfg)?;
-    let spec_storage: Arc<dyn OntologyCatalogStorage> = Arc::new(
-        JsonFileOntologyCatalogStorage::new(&cfg.ontology_catalog.cache_path),
-    );
-    let mut pipeline = Pipeline::new(Arc::new(client), &cfg)
-        .with_registry(registry)
-        .with_ontology_catalog_storage(spec_storage)
-        .with_prefix_label(prefix_label)
-        .with_prefix_index(prefix_index);
-    if let Some(e) = embedder {
-        pipeline = pipeline.with_embedder(e);
-    }
-    // When a cross-encoder reranker model is configured for SemanticText,
-    // attach it so semantic search reranks candidates in-process instead
-    // of inside Memgraph (`libqlink.search_hybrid_reranked`).
-    if let Some(reranker) = build_semantic_text_reranker(&cfg)? {
-        pipeline = pipeline.with_reranker(reranker);
-    }
-    pipeline.load_ontology_catalog().await?;
+    let pipeline = build_query_pipeline(&cfg, prefix_label, prefix_index).await?;
     let dsl_query = dsl::parse(&path).await?;
     let result = pipeline.run(dsl_query).await?;
     print_query_result_table(&result);
     Ok(())
-}
-
-/// Build the SemanticText cross-encoder reranker from
-/// `[types.SemanticText].reranking_model`, or `None` when unset (the
-/// pipeline then defers reranking to qlink's `search_hybrid_reranked`).
-fn build_semantic_text_reranker(cfg: &Config) -> Result<Option<embeddings::SharedReranker>> {
-    let Some(model) = cfg
-        .types
-        .get("SemanticText")
-        .and_then(|t| t.reranking_model.clone())
-    else {
-        return Ok(None);
-    };
-    let dim = cfg
-        .types
-        .get("SemanticText")
-        .and_then(|t| t.embedding_dim)
-        .unwrap_or(384);
-    let reranker = embeddings::default_reranker(Some(&model), dim).map_err(|e| {
-        crate::error::Error::Ingest(crate::ingest::IngestError::Type(format!(
-            "SemanticText reranker init: {e}"
-        )))
-    })?;
-    Ok(Some(reranker))
 }
 
 async fn cmd_traversal(

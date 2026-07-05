@@ -316,6 +316,9 @@ cargo run -- cypher examples/aggregate_orders.json
 # Compile and execute against the configured Memgraph
 cargo run -- run examples/find_people.json --config config.toml
 
+# Ask a natural-language question, get a {nodes, edges, cypher} graph as JSON
+cargo run -- ask "What assets does Nordwind Group own?" --config config.toml
+
 # Print a schema-aware system prompt for an LLM
 cargo run -- prompt --schema schema.json
 ```
@@ -1056,6 +1059,51 @@ to the entity types relevant to a specific natural-language query.
 Global flag: `--config <path>` (default `config.toml`). The ingest, `run`,
 `cypher`, `traversal` and `query` commands also accept `--prefix-label` /
 `--prefix-index` to scope reads and writes to a tenant or dataset.
+
+## Programmatic interface
+
+The library exposes a single high-level facade,
+[`service::GraphService`](src/service/mod.rs), that turns the low-level
+`Pipeline` into the handful of operations a knowledge-graph front-end
+needs. It returns plain `serde` DTOs (`src/service/dto.rs`) and depends on
+no web framework — so a REST API, a CLI subcommand, or a gRPC service is a
+thin 1:1 wrapper over it, not a rewrite. (When built with the optional
+`utoipa` feature, every DTO also derives `utoipa::ToSchema`, so an HTTP
+consumer gets an OpenAPI document for free.)
+
+| Method | Returns | Purpose |
+|--------|---------|---------|
+| `ask(AskRequest)` | `GraphView { nodes, edges, cypher }` | natural-language question → entity/relationship graph + the generated Cypher |
+| `run_dsl(DslQuery)` | `GraphView` | same, from a pre-built DSL (no LLM) |
+| `schema()` | `SchemaView` | entity types + relation types (filter chips / legend) |
+| `entity(id)` | `Option<EntityDetail>` | one entity: properties, sources, relationships |
+| `relation(id)` | `Option<RelationDetail>` | one relationship: both endpoints + properties |
+
+The graph endpoints return only what the engine actually knows — nodes,
+edges, properties, sources, and the Cypher. Presentation fields a UI might
+add (a prose answer, confidence scores, a timeline) are deliberately left
+to the consumer.
+
+```rust
+use linguagraph::service::{AskRequest, GraphService};
+
+let svc = GraphService::from_config(&cfg).await?;
+let view = svc.ask(AskRequest { question: "Who owns Acme?".into(), ..Default::default() }).await?;
+// view.nodes / view.edges / view.cypher
+```
+
+### Reference consumer: the `ask` CLI subcommand
+
+`src/cli/commands.rs` wraps `GraphService` in one `ask` subcommand as a
+worked example of building a transport on top of the facade — it prints
+the same `{nodes, edges, cypher}` JSON a REST handler would send:
+
+```bash
+# natural language → graph, as JSON
+linguagraph ask "What assets does Nordwind Group own?" --config config.toml
+# optional tenant scoping and row limit:
+linguagraph ask "..." --prefix-label acme --prefix-index acme --limit 20
+```
 
 ## Testing
 

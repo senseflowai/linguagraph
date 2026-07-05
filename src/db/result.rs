@@ -28,6 +28,7 @@ pub enum Value {
 /// [`NodeType::Chunk`] column. Anything that doesn't match the built-in
 /// `Source` or `Chunk` labels falls into [`NodeType::Entity`].
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub enum NodeType {
     Entity,
     Chunk,

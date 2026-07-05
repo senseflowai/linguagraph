@@ -145,6 +145,14 @@ pub struct DeleteBySourceSummary {
     pub qlink_collections: usize,
 }
 
+/// Result of [`Pipeline::run_graph`]: the executed graph-shaped result
+/// paired with the Cypher that produced it.
+#[derive(Debug, Clone)]
+pub struct GraphRun {
+    pub result: QueryResult,
+    pub cypher: CypherQuery,
+}
+
 impl Pipeline {
     pub fn new(client: Arc<dyn GraphClient>, config: &Config) -> Self {
         let semantic_collection = config
@@ -415,6 +423,35 @@ impl Pipeline {
         self.validate_dsl_relationship_directions(&mut dsl).await?;
         let cypher = self.compile(dsl)?;
         Ok(self.client.execute(&cypher).await?)
+    }
+
+    /// Borrow the underlying graph client. Crate-internal so sibling
+    /// modules (e.g. [`crate::core::inspect`]) can issue id-scoped
+    /// lookups the DSL can't express, without exposing the driver.
+    pub(crate) fn client(&self) -> &dyn GraphClient {
+        self.client.as_ref()
+    }
+
+    /// Compile a DSL document into a **graph-shaped** Cypher query — one
+    /// whose projection returns `nodes` / `edges` lists rather than
+    /// tabular scalars. See [`crate::builder::build_read_graph`].
+    pub fn compile_graph(&self, dsl: DslQuery) -> Result<CypherQuery> {
+        let mut ast = self.lower(dsl)?;
+        self.prepare(&mut ast)?;
+        Ok(builder::build_read_graph(&ast, &self.registry)?)
+    }
+
+    /// Run a DSL document with the graph-shaped projection and return
+    /// both the [`QueryResult`] and the [`CypherQuery`] that produced it,
+    /// so callers can surface the generated Cypher alongside the graph
+    /// without recompiling. Relationship directions are corrected against
+    /// the live schema exactly as [`Self::run`] does.
+    pub async fn run_graph(&self, dsl: DslQuery) -> Result<GraphRun> {
+        let mut dsl = dsl;
+        self.validate_dsl_relationship_directions(&mut dsl).await?;
+        let cypher = self.compile_graph(dsl)?;
+        let result = self.client.execute(&cypher).await?;
+        Ok(GraphRun { result, cypher })
     }
 
     /// Correct LLM-emitted relationship directions against the live schema.

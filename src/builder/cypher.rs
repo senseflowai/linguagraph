@@ -127,6 +127,137 @@ pub fn build_read_with(
     Ok(cur.finish().with_columns(columns))
 }
 
+/// Column name carrying the list of node maps emitted by
+/// [`build_read_graph`].
+pub const GRAPH_NODES_COLUMN: &str = "nodes";
+/// Column name carrying the list of edge maps emitted by
+/// [`build_read_graph`].
+pub const GRAPH_EDGES_COLUMN: &str = "edges";
+
+/// Compile a [`ReadQuery`] into a Cypher query whose projection is
+/// **graph-shaped** rather than tabular: it returns two columns,
+/// [`GRAPH_NODES_COLUMN`] and [`GRAPH_EDGES_COLUMN`], each a list of
+/// maps describing the bound nodes and the relationships between them.
+///
+/// This exists because the ordinary [`build_read_with`] projection is a
+/// list of *scalars* (`RETURN p.name AS name`), from which node identity
+/// and relationship endpoints cannot be recovered. Rendering the result
+/// as an entity/relationship graph (the shape a `{nodes, edges}` API or
+/// UI consumes) needs the identity, labels, and endpoint ids that only a
+/// dedicated projection preserves.
+///
+/// Design notes:
+/// * The MATCH / WHERE / OPTIONAL MATCH / post-match stages are reused
+///   verbatim from the tabular builder, so prefix scoping, typed-filter
+///   handler contributions, and traversal shape all behave identically.
+/// * Every node alias survives to the RETURN (the tabular builder relies
+///   on the same guarantee for its `sources` stage), so each is projected
+///   as a map `{alias, id, labels, props, sources}`. `props`/`sources`
+///   use Cypher map projection / pattern comprehension, which the strict
+///   row decoder renders straight into JSON — no `src/db` change needed.
+/// * Edges are derived from each traversal via a pattern comprehension
+///   over the two already-bound node aliases, so edge identity does not
+///   depend on the edge variable staying in scope. Variable-length
+///   traversals bind a list (not a single relationship), so their per-edge
+///   identity/props are skipped; the endpoint connectivity is still
+///   emitted.
+pub fn build_read_graph(
+    query: &ReadQuery,
+    registry: &TypeRegistry,
+) -> Result<CypherQuery, BuilderError> {
+    let mut cur = Cursor::new();
+
+    // ── Phase 1: MATCH + WHERE + OPTIONAL MATCH (identical to tabular). ─
+    match_part::write_match(&mut cur, query);
+    if let Some(filter) = &query.filter {
+        where_part::write_where(&mut cur, filter, registry)?;
+    }
+    match_part::write_optional_matches(&mut cur, query);
+
+    // ── Phase 2: post-match handler fragments. ─────────────────────────
+    if !cur.post_match.is_empty() {
+        let frags = cur.post_match.drain(..).collect::<Vec<_>>();
+        cur.buf.push('\n');
+        cur.buf.push_str(&frags.join("\n"));
+    }
+
+    // ── Phase 3: graph-shaped RETURN. ─────────────────────────────────
+    let node_maps: Vec<String> = collect_node_aliases(query)
+        .into_iter()
+        .map(|a| graph_node_map(&a))
+        .collect();
+    let edge_lists: Vec<String> = query
+        .traversals
+        .iter()
+        .filter_map(graph_edge_list)
+        .collect();
+    let edges_expr = if edge_lists.is_empty() {
+        "[]".to_string()
+    } else {
+        edge_lists.join(" + ")
+    };
+    cur.buf.push_str(&format!(
+        "\nRETURN [{}] AS {GRAPH_NODES_COLUMN}, {edges_expr} AS {GRAPH_EDGES_COLUMN}",
+        node_maps.join(", ")
+    ));
+
+    // ── Phase 4: LIMIT (ORDER BY is meaningless for the aggregated
+    //    single-row graph projection, so it is skipped). ───────────────
+    if let Some(limit) = query.limit {
+        return_part::write_limit(&mut cur, limit);
+    }
+
+    // ── Phase 5: pre-match (e.g. a vector-search CALL). ────────────────
+    if !cur.pre_match.is_empty() {
+        let mut pre = cur.pre_match.drain(..).collect::<Vec<_>>().join("\n");
+        pre.push('\n');
+        cur.buf = format!("{pre}{}", cur.buf);
+    }
+
+    let columns = vec![
+        Column::new(GRAPH_NODES_COLUMN),
+        Column::new(GRAPH_EDGES_COLUMN),
+    ];
+    Ok(cur.finish().with_columns(columns))
+}
+
+/// Render the per-node map projection used by [`build_read_graph`]:
+/// `{alias, id, labels, props, sources}`. `sources` walks `:mention` /
+/// `:part_of` to the built-in `:Source` nodes, mirroring the tabular
+/// builder's sources stage but scoped to this one node.
+fn graph_node_map(alias: &str) -> String {
+    format!(
+        "{{alias: '{alias}', id: id({alias}), labels: labels({alias}), \
+         props: {alias} {{.*}}, \
+         sources: [({alias})-[:{MENTION_REL}|{PART_OF_REL}]->(__s:{SOURCE_LABEL}) | __s {{.*}}]}}"
+    )
+}
+
+/// Render the per-traversal edge list comprehension used by
+/// [`build_read_graph`]. Returns `None` for variable-length traversals,
+/// whose edge variable binds a list rather than a single relationship.
+fn graph_edge_list(t: &EdgeTraversal) -> Option<String> {
+    let is_var_length = matches!(t.depth, Some(d) if !(d.min == 1 && d.max == 1));
+    if is_var_length {
+        return None;
+    }
+    let from = t.from_alias.as_str();
+    let to = t.target.alias.as_str();
+    let edge = &t.edge_label;
+    let pattern = match t.direction {
+        Direction::Out => format!("({from})-[__e:{edge}]->({to})"),
+        Direction::In => format!("({from})<-[__e:{edge}]-({to})"),
+        Direction::Both => format!("({from})-[__e:{edge}]-({to})"),
+    };
+    // `startNode`/`endNode` recover the stored direction so `from`/`to`
+    // reflect the actual relationship regardless of the DSL's traversal
+    // orientation.
+    Some(format!(
+        "[{pattern} | {{id: id(__e), rel: type(__e), \
+         from: id(startNode(__e)), to: id(endNode(__e)), props: __e {{.*}}}}]"
+    ))
+}
+
 /// True when the post-match handler chain emitted a sort key that
 /// [`build_read_with`] would surface as an aggregated `score` column.
 /// Mirrors the condition that drives the `__score__ AS score`
@@ -645,6 +776,103 @@ mod tests {
             .find(|c| c.name == "source_name")
             .expect("source_name column exists");
         assert_eq!(col.node_type, Some(NodeType::Source));
+    }
+
+    #[test]
+    fn graph_projection_emits_node_maps_and_edge_comprehension() {
+        let q = ReadQuery {
+            action: Action::Find,
+            start: Node {
+                label: "Person".into(),
+                alias: alias("p"),
+                prefix_label: None,
+            },
+            traversals: vec![EdgeTraversal {
+                from_alias: alias("p"),
+                edge_label: "OWNS".into(),
+                edge_alias: alias("r"),
+                direction: Direction::Out,
+                target: Node {
+                    label: "Company".into(),
+                    alias: alias("c"),
+                    prefix_label: None,
+                },
+                depth: None,
+                optional: false,
+            }],
+            filter: None,
+            returns: vec![ReturnClause::Field {
+                field: pref("p", Some("name")),
+                alias: None,
+            }],
+            group_by: vec![],
+            sort: vec![],
+            limit: Some(25),
+        };
+        let out = build_read_graph(&q, &TypeRegistry::empty()).unwrap();
+
+        // MATCH is reused verbatim from the tabular builder.
+        assert!(out.text.starts_with("MATCH (p:Person)"), "got: {}", out.text);
+        assert!(out.text.contains("-[r:OWNS]->(c:Company)"), "got: {}", out.text);
+        // Both bound node aliases are projected as identity maps.
+        assert!(out.text.contains("id: id(p)"), "got: {}", out.text);
+        assert!(out.text.contains("props: p {.*}"), "got: {}", out.text);
+        assert!(out.text.contains("id: id(c)"), "got: {}", out.text);
+        // Sources are gathered per node via pattern comprehension.
+        assert!(
+            out.text.contains("[(p)-[:mention|part_of]->(__s:Source) | __s {.*}]"),
+            "got: {}",
+            out.text
+        );
+        // The edge is derived from the traversal, with true direction.
+        assert!(
+            out.text.contains("[(p)-[__e:OWNS]->(c) | {id: id(__e), rel: type(__e)"),
+            "got: {}",
+            out.text
+        );
+        assert!(out.text.contains("from: id(startNode(__e))"), "got: {}", out.text);
+        assert!(out.text.trim_end().ends_with("LIMIT 25"), "got: {}", out.text);
+
+        let names: Vec<_> = out.columns.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["nodes", "edges"]);
+    }
+
+    #[test]
+    fn graph_projection_skips_variable_length_edges() {
+        let q = ReadQuery {
+            action: Action::Find,
+            start: Node {
+                label: "Person".into(),
+                alias: alias("p"),
+                prefix_label: None,
+            },
+            traversals: vec![EdgeTraversal {
+                from_alias: alias("p"),
+                edge_label: "KNOWS".into(),
+                edge_alias: alias("r"),
+                direction: Direction::Out,
+                target: Node {
+                    label: "Person".into(),
+                    alias: alias("p2"),
+                    prefix_label: None,
+                },
+                depth: Some(Depth { min: 1, max: 3 }),
+                optional: false,
+            }],
+            filter: None,
+            returns: vec![ReturnClause::Field {
+                field: pref("p2", Some("name")),
+                alias: None,
+            }],
+            group_by: vec![],
+            sort: vec![],
+            limit: None,
+        };
+        let out = build_read_graph(&q, &TypeRegistry::empty()).unwrap();
+        // Nodes still project; the var-length edge is not turned into a
+        // per-edge comprehension (it would bind a list, not one edge).
+        assert!(out.text.contains("id: id(p2)"), "got: {}", out.text);
+        assert!(out.text.contains("[] AS edges"), "got: {}", out.text);
     }
 
     #[test]

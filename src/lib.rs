@@ -35,6 +35,7 @@ pub mod ingest;
 pub mod llm;
 pub mod prompt;
 pub mod resolve;
+pub mod service;
 pub mod types;
 
 pub use error::{Error, Result};

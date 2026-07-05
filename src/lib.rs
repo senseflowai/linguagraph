@@ -13,6 +13,7 @@
 //! | Prompt       | [`prompt`]           | schema-aware system prompts for LLMs       |
 //! | Core         | [`core`]              | wires the layers together                  |
 //! | CLI          | [`cli`]              | command-line entrypoints                   |
+//! | API          | [`api`]              | stable public surface for the REST service |
 //!
 //! Anything user-facing (the CLI, integration tests) goes through
 //! [`core::Pipeline`]; the layers below it are reusable on their own.
@@ -20,6 +21,7 @@
 #![deny(rust_2018_idioms)]
 #![warn(missing_debug_implementations)]
 
+pub mod api;
 pub mod ast;
 pub mod builder;
 pub mod cli;

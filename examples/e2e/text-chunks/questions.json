@@ -1,0 +1,148 @@
+{
+  "questions": [
+    {
+      "id": "traversal_robot_line_context",
+      "question": "Найди фрагменты отчета о том, как Phoenix-12 связан с Sokol WMS и Talon Yard.",
+      "traversal": {
+        "entities": ["Phoenix-12", "Sokol WMS", "Talon Yard"],
+        "goal": "robot sorting line Phoenix-12 integration with Sokol WMS and Talon Yard gate control",
+        "query": "How is Phoenix-12 connected to Sokol WMS and Talon Yard?",
+        "limit": 4,
+        "entity_types": ["RobotLine", "SoftwareSystem"],
+        "rerank": false
+      },
+      "validation": {
+        "row_count": { "min": 1, "max": 4 },
+        "columns": ["chunk_text", "source_name", "entities"],
+        "contains": [
+          { "column": "source_name", "value": "Отчет о внедрении логистической платформы Титан, июнь 2026" },
+          { "column": "chunk_text", "mode": "contains", "value": "Phoenix-12" },
+          { "column": "chunk_text", "mode": "contains", "value": "Sokol WMS" },
+          { "column": "chunk_text", "mode": "contains", "value": "Talon Yard" },
+          { "column": "entities", "mode": "contains", "value": "RobotLine" }
+        ]
+      }
+    },
+    {
+      "id": "traversal_incident_context",
+      "question": "Какие фрагменты объясняют инцидент KR-42 и роль ночной смены Bravo?",
+      "traversal": {
+        "entities": ["KR-42", "Night shift Bravo", "Sokol WMS"],
+        "goal": "incident KR-42 mobile scanner confirmations Night shift Bravo manual confirmation",
+        "query": "What happened in incident KR-42 and what did Night shift Bravo do?",
+        "limit": 4,
+        "entity_types": ["Incident", "Team", "SoftwareSystem"],
+        "rerank": false
+      },
+      "validation": {
+        "row_count": { "min": 1, "max": 4 },
+        "columns": ["chunk_text", "entities"],
+        "contains": [
+          { "column": "chunk_text", "mode": "contains", "value": "incident KR-42" },
+          { "column": "chunk_text", "mode": "contains", "value": "Night shift Bravo" },
+          { "column": "chunk_text", "mode": "contains", "value": "manual confirmation" },
+          { "column": "entities", "mode": "contains", "value": "Incident" }
+        ]
+      }
+    },
+    {
+      "id": "traversal_cold_chain_context",
+      "question": "Найди контекст про Orion Foods, SLA разгрузки и Novaya Dacha.",
+      "traversal": {
+        "entities": ["Orion Foods", "Novaya Dacha distribution center"],
+        "goal": "Orion Foods chilled dairy pallets four-hour unloading SLA spoilage risk Novaya Dacha",
+        "query": "What cold-chain requirements does Orion Foods have at Novaya Dacha?",
+        "limit": 4,
+        "entity_types": ["Organization", "Facility"],
+        "rerank": false
+      },
+      "validation": {
+        "row_count": { "min": 1, "max": 4 },
+        "contains": [
+          { "column": "chunk_text", "mode": "contains", "value": "Orion Foods" },
+          { "column": "chunk_text", "mode": "contains", "value": "four-hour unloading SLA" },
+          { "column": "chunk_text", "mode": "contains", "value": "spoilage risk" }
+        ]
+      }
+    },
+    {
+      "id": "dsl_text_extracted_facility_systems",
+      "question": "Какие системы использует Novaya Dacha distribution center?",
+      "dsl": {
+        "action": "find",
+        "start": { "label": "Facility", "alias": "f" },
+        "traversals": [
+          {
+            "from": "f",
+            "edge": { "label": "USES_SYSTEM", "alias": "uses", "direction": "out" },
+            "target": { "label": "SoftwareSystem", "alias": "s" }
+          }
+        ],
+        "filters": [
+          { "field": "f.name", "op": "eq", "value": "Novaya Dacha distribution center" }
+        ],
+        "return": [
+          { "field": "s.name", "alias": "system_name" }
+        ],
+        "limit": 10
+      },
+      "validation": {
+        "row_count": { "exact": 2 },
+        "columns": ["system_name"],
+        "contains": [
+          { "column": "system_name", "value": "Sokol WMS" },
+          { "column": "system_name", "value": "Talon Yard" }
+        ],
+        "dsl_expect": {
+          "start_label": "Facility",
+          "required_traversal_labels": ["USES_SYSTEM"],
+          "required_filter_fields": ["name"]
+        }
+      }
+    },
+    {
+      "id": "dsl_text_extracted_incident_relation",
+      "question": "Какой системой затронут инцидент, за который отвечала Night shift Bravo?",
+      "dsl": {
+        "action": "find",
+        "start": { "label": "Team", "alias": "t" },
+        "traversals": [
+          {
+            "from": "t",
+            "edge": { "label": "RESPONSIBLE_FOR", "alias": "resp", "direction": "out" },
+            "target": { "label": "Incident", "alias": "i" }
+          },
+          {
+            "from": "i",
+            "edge": { "label": "AFFECTS", "alias": "affects", "direction": "out" },
+            "target": { "label": "SoftwareSystem", "alias": "s" }
+          }
+        ],
+        "filters": [
+          { "field": "t.name", "op": "eq", "value": "Night shift Bravo" }
+        ],
+        "return": [
+          { "field": "i.name", "alias": "incident" },
+          { "field": "s.name", "alias": "affected_system" }
+        ],
+        "limit": 10
+      },
+      "validation": {
+        "row_count": { "exact": 1 },
+        "rows": [
+          {
+            "fields": {
+              "incident": "KR-42",
+              "affected_system": "Sokol WMS"
+            }
+          }
+        ],
+        "dsl_expect": {
+          "start_label": "Team",
+          "required_traversal_labels": ["RESPONSIBLE_FOR", "AFFECTS"],
+          "required_filter_fields": ["name"]
+        }
+      }
+    }
+  ]
+}

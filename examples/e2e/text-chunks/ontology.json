@@ -1,0 +1,70 @@
+{
+  "text_logistics": {
+    "entity_types": [
+      {
+        "name": "Organization",
+        "description": "Company or legal organization mentioned in a logistics text document.",
+        "properties": [
+          { "name": "name", "property_type": "text", "required": true },
+          { "name": "role", "property_type": "keyword", "required": false },
+          { "name": "description", "property_type": "text", "required": false }
+        ]
+      },
+      {
+        "name": "Facility",
+        "description": "Warehouse, distribution center, hub, or other logistics facility extracted from prose.",
+        "properties": [
+          { "name": "name", "property_type": "text", "required": true },
+          { "name": "city", "property_type": "keyword", "required": false },
+          { "name": "description", "property_type": "text", "required": false }
+        ]
+      },
+      {
+        "name": "SoftwareSystem",
+        "description": "Software platform, forecasting service, WMS, or yard system mentioned in text.",
+        "properties": [
+          { "name": "name", "property_type": "text", "required": true },
+          { "name": "category", "property_type": "keyword", "required": false },
+          { "name": "description", "property_type": "text", "required": false }
+        ]
+      },
+      {
+        "name": "RobotLine",
+        "description": "Automated sorting or robotic line described in a text document.",
+        "properties": [
+          { "name": "name", "property_type": "text", "required": true },
+          { "name": "description", "property_type": "text", "required": false }
+        ]
+      },
+      {
+        "name": "Incident",
+        "description": "Operational incident extracted from document chunks.",
+        "properties": [
+          { "name": "name", "property_type": "text", "required": true },
+          { "name": "severity", "property_type": "keyword", "required": false },
+          { "name": "description", "property_type": "text", "required": false }
+        ]
+      },
+      {
+        "name": "Team",
+        "description": "Operational team, shift, or group named in prose.",
+        "properties": [
+          { "name": "name", "property_type": "text", "required": true },
+          { "name": "shift", "property_type": "keyword", "required": false },
+          { "name": "description", "property_type": "text", "required": false }
+        ]
+      }
+    ],
+    "relation_types": [
+      { "name": "OPERATES", "description": "Organization operates a facility." },
+      { "name": "USES_SYSTEM", "description": "Facility uses a software system." },
+      { "name": "HAS_ROBOT_LINE", "description": "Facility contains or operates a robot line." },
+      { "name": "INTEGRATED_WITH", "description": "Robot line or system is integrated with another system." },
+      { "name": "SHIPS_TO", "description": "Organization ships goods to a facility." },
+      { "name": "AFFECTS", "description": "Incident affects a system, facility, or line." },
+      { "name": "RESPONSIBLE_FOR", "description": "Team is responsible for handling an incident." },
+      { "name": "FEEDS", "description": "System sends forecasting or planning data to another system." },
+      { "name": "mentions", "description": "Chunk mentions an extracted entity." }
+    ]
+  }
+}

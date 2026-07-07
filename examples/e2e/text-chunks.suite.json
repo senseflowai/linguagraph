@@ -1,0 +1,25 @@
+{
+  "name": "text-chunks",
+  "graph": "text-chunks/graph.json",
+  "ontology": "text-chunks/ontology.json",
+  "questions": "text-chunks/questions.json",
+  "settings": {
+    "prefix": "E2E_TEXT_CHUNKS",
+    "cleanup_before": true,
+    "cleanup_after": false,
+    "cleanup_vectors": true,
+    "answer_with_llm": false,
+    "judge_with_llm": false,
+    "max_repairs": 0,
+    "indexes": [
+      { "label": "Chunk", "property": "id" },
+      { "label": "Source", "property": "name" },
+      { "label": "Organization", "property": "name" },
+      { "label": "Facility", "property": "name" },
+      { "label": "SoftwareSystem", "property": "name" },
+      { "label": "RobotLine", "property": "name" },
+      { "label": "Incident", "property": "name" },
+      { "label": "Team", "property": "name" }
+    ]
+  }
+}

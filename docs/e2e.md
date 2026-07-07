@@ -51,6 +51,7 @@ The default e2e config uses:
     "cleanup_after": false,
     "answer_with_llm": true,
     "judge_with_llm": false,
+    "include_embeddings_in_report": false,
     "max_repairs": 1
   }
 }
@@ -59,6 +60,11 @@ The default e2e config uses:
 Relative paths resolve from the suite file directory. The prefix is applied as
 both `prefix_label` and `prefix_index`, so graph nodes and vector collections
 stay isolated from other data.
+
+`include_embeddings_in_report` controls whether raw embedding vectors are
+written to the JSON report. It defaults to `false`; leave it off for normal
+runs because vectors make reports very large. It can also be enabled from the
+CLI with `--include-embeddings-in-report`.
 
 ## Graph Format
 
@@ -138,6 +144,34 @@ The ontology file is an `OntologyCatalog`:
   ]
 }
 ```
+
+For text-ingest fixtures, a case can skip DSL generation entirely and run the
+document traversal endpoint:
+
+```json
+{
+  "id": "traversal_robot_line_context",
+  "question": "Найди фрагменты отчета о Phoenix-12.",
+  "traversal": {
+    "entities": ["Phoenix-12", "Sokol WMS"],
+    "goal": "robot line integration with Sokol WMS",
+    "query": "How is Phoenix-12 connected to Sokol WMS?",
+    "limit": 4,
+    "entity_types": ["RobotLine", "SoftwareSystem"],
+    "rerank": false
+  },
+  "validation": {
+    "row_count": { "min": 1 },
+    "contains": [
+      { "column": "chunk_text", "mode": "contains", "value": "Phoenix-12" }
+    ]
+  }
+}
+```
+
+`traversal` cases call `Pipeline::run_traversal` after graph ingest. The runner
+forces the suite prefix into `prefix_label` and `prefix_index`, just as it does
+for static or generated DSL. Do not combine `dsl` and `traversal` in one case.
 
 `rows` entries are subset matches:
 

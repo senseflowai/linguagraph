@@ -49,6 +49,10 @@ struct Args {
     #[arg(long, conflicts_with = "cleanup_after")]
     keep_data: bool,
 
+    /// Include raw embedding vectors in the JSON report.
+    #[arg(long)]
+    include_embeddings_in_report: bool,
+
     /// Override [llm].base_url.
     #[arg(long)]
     llm_base_url: Option<String>,
@@ -73,6 +77,7 @@ async fn main() -> anyhow::Result<()> {
         prefix: args.prefix,
         cleanup_after: args.cleanup_after.then_some(true),
         keep_data: args.keep_data,
+        include_embeddings_in_report: args.include_embeddings_in_report.then_some(true),
         llm_base_url: args.llm_base_url,
         llm_model: args.llm_model,
     })

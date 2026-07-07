@@ -18,7 +18,7 @@ use crate::builder::CypherQuery;
 use crate::config::{self, Config};
 use crate::core::Pipeline;
 use crate::db::{GraphClient, MemgraphClient, QueryResult, Value as DbValue};
-use crate::dsl::{self, DslQuery};
+use crate::dsl::{self, DslQuery, TraversalQuery};
 use crate::embeddings::{self, SharedEmbedder};
 use crate::graph::{Graph, GraphBuilder, OntologyCatalog, OntologyCatalogStorage, PrimaryKey};
 use crate::llm::LlmClient;
@@ -38,6 +38,7 @@ pub struct E2eRunOptions {
     pub prefix: Option<String>,
     pub cleanup_after: Option<bool>,
     pub keep_data: bool,
+    pub include_embeddings_in_report: Option<bool>,
     pub llm_base_url: Option<String>,
     pub llm_model: Option<String>,
 }
@@ -54,6 +55,7 @@ pub struct E2eReport {
     pub total: usize,
     pub passed: usize,
     pub failed: usize,
+    pub include_embeddings_in_report: bool,
     pub cases: Vec<E2eCaseReport>,
 }
 
@@ -71,6 +73,8 @@ pub struct E2eCaseReport {
     pub errors: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dsl: Option<JsonValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub traversal: Option<JsonValue>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cypher: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -117,6 +121,16 @@ struct SuiteSettings {
     answer_with_llm: bool,
     #[serde(default)]
     judge_with_llm: bool,
+    /// Include raw embedding vectors in the machine-readable report. Disabled
+    /// by default because vectors make reports huge and are rarely useful for
+    /// pass/fail analysis.
+    #[serde(
+        default,
+        alias = "report_embeddings",
+        alias = "write_embeddings",
+        alias = "include_embedding_in_report"
+    )]
+    include_embeddings_in_report: bool,
     #[serde(default = "default_max_repairs")]
     max_repairs: usize,
     #[serde(default)]
@@ -137,6 +151,7 @@ impl Default for SuiteSettings {
             cleanup_vectors: true,
             answer_with_llm: true,
             judge_with_llm: false,
+            include_embeddings_in_report: false,
             max_repairs: default_max_repairs(),
             llm_base_url: None,
             llm_model: None,
@@ -164,6 +179,10 @@ struct QuestionCase {
     /// `question` and the live schema prompt.
     #[serde(default)]
     dsl: Option<JsonValue>,
+    /// Optional high-level text traversal query. When present, the case uses
+    /// `Pipeline::run_traversal` instead of the natural-language-to-DSL path.
+    #[serde(default)]
+    traversal: Option<TraversalQuery>,
     #[serde(default)]
     validation: ValidationSpec,
 }
@@ -316,6 +335,9 @@ pub async fn run_suite(opts: E2eRunOptions) -> anyhow::Result<E2eReport> {
     if opts.keep_data {
         settings.cleanup_after = false;
     }
+    if let Some(include_embeddings) = opts.include_embeddings_in_report {
+        settings.include_embeddings_in_report = include_embeddings;
+    }
     if let Some(base_url) = opts.llm_base_url {
         settings.llm_base_url = Some(base_url);
     }
@@ -452,6 +474,7 @@ pub async fn run_suite(opts: E2eRunOptions) -> anyhow::Result<E2eReport> {
         total: case_reports.len(),
         passed,
         failed,
+        include_embeddings_in_report: settings.include_embeddings_in_report,
         cases: case_reports,
     };
 
@@ -478,11 +501,121 @@ async fn run_case(
 ) -> E2eCaseReport {
     let mut errors = Vec::new();
     let mut dsl_json = None;
+    let mut traversal_json = None;
     let mut cypher = None;
     let mut cypher_params = None;
     let mut rows = Vec::new();
     let mut answer = None;
     let mut judge_report = None;
+
+    if case.dsl.is_some() && case.traversal.is_some() {
+        errors.push("case cannot define both `dsl` and `traversal`".to_string());
+        return E2eCaseReport {
+            id: case.id.clone(),
+            question: case.question.clone(),
+            passed: false,
+            errors,
+            dsl: dsl_json,
+            traversal: traversal_json,
+            cypher,
+            cypher_params,
+            row_count: 0,
+            rows,
+            answer,
+            judge: judge_report,
+        };
+    }
+
+    if let Some(traversal) = &case.traversal {
+        let mut traversal = traversal.clone();
+        force_traversal_prefix(&mut traversal, prefix);
+        traversal_json = serde_json::to_value(&traversal).ok();
+
+        tracing::debug!(
+            target: "linguagraph::e2e",
+            traversal = %serde_json::to_string(&traversal).unwrap_or_default(),
+            "running e2e traversal"
+        );
+
+        if case.validation.dsl_expect.is_some() {
+            errors.push("`dsl_expect` is not applicable to traversal cases".to_string());
+        }
+
+        let result = match pipeline.run_traversal(traversal.clone()).await {
+            Ok(result) => result,
+            Err(err) => {
+                errors.push(format!("traversal query failed: {err}"));
+                return E2eCaseReport {
+                    id: case.id.clone(),
+                    question: case.question.clone(),
+                    passed: false,
+                    errors,
+                    dsl: dsl_json,
+                    traversal: traversal_json,
+                    cypher,
+                    cypher_params,
+                    row_count: 0,
+                    rows,
+                    answer,
+                    judge: judge_report,
+                };
+            }
+        };
+
+        rows = result_rows_json(&result, settings.include_embeddings_in_report);
+        errors.extend(validate_result(
+            &case.validation,
+            &result,
+            answer.as_deref(),
+        ));
+
+        if settings.answer_with_llm || !case.validation.answer_contains.is_empty() {
+            match synthesize_traversal_answer(llm.clone(), &case.question, &traversal, &rows).await
+            {
+                Ok(text) => {
+                    errors.extend(validate_answer_contains(
+                        &case.validation.answer_contains,
+                        &text,
+                    ));
+                    answer = Some(text);
+                }
+                Err(err) => errors.push(format!("answer synthesis failed: {err}")),
+            }
+        }
+
+        let judge_spec = case
+            .validation
+            .judge
+            .as_ref()
+            .filter(|_| settings.judge_with_llm || case.validation.judge.is_some());
+        if let Some(spec) = judge_spec {
+            match judge_answer(llm, &case.question, answer.as_deref(), &rows, spec).await {
+                Ok(judge) => {
+                    if spec.require_pass && !judge.passed {
+                        errors.push(format!("LLM judge failed: {}", judge.reason));
+                    }
+                    judge_report = Some(judge);
+                }
+                Err(err) => errors.push(format!("LLM judge failed to run: {err}")),
+            }
+        }
+
+        let passed = errors.is_empty();
+        return E2eCaseReport {
+            id: case.id.clone(),
+            question: case.question.clone(),
+            passed,
+            errors,
+            dsl: dsl_json,
+            traversal: traversal_json,
+            cypher,
+            cypher_params,
+            row_count: result.rows.len(),
+            rows,
+            answer,
+            judge: judge_report,
+        };
+    }
 
     let dsl_result = match &case.dsl {
         Some(static_dsl) => parse_case_dsl(static_dsl.clone(), prefix),
@@ -512,6 +645,7 @@ async fn run_case(
                 passed: false,
                 errors,
                 dsl: dsl_json,
+                traversal: traversal_json,
                 cypher,
                 cypher_params,
                 row_count: 0,
@@ -533,7 +667,10 @@ async fn run_case(
     match pipeline.compile(dsl.clone()) {
         Ok(query) => {
             cypher = Some(query.text.clone());
-            cypher_params = Some(mask_cypher_params(&query.params));
+            cypher_params = Some(mask_cypher_params(
+                &query.params,
+                settings.include_embeddings_in_report,
+            ));
         }
         Err(err) => {
             errors.push(format!("cypher compile failed: {err}"));
@@ -543,6 +680,7 @@ async fn run_case(
                 passed: false,
                 errors,
                 dsl: dsl_json,
+                traversal: traversal_json,
                 cypher,
                 cypher_params,
                 row_count: 0,
@@ -563,6 +701,7 @@ async fn run_case(
                 passed: false,
                 errors,
                 dsl: dsl_json,
+                traversal: traversal_json,
                 cypher,
                 cypher_params,
                 row_count: 0,
@@ -573,7 +712,7 @@ async fn run_case(
         }
     };
 
-    rows = result_rows_json(&result);
+    rows = result_rows_json(&result, settings.include_embeddings_in_report);
     errors.extend(validate_result(
         &case.validation,
         &result,
@@ -617,6 +756,7 @@ async fn run_case(
         passed,
         errors,
         dsl: dsl_json,
+        traversal: traversal_json,
         cypher,
         cypher_params,
         row_count: result.rows.len(),
@@ -656,32 +796,79 @@ async fn load_questions(path: &Path) -> anyhow::Result<Vec<QuestionCase>> {
 
 fn mask_cypher_params(
     params: &BTreeMap<String, crate::ast::query::Literal>,
+    include_embeddings: bool,
 ) -> BTreeMap<String, JsonValue> {
     params
         .iter()
         .map(|(name, value)| {
-            let masked = if is_masked_param_name(name) {
-                masked_param_value(value)
+            let json = literal_to_json(value);
+            let masked = if include_embeddings {
+                json
+            } else if is_masked_embedding_name(name) {
+                masked_embedding_value(&json)
             } else {
-                literal_to_json(value)
+                sanitize_report_json(json, true)
             };
             (name.clone(), masked)
         })
         .collect()
 }
 
-fn is_masked_param_name(name: &str) -> bool {
+fn is_masked_embedding_name(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
-    name.contains("embedding") || name == "vec" || name.ends_with("_vec")
+    name.contains("embedding")
+        || name == "emb"
+        || name == "vec"
+        || name == "vecs"
+        || name.ends_with("_emb")
+        || name.ends_with("_vec")
+        || name.ends_with("_embedding")
 }
 
-fn masked_param_value(value: &crate::ast::query::Literal) -> JsonValue {
+fn masked_embedding_value(value: &JsonValue) -> JsonValue {
     match value {
-        crate::ast::query::Literal::List(items) => {
+        JsonValue::Array(items) if items.iter().all(JsonValue::is_number) => {
             JsonValue::String(format!("<masked embedding len={}>", items.len()))
+        }
+        JsonValue::Array(items) if items.iter().all(JsonValue::is_array) => {
+            JsonValue::String(format!("<masked embedding matrix rows={}>", items.len()))
+        }
+        JsonValue::Array(items) => {
+            JsonValue::String(format!("<masked embedding array len={}>", items.len()))
         }
         _ => JsonValue::String("<masked embedding>".to_string()),
     }
+}
+
+fn sanitize_report_json(value: JsonValue, mask_positional_numeric_vectors: bool) -> JsonValue {
+    match value {
+        JsonValue::Array(items) if mask_positional_numeric_vectors && is_numeric_vector(&items) => {
+            masked_embedding_value(&JsonValue::Array(items))
+        }
+        JsonValue::Array(items) => JsonValue::Array(
+            items
+                .into_iter()
+                .map(|value| sanitize_report_json(value, mask_positional_numeric_vectors))
+                .collect(),
+        ),
+        JsonValue::Object(map) => JsonValue::Object(
+            map.into_iter()
+                .map(|(key, value)| {
+                    let value = if is_masked_embedding_name(&key) {
+                        masked_embedding_value(&value)
+                    } else {
+                        sanitize_report_json(value, mask_positional_numeric_vectors)
+                    };
+                    (key, value)
+                })
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
+fn is_numeric_vector(items: &[JsonValue]) -> bool {
+    items.len() >= 16 && items.iter().all(JsonValue::is_number)
 }
 
 fn literal_to_json(literal: &crate::ast::query::Literal) -> JsonValue {
@@ -958,6 +1145,11 @@ fn force_prefix(dsl: &mut DslQuery, prefix: &str) {
     dsl.prefix_index = Some(prefix.to_string());
 }
 
+fn force_traversal_prefix(traversal: &mut TraversalQuery, prefix: &str) {
+    traversal.prefix_label = Some(prefix.to_string());
+    traversal.prefix_index = Some(prefix.to_string());
+}
+
 fn extract_json_object(raw: &str) -> anyhow::Result<String> {
     if serde_json::from_str::<JsonValue>(raw).is_ok() {
         return Ok(raw.trim().to_string());
@@ -1180,7 +1372,7 @@ fn validate_dsl(spec: &Option<DslValidationSpec>, dsl: &DslQuery) -> Vec<String>
 }
 
 fn validate_expected_rows(expected_rows: &[ExpectedRow], result: &QueryResult) -> Vec<String> {
-    let actual_rows = result_rows_json(result);
+    let actual_rows = result_rows_json(result, true);
     let mut unmatched = Vec::new();
     let mut used = vec![false; actual_rows.len()];
 
@@ -1329,11 +1521,41 @@ async fn synthesize_answer(
     dsl: &DslQuery,
     rows: &[BTreeMap<String, JsonValue>],
 ) -> anyhow::Result<String> {
+    synthesize_answer_with_summary(llm, question, dsl.describe(), rows).await
+}
+
+async fn synthesize_traversal_answer(
+    llm: Arc<dyn LlmClient>,
+    question: &str,
+    traversal: &TraversalQuery,
+    rows: &[BTreeMap<String, JsonValue>],
+) -> anyhow::Result<String> {
+    let entity_names = traversal.entity_names();
+    let entities = if entity_names.is_empty() {
+        "none".to_string()
+    } else {
+        entity_names.join(", ")
+    };
+    let summary = format!(
+        "Retrieving text chunks for goal: {}; entities: {}; limit: {:?}.",
+        traversal.goal_search_text(),
+        entities,
+        traversal.limit
+    );
+    synthesize_answer_with_summary(llm, question, summary, rows).await
+}
+
+async fn synthesize_answer_with_summary(
+    llm: Arc<dyn LlmClient>,
+    question: &str,
+    query_summary: String,
+    rows: &[BTreeMap<String, JsonValue>],
+) -> anyhow::Result<String> {
     let system = "Answer the user's question using only the supplied graph query rows. \
                   Be concise. If the rows are empty, say that the data does not contain the answer.";
     let user = json!({
         "question": question,
-        "query_summary": dsl.describe(),
+        "query_summary": query_summary,
         "rows": rows,
     });
     let answer = llm
@@ -1375,7 +1597,10 @@ async fn judge_answer(
     Ok(JudgeReport { passed, reason })
 }
 
-fn result_rows_json(result: &QueryResult) -> Vec<BTreeMap<String, JsonValue>> {
+fn result_rows_json(
+    result: &QueryResult,
+    include_embeddings: bool,
+) -> Vec<BTreeMap<String, JsonValue>> {
     result
         .rows
         .iter()
@@ -1383,7 +1608,17 @@ fn result_rows_json(result: &QueryResult) -> Vec<BTreeMap<String, JsonValue>> {
             row.fields
                 .iter()
                 .filter(|(k, _)| !matches!(k.as_str(), "sources" | "score"))
-                .map(|(k, v)| (k.clone(), db_value_to_json(v)))
+                .map(|(k, v)| {
+                    let value = db_value_to_json(v);
+                    let value = if include_embeddings {
+                        value
+                    } else if is_masked_embedding_name(k) {
+                        masked_embedding_value(&value)
+                    } else {
+                        sanitize_report_json(value, false)
+                    };
+                    (k.clone(), value)
+                })
                 .collect()
         })
         .collect()
@@ -1507,11 +1742,69 @@ mod tests {
             ("limit".into(), Literal::Int(10)),
         ]);
 
-        let masked = mask_cypher_params(&params);
+        let masked = mask_cypher_params(&params, false);
         assert_eq!(
             masked.get("embedding"),
             Some(&json!("<masked embedding len=2>"))
         );
         assert_eq!(masked.get("limit"), Some(&json!(10)));
+    }
+
+    #[test]
+    fn mask_cypher_params_hides_positional_embedding_vectors() {
+        let params = BTreeMap::from([
+            (
+                "p2".into(),
+                Literal::List((0..32).map(|i| Literal::Float(i as f64)).collect()),
+            ),
+            (
+                "ids".into(),
+                Literal::List(vec![
+                    Literal::String("a".into()),
+                    Literal::String("b".into()),
+                ]),
+            ),
+        ]);
+
+        let masked = mask_cypher_params(&params, false);
+        assert_eq!(masked.get("p2"), Some(&json!("<masked embedding len=32>")));
+        assert_eq!(masked.get("ids"), Some(&json!(["a", "b"])));
+    }
+
+    #[test]
+    fn result_rows_json_masks_nested_embedding_vectors_by_default() {
+        let result = QueryResult {
+            columns: Vec::new(),
+            rows: vec![crate::db::Row {
+                fields: BTreeMap::from([(
+                    "entities".into(),
+                    crate::db::Value::Json(json!([
+                        {
+                            "name": "Acme",
+                            "embedding": [1.0, 2.0, 3.0],
+                            "payload": {
+                                "vec": [1.0, 2.0]
+                            }
+                        }
+                    ])),
+                )]),
+            }],
+        };
+
+        let rows = result_rows_json(&result, false);
+        assert_eq!(
+            rows[0]["entities"][0]["embedding"],
+            json!("<masked embedding len=3>")
+        );
+        assert_eq!(
+            rows[0]["entities"][0]["payload"]["vec"],
+            json!("<masked embedding len=2>")
+        );
+
+        let rows_with_embeddings = result_rows_json(&result, true);
+        assert_eq!(
+            rows_with_embeddings[0]["entities"][0]["embedding"],
+            json!([1.0, 2.0, 3.0])
+        );
     }
 }

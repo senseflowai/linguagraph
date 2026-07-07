@@ -1,0 +1,256 @@
+{
+  "source": "Отчет о внедрении логистической платформы Титан, июнь 2026",
+  "entities": [
+    {
+      "id": "chunk-001",
+      "type": "Chunk",
+      "labels": ["text_logistics"],
+      "scopes": ["text"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "chunk-001" },
+        "chunk_id": { "type": "Keyword", "value": "chunk-001" },
+        "order": { "type": "Number", "value": 1 },
+        "text": { "type": "Text", "value": "1. Executive overview. Meridian Retail Group launched the Titan logistics program in June 2026. The largest rollout target is the Novaya Dacha distribution center near Minsk. The program combines warehouse execution, yard scheduling, robot sorting, and demand forecasting in one operating playbook." }
+      }
+    },
+    {
+      "id": "chunk-002",
+      "type": "Chunk",
+      "labels": ["text_logistics"],
+      "scopes": ["text"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "chunk-002" },
+        "chunk_id": { "type": "Keyword", "value": "chunk-002" },
+        "order": { "type": "Number", "value": 2 },
+        "text": { "type": "Text", "value": "2. Warehouse systems. The Novaya Dacha distribution center uses Sokol WMS as the primary warehouse management system and Talon Yard for dock appointments. Sokol WMS owns inventory reservations while Talon Yard assigns gates and trailer arrival windows." }
+      }
+    },
+    {
+      "id": "chunk-003",
+      "type": "Chunk",
+      "labels": ["text_logistics"],
+      "scopes": ["text"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "chunk-003" },
+        "chunk_id": { "type": "Keyword", "value": "chunk-003" },
+        "order": { "type": "Number", "value": 3 },
+        "text": { "type": "Text", "value": "3. Automation lane. The Phoenix-12 robot sorting line was installed in aisle C of the Novaya Dacha distribution center. Phoenix-12 receives carton waves from Sokol WMS and sends blocked-lane alerts back to Talon Yard when dock gate 7 is congested." }
+      }
+    },
+    {
+      "id": "chunk-004",
+      "type": "Chunk",
+      "labels": ["text_logistics"],
+      "scopes": ["text"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "chunk-004" },
+        "chunk_id": { "type": "Keyword", "value": "chunk-004" },
+        "order": { "type": "Number", "value": 4 },
+        "text": { "type": "Text", "value": "4. Cold-chain customer. Orion Foods ships chilled dairy pallets to the Novaya Dacha distribution center three times per week. The contract requires a four-hour unloading SLA; missed windows increase spoilage risk and trigger an exception review." }
+      }
+    },
+    {
+      "id": "chunk-005",
+      "type": "Chunk",
+      "labels": ["text_logistics"],
+      "scopes": ["text"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "chunk-005" },
+        "chunk_id": { "type": "Keyword", "value": "chunk-005" },
+        "order": { "type": "Number", "value": 5 },
+        "text": { "type": "Text", "value": "5. Incident KR-42. During the second pilot night, Sokol WMS stopped receiving confirmations from mobile scanners. Night shift Bravo handled the incident KR-42, switched two inbound lanes to manual confirmation, and kept Phoenix-12 running at reduced speed until the scanner queue recovered." }
+      }
+    },
+    {
+      "id": "chunk-006",
+      "type": "Chunk",
+      "labels": ["text_logistics"],
+      "scopes": ["text"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "chunk-006" },
+        "chunk_id": { "type": "Keyword", "value": "chunk-006" },
+        "order": { "type": "Number", "value": 6 },
+        "text": { "type": "Text", "value": "6. Forecasting loop. Helios Forecast feeds weekly replenishment windows into Sokol WMS for Meridian Retail Group. The forecast service also marks probable returns from Orion Foods so the warehouse can reserve chilled staging space before the truck arrives." }
+      }
+    },
+    {
+      "id": "chunk-007",
+      "type": "Chunk",
+      "labels": ["text_logistics"],
+      "scopes": ["text"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "chunk-007" },
+        "chunk_id": { "type": "Keyword", "value": "chunk-007" },
+        "order": { "type": "Number", "value": 7 },
+        "text": { "type": "Text", "value": "7. Safety constraint. Phoenix-12 allows a manual override only after Talon Yard confirms gate 7 is closed. The Novaya Dacha operating manual names this as the safety interlock between the robot line and yard control." }
+      }
+    },
+    {
+      "id": "chunk-008",
+      "type": "Chunk",
+      "labels": ["text_logistics"],
+      "scopes": ["text"],
+      "primary_key": "id",
+      "properties": {
+        "id": { "type": "Keyword", "value": "chunk-008" },
+        "chunk_id": { "type": "Keyword", "value": "chunk-008" },
+        "order": { "type": "Number", "value": 8 },
+        "text": { "type": "Text", "value": "8. Pilot outcome. After two weeks, Meridian Retail Group reported that Novaya Dacha reduced trailer dwell time by eighteen percent and cleared the Orion Foods backlog without additional weekend labor. The next rollout candidate is the Temirtau cross-dock hub." }
+      }
+    },
+    {
+      "id": "org-meridian",
+      "type": "Organization",
+      "labels": ["text_logistics"],
+      "scopes": ["text"],
+      "properties": {
+        "name": { "type": "Text", "value": "Meridian Retail Group" },
+        "role": { "type": "Keyword", "value": "operator" },
+        "description": { "type": "Text", "value": "Retail company operating the Titan logistics rollout." }
+      }
+    },
+    {
+      "id": "org-orion",
+      "type": "Organization",
+      "labels": ["text_logistics"],
+      "scopes": ["text"],
+      "properties": {
+        "name": { "type": "Text", "value": "Orion Foods" },
+        "role": { "type": "Keyword", "value": "cold-chain customer" },
+        "description": { "type": "Text", "value": "Dairy supplier shipping chilled pallets to Novaya Dacha." }
+      }
+    },
+    {
+      "id": "facility-novaya-dacha",
+      "type": "Facility",
+      "labels": ["text_logistics"],
+      "scopes": ["text"],
+      "properties": {
+        "name": { "type": "Text", "value": "Novaya Dacha distribution center" },
+        "city": { "type": "Keyword", "value": "Minsk" },
+        "description": { "type": "Text", "value": "Primary distribution center in the Titan logistics rollout." }
+      }
+    },
+    {
+      "id": "facility-temirtau",
+      "type": "Facility",
+      "labels": ["text_logistics"],
+      "scopes": ["text"],
+      "properties": {
+        "name": { "type": "Text", "value": "Temirtau cross-dock hub" },
+        "city": { "type": "Keyword", "value": "Temirtau" },
+        "description": { "type": "Text", "value": "Next rollout candidate after the Novaya Dacha pilot." }
+      }
+    },
+    {
+      "id": "system-sokol",
+      "type": "SoftwareSystem",
+      "labels": ["text_logistics"],
+      "scopes": ["text"],
+      "properties": {
+        "name": { "type": "Text", "value": "Sokol WMS" },
+        "category": { "type": "Keyword", "value": "warehouse_management" },
+        "description": { "type": "Text", "value": "Primary warehouse management system for inventory reservations and scanner confirmations." }
+      }
+    },
+    {
+      "id": "system-talon",
+      "type": "SoftwareSystem",
+      "labels": ["text_logistics"],
+      "scopes": ["text"],
+      "properties": {
+        "name": { "type": "Text", "value": "Talon Yard" },
+        "category": { "type": "Keyword", "value": "yard_management" },
+        "description": { "type": "Text", "value": "Dock appointment and yard control system assigning gates and arrival windows." }
+      }
+    },
+    {
+      "id": "system-helios",
+      "type": "SoftwareSystem",
+      "labels": ["text_logistics"],
+      "scopes": ["text"],
+      "properties": {
+        "name": { "type": "Text", "value": "Helios Forecast" },
+        "category": { "type": "Keyword", "value": "forecasting" },
+        "description": { "type": "Text", "value": "Forecast service that feeds replenishment windows and probable returns into Sokol WMS." }
+      }
+    },
+    {
+      "id": "robot-phoenix",
+      "type": "RobotLine",
+      "labels": ["text_logistics"],
+      "scopes": ["text"],
+      "properties": {
+        "name": { "type": "Text", "value": "Phoenix-12" },
+        "description": { "type": "Text", "value": "Robot sorting line installed in aisle C of Novaya Dacha." }
+      }
+    },
+    {
+      "id": "incident-kr42",
+      "type": "Incident",
+      "labels": ["text_logistics"],
+      "scopes": ["text"],
+      "properties": {
+        "name": { "type": "Text", "value": "KR-42" },
+        "severity": { "type": "Keyword", "value": "pilot_blocker" },
+        "description": { "type": "Text", "value": "Sokol WMS stopped receiving confirmations from mobile scanners during the second pilot night." }
+      }
+    },
+    {
+      "id": "team-bravo",
+      "type": "Team",
+      "labels": ["text_logistics"],
+      "scopes": ["text"],
+      "properties": {
+        "name": { "type": "Text", "value": "Night shift Bravo" },
+        "shift": { "type": "Keyword", "value": "night" },
+        "description": { "type": "Text", "value": "Team that handled incident KR-42 and switched lanes to manual confirmation." }
+      }
+    }
+  ],
+  "relations": [
+    { "from": "chunk-001", "to": "org-meridian", "type": "mentions" },
+    { "from": "chunk-001", "to": "facility-novaya-dacha", "type": "mentions" },
+    { "from": "chunk-002", "to": "facility-novaya-dacha", "type": "mentions" },
+    { "from": "chunk-002", "to": "system-sokol", "type": "mentions" },
+    { "from": "chunk-002", "to": "system-talon", "type": "mentions" },
+    { "from": "chunk-003", "to": "facility-novaya-dacha", "type": "mentions" },
+    { "from": "chunk-003", "to": "robot-phoenix", "type": "mentions" },
+    { "from": "chunk-003", "to": "system-sokol", "type": "mentions" },
+    { "from": "chunk-003", "to": "system-talon", "type": "mentions" },
+    { "from": "chunk-004", "to": "org-orion", "type": "mentions" },
+    { "from": "chunk-004", "to": "facility-novaya-dacha", "type": "mentions" },
+    { "from": "chunk-005", "to": "incident-kr42", "type": "mentions" },
+    { "from": "chunk-005", "to": "team-bravo", "type": "mentions" },
+    { "from": "chunk-005", "to": "system-sokol", "type": "mentions" },
+    { "from": "chunk-005", "to": "robot-phoenix", "type": "mentions" },
+    { "from": "chunk-006", "to": "system-helios", "type": "mentions" },
+    { "from": "chunk-006", "to": "system-sokol", "type": "mentions" },
+    { "from": "chunk-006", "to": "org-meridian", "type": "mentions" },
+    { "from": "chunk-006", "to": "org-orion", "type": "mentions" },
+    { "from": "chunk-007", "to": "robot-phoenix", "type": "mentions" },
+    { "from": "chunk-007", "to": "system-talon", "type": "mentions" },
+    { "from": "chunk-007", "to": "facility-novaya-dacha", "type": "mentions" },
+    { "from": "chunk-008", "to": "org-meridian", "type": "mentions" },
+    { "from": "chunk-008", "to": "org-orion", "type": "mentions" },
+    { "from": "chunk-008", "to": "facility-novaya-dacha", "type": "mentions" },
+    { "from": "chunk-008", "to": "facility-temirtau", "type": "mentions" },
+    { "from": "org-meridian", "to": "facility-novaya-dacha", "type": "OPERATES" },
+    { "from": "facility-novaya-dacha", "to": "system-sokol", "type": "USES_SYSTEM" },
+    { "from": "facility-novaya-dacha", "to": "system-talon", "type": "USES_SYSTEM" },
+    { "from": "facility-novaya-dacha", "to": "robot-phoenix", "type": "HAS_ROBOT_LINE" },
+    { "from": "robot-phoenix", "to": "system-sokol", "type": "INTEGRATED_WITH" },
+    { "from": "robot-phoenix", "to": "system-talon", "type": "INTEGRATED_WITH" },
+    { "from": "org-orion", "to": "facility-novaya-dacha", "type": "SHIPS_TO" },
+    { "from": "incident-kr42", "to": "system-sokol", "type": "AFFECTS" },
+    { "from": "team-bravo", "to": "incident-kr42", "type": "RESPONSIBLE_FOR" },
+    { "from": "system-helios", "to": "system-sokol", "type": "FEEDS" }
+  ]
+}

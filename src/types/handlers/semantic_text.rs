@@ -110,6 +110,10 @@ pub struct SemanticTextConfig {
     /// Reranker threshold applied to the cross-encoder score in
     /// stage 2. Defaults to [`DEFAULT_RERANKER_THRESHOLD`].
     pub reranker_threshold: f64,
+    /// When true, `Chunk.text` is embedded per-sentence into a
+    /// multivector Qdrant point rather than as a single dense vector.
+    /// See [`crate::config::TypeConfig::chunk_multivector`].
+    pub chunk_multivector: bool,
 }
 
 impl SemanticTextConfig {
@@ -125,6 +129,7 @@ impl SemanticTextConfig {
             // matches what was historically the only knob.
             search_threshold: t.threshold.unwrap_or(DEFAULT_SEARCH_THRESHOLD),
             reranker_threshold: t.reranker_threshold.unwrap_or(DEFAULT_RERANKER_THRESHOLD),
+            chunk_multivector: t.chunk_multivector.unwrap_or(false),
         })
     }
 }
@@ -222,6 +227,37 @@ impl TypeHandler for SemanticTextHandler {
             ctx.prefix_index,
             &format!("{}__{}", self.config.collection, ctx.field_name),
         );
+        let meta = {
+            let mut m = BTreeMap::new();
+            m.insert("type".into(), Self::TYPE_ID.into());
+            m.insert("field".into(), ctx.field_name.into());
+            m
+        };
+
+        // A long chunk embedded as a single vector averages several
+        // sentences into one noisy point. When multivector is enabled we
+        // instead split the chunk into sentences and let qlink store a
+        // per-sentence matrix (MaxSim at query time). Only `Chunk.text`
+        // takes this path — entity `_canonical` documents are short and
+        // already coherent.
+        if self.config.chunk_multivector && ctx.node_label == CHUNK_LABEL {
+            let mut sentences = split_sentences(&text);
+            if sentences.is_empty() {
+                sentences.push(text.clone());
+            }
+            ctx.push_side_effect(SideEffect::EmbedMultiAndStore {
+                collection,
+                label: ctx.node_label.to_string(),
+                key_field: ctx.node_key_field.to_string(),
+                key_value: ctx.node_key.clone(),
+                texts: sentences,
+                payload_text: text,
+                payload_label: Some(ctx.node_label.to_string()),
+                meta,
+            });
+            return Ok(());
+        }
+
         ctx.push_side_effect(SideEffect::EmbedAndStore {
             collection,
             label: ctx.node_label.to_string(),
@@ -229,12 +265,7 @@ impl TypeHandler for SemanticTextHandler {
             key_value: ctx.node_key.clone(),
             text,
             payload_label: Some(ctx.node_label.to_string()),
-            meta: {
-                let mut m = BTreeMap::new();
-                m.insert("type".into(), Self::TYPE_ID.into());
-                m.insert("field".into(), ctx.field_name.into());
-                m
-            },
+            meta,
         });
 
         Ok(())
@@ -512,6 +543,35 @@ pub fn build_canonical_query(
     }
 }
 
+/// Split `text` into sentence-like fragments for per-sentence
+/// embedding.
+///
+/// Deliberately dependency-free and forgiving: it breaks after each
+/// `.`/`!`/`?`, trims whitespace, and drops empty pieces. Trailing text
+/// with no terminal punctuation is emitted as a final fragment, so no
+/// content is ever lost. This mirrors the coarse sentence boundary
+/// senseflow's `SemanticChunker` uses upstream, but stays self-contained
+/// (the linguagraph → senseflow dependency is one-directional).
+pub(crate) fn split_sentences(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut current = String::new();
+    for ch in text.chars() {
+        current.push(ch);
+        if matches!(ch, '.' | '!' | '?') {
+            let trimmed = current.trim();
+            if !trimmed.is_empty() {
+                out.push(trimmed.to_string());
+            }
+            current.clear();
+        }
+    }
+    let trimmed = current.trim();
+    if !trimmed.is_empty() {
+        out.push(trimmed.to_string());
+    }
+    out
+}
+
 /// Fold an optional prefix into a Qdrant collection name. Empty
 /// prefixes are normalised to "no prefix" so call sites don't need to
 /// distinguish `Some("")` from `None`.
@@ -533,6 +593,13 @@ pub enum SideEffectEmitError {
 
     #[error("invalid key field '{0}' in side effect")]
     InvalidKeyField(String),
+
+    /// A batch renderer was handed a side-effect variant it doesn't
+    /// serve (single renderer got a multivector effect or vice versa).
+    /// The pipeline buckets by variant, so this only fires on a caller
+    /// bug.
+    #[error("unexpected side-effect variant for this batch renderer")]
+    UnexpectedVariant,
 }
 
 /// Render an `UNWIND $rows AS row | MATCH ... CALL libqlink.insert_labeled
@@ -574,6 +641,9 @@ pub fn build_embed_insert_batch(
             label.clone(),
             key_field.clone(),
         ),
+        SideEffect::EmbedMultiAndStore { .. } => {
+            return Err(SideEffectEmitError::UnexpectedVariant)
+        }
     };
 
     if !is_valid_ident(&label) {
@@ -591,7 +661,10 @@ pub fn build_embed_insert_batch(
     for (eff, vec) in group {
         let SideEffect::EmbedAndStore {
             key_value, text, ..
-        } = eff;
+        } = eff
+        else {
+            return Err(SideEffectEmitError::UnexpectedVariant);
+        };
         let mut row: BTreeMap<String, Literal> = BTreeMap::new();
         row.insert("key".to_string(), key_value.clone());
         row.insert(
@@ -630,6 +703,94 @@ pub fn build_embed_insert_batch(
     Ok(crate::builder::CypherQuery::new(cypher, params))
 }
 
+/// Render an `UNWIND $rows AS row | MATCH ... CALL qlink.insert_hybrid_multi
+/// ...` Cypher batch for one homogeneous group of
+/// [`SideEffect::EmbedMultiAndStore`] side effects.
+///
+/// The multivector counterpart of [`build_embed_insert_batch`]: instead of
+/// one dense `row.vec` per point, each row carries `row.vecs` — a
+/// `LIST[LIST[FLOAT]]` per-sentence matrix — which `qlink.insert_hybrid_multi`
+/// stores in a Qdrant collection created in multivector mode (MaxSim). The
+/// full fragment text (`row.text`) still backs the BM25 sparse branch and
+/// the reranker payload, exactly as in the single-vector path.
+///
+/// All effects in `group` share the same `label`, `key_field`,
+/// `collection`, and `payload_label` (the caller groups by exactly these),
+/// so the MATCH pattern is consistent across rows; only `key`/`vecs`/`text`
+/// vary per row. A `payload_label` is always present for the chunk path
+/// that produces these effects — the label is required by
+/// `qlink.insert_hybrid_multi`, so a missing one is a caller bug.
+pub fn build_embed_insert_multi_batch(
+    group: &[(SideEffect, Vec<Vec<f32>>)],
+) -> Result<crate::builder::CypherQuery, SideEffectEmitError> {
+    use std::collections::BTreeMap;
+    debug_assert!(!group.is_empty(), "callers must not pass an empty group");
+
+    let (collection, payload_label, label, key_field) = match &group[0].0 {
+        SideEffect::EmbedMultiAndStore {
+            collection,
+            label,
+            key_field,
+            payload_label,
+            ..
+        } => (
+            collection.clone(),
+            payload_label.clone(),
+            label.clone(),
+            key_field.clone(),
+        ),
+        SideEffect::EmbedAndStore { .. } => return Err(SideEffectEmitError::UnexpectedVariant),
+    };
+
+    if !is_valid_ident(&label) {
+        return Err(SideEffectEmitError::InvalidLabel(label));
+    }
+    if !is_valid_ident(&key_field) {
+        return Err(SideEffectEmitError::InvalidKeyField(key_field));
+    }
+    // `qlink.insert_hybrid_multi` requires a payload label. The only
+    // producer (Chunk.text) always sets one; treat its absence as a bug.
+    let Some(plabel) = payload_label else {
+        return Err(SideEffectEmitError::UnexpectedVariant);
+    };
+
+    // Each row is `{key: <pk>, vecs: [[..],[..],..], text: <full text>}`.
+    let mut rows: Vec<Literal> = Vec::with_capacity(group.len());
+    for (eff, vecs) in group {
+        let SideEffect::EmbedMultiAndStore {
+            key_value,
+            payload_text,
+            ..
+        } = eff
+        else {
+            return Err(SideEffectEmitError::UnexpectedVariant);
+        };
+        let matrix = Literal::List(
+            vecs.iter()
+                .map(|v| Literal::List(v.iter().map(|f| Literal::Float(*f as f64)).collect()))
+                .collect(),
+        );
+        let mut row: BTreeMap<String, Literal> = BTreeMap::new();
+        row.insert("key".to_string(), key_value.clone());
+        row.insert("vecs".to_string(), matrix);
+        row.insert("text".to_string(), Literal::String(payload_text.clone()));
+        rows.push(Literal::Object(row));
+    }
+
+    let mut params: BTreeMap<String, Literal> = BTreeMap::new();
+    params.insert("coll".to_string(), Literal::String(collection));
+    params.insert("rows".to_string(), Literal::List(rows));
+    params.insert("label".to_string(), Literal::String(plabel));
+
+    let cypher = format!(
+        "UNWIND $rows AS row\n\
+         MATCH (n:{label} {{{key_field}: row.key}})\n\
+         CALL qlink.insert_hybrid_multi($coll, id(n), row.vecs, row.text, $label) YIELD success\n\
+         RETURN count(success) AS inserted",
+    );
+    Ok(crate::builder::CypherQuery::new(cypher, params))
+}
+
 fn is_valid_ident(s: &str) -> bool {
     let mut chars = s.chars();
     let first = chars.next();
@@ -663,6 +824,7 @@ mod tests {
                 top_k: 10,
                 search_threshold,
                 reranker_threshold,
+                chunk_multivector: false,
             },
             Arc::new(MockEmbedder::new(8)),
         )
@@ -740,6 +902,7 @@ mod tests {
                 // underscore, so the separator renders as `___`.
                 assert_eq!(collection, "test___canonical");
             }
+            other => panic!("expected EmbedAndStore, got {other:?}"),
         }
     }
 
@@ -780,7 +943,148 @@ mod tests {
             SideEffect::EmbedAndStore { collection, .. } => {
                 assert_eq!(collection, "test__text");
             }
+            other => panic!("expected EmbedAndStore, got {other:?}"),
         }
+    }
+
+    fn multivector_handler() -> SemanticTextHandler {
+        SemanticTextHandler::new(
+            SemanticTextConfig {
+                embedding_model: None,
+                collection: "test".into(),
+                top_k: 10,
+                search_threshold: DEFAULT_SEARCH_THRESHOLD,
+                reranker_threshold: DEFAULT_RERANKER_THRESHOLD,
+                chunk_multivector: true,
+            },
+            Arc::new(MockEmbedder::new(8)),
+        )
+    }
+
+    #[test]
+    fn split_sentences_splits_on_terminal_punctuation() {
+        let s = split_sentences("First sentence. Second one! A third?");
+        assert_eq!(s, vec!["First sentence.", "Second one!", "A third?"]);
+    }
+
+    #[test]
+    fn split_sentences_keeps_trailing_unterminated_fragment() {
+        let s = split_sentences("One. And a tail with no period");
+        assert_eq!(s, vec!["One.", "And a tail with no period"]);
+    }
+
+    #[test]
+    fn split_sentences_empty_input_yields_nothing() {
+        assert!(split_sentences("   ").is_empty());
+    }
+
+    #[test]
+    fn ingest_chunk_text_multivector_splits_into_sentences() {
+        // With chunk_multivector on, a Chunk.text fragment is queued as a
+        // per-sentence multivector effect rather than one dense vector.
+        let h = multivector_handler();
+        let mut q = SideEffectQueue::new();
+        let key = Literal::String("chunk-1".into());
+        let raw = serde_json::json!("First sentence. Second sentence.");
+        let mut ctx = IC::new(CHUNK_LABEL, "id", &key, "text", &raw, &mut q);
+        h.on_ingest(&mut ctx).unwrap();
+        // The raw text still lands on the node for exact match / display.
+        assert_eq!(
+            ctx.finish(),
+            Some(Some(Literal::String(
+                "First sentence. Second sentence.".into()
+            )))
+        );
+        assert_eq!(q.len(), 1);
+        match &q.into_vec()[0] {
+            SideEffect::EmbedMultiAndStore {
+                collection,
+                label,
+                texts,
+                payload_text,
+                ..
+            } => {
+                assert_eq!(collection, "test__text");
+                assert_eq!(label, CHUNK_LABEL);
+                assert_eq!(texts, &["First sentence.", "Second sentence."]);
+                assert_eq!(payload_text, "First sentence. Second sentence.");
+            }
+            other => panic!("expected EmbedMultiAndStore, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ingest_multivector_only_affects_chunks_not_entities() {
+        // Even with the flag on, entity `_canonical` documents stay
+        // single-vector — only Chunk.text takes the multivector path.
+        let h = multivector_handler();
+        let mut q = SideEffectQueue::new();
+        let key = Literal::String("type: Company\nname: Hello".into());
+        let raw = serde_json::json!("type: Company\nname: Hello");
+        let mut ctx = IC::new(
+            "Company",
+            CANONICAL_FIELD,
+            &key,
+            CANONICAL_FIELD,
+            &raw,
+            &mut q,
+        );
+        h.on_ingest(&mut ctx).unwrap();
+        ctx.finish();
+        assert_eq!(q.len(), 1);
+        assert!(matches!(
+            &q.into_vec()[0],
+            SideEffect::EmbedAndStore { .. }
+        ));
+    }
+
+    #[test]
+    fn build_multi_batch_renders_insert_hybrid_multi() {
+        let eff = SideEffect::EmbedMultiAndStore {
+            collection: "docs__text".into(),
+            label: CHUNK_LABEL.into(),
+            key_field: "id".into(),
+            key_value: Literal::String("chunk-1".into()),
+            texts: vec!["a.".into(), "b.".into()],
+            payload_text: "a. b.".into(),
+            payload_label: Some(CHUNK_LABEL.into()),
+            meta: BTreeMap::new(),
+        };
+        let group = vec![(eff, vec![vec![0.1_f32, 0.2], vec![0.3, 0.4]])];
+        let cypher = build_embed_insert_multi_batch(&group).unwrap();
+        assert!(cypher
+            .text
+            .contains("CALL qlink.insert_hybrid_multi($coll, id(n), row.vecs, row.text, $label)"));
+        assert!(cypher.text.contains("MATCH (n:Chunk {id: row.key})"));
+        // The matrix must survive as a list-of-lists in the row payload.
+        match cypher.params.get("rows").unwrap() {
+            Literal::List(rows) => match &rows[0] {
+                Literal::Object(row) => {
+                    assert!(matches!(row.get("vecs"), Some(Literal::List(_))));
+                    assert_eq!(row.get("text"), Some(&Literal::String("a. b.".into())));
+                }
+                other => panic!("expected object row, got {other:?}"),
+            },
+            other => panic!("expected list of rows, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_multi_batch_rejects_single_vector_effect() {
+        let eff = SideEffect::EmbedAndStore {
+            collection: "docs__text".into(),
+            label: CHUNK_LABEL.into(),
+            key_field: "id".into(),
+            key_value: Literal::String("chunk-1".into()),
+            text: "a. b.".into(),
+            payload_label: Some(CHUNK_LABEL.into()),
+            meta: BTreeMap::new(),
+        };
+        let group = vec![(eff, vec![vec![0.1_f32, 0.2]])];
+        assert!(matches!(
+            build_embed_insert_multi_batch(&group),
+            Err(SideEffectEmitError::UnexpectedVariant)
+        ));
     }
 
     #[test]
@@ -804,6 +1108,7 @@ mod tests {
             SideEffect::EmbedAndStore { collection, .. } => {
                 assert_eq!(collection, "Tenant1__test___canonical");
             }
+            other => panic!("expected EmbedAndStore, got {other:?}"),
         }
     }
 

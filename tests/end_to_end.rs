@@ -110,9 +110,37 @@ async fn prefix_label_scopes_inserts_and_queries() {
     // Same Pipeline configuration drives both ingest and read: the
     // prefix label must appear in every MERGE pattern (nodes + edges)
     // and in every MATCH pattern produced from a plain DSL document.
+    use linguagraph::embeddings::MockEmbedder;
+    use linguagraph::types::handlers::{SemanticTextConfig, SemanticTextHandler};
+    use linguagraph::types::{handlers, RegistryBuilder, SharedRegistry};
+
+    // Every user entity carries an embedded `_canonical` document, so the
+    // ingest path needs a registered SemanticText handler even when the
+    // node itself has no free-text property.
+    let registry: SharedRegistry = std::sync::Arc::new(
+        handlers::register_core(RegistryBuilder::new())
+            .register(SemanticTextHandler::new(
+                SemanticTextConfig {
+                    embedding_model: None,
+                    collection: "docs".into(),
+                    top_k: 10,
+                    search_threshold: 0.1,
+                    reranker_threshold: 0.2,
+                    chunk_multivector: false,
+                },
+                std::sync::Arc::new(MockEmbedder::new(8)),
+            ))
+            .build(),
+    );
+    let embedder: linguagraph::embeddings::SharedEmbedder =
+        std::sync::Arc::new(MockEmbedder::new(8));
+
     let mock = Arc::new(MockClient::new());
     let cfg = test_config();
-    let pipeline = Pipeline::new(mock.clone(), &cfg).with_prefix_label(Some("Tenant1"));
+    let pipeline = Pipeline::new(mock.clone(), &cfg)
+        .with_registry(registry)
+        .with_embedder(embedder)
+        .with_prefix_label(Some("Tenant1"));
 
     // Ingest path.
     let mut g = GraphBuilder::new();
@@ -191,6 +219,7 @@ async fn prefix_index_scopes_embedding_collections() {
                     top_k: 10,
                     search_threshold: 0.1,
                     reranker_threshold: 0.2,
+                    chunk_multivector: false,
                 },
                 std::sync::Arc::new(MockEmbedder::new(8)),
             ))
@@ -324,6 +353,7 @@ async fn soft_merge_rewrites_primary_key_to_existing_canonical() {
                     top_k: 10,
                     search_threshold: 0.1,
                     reranker_threshold: 0.2,
+                    chunk_multivector: false,
                 },
                 std::sync::Arc::new(MockEmbedder::new(8)),
             ))
@@ -589,12 +619,14 @@ async fn entity_type_search_returns_unique_types_with_domains_and_scopes() {
         .any(|c| c == "semantic_text__text"));
 
     // Cypher inspection: the vector leg should be one UNION ALL'd
-    // batch of libqlink.search_labeled calls plus the neighbour leg.
+    // batch of libqlink.search calls plus the neighbour leg. (Label
+    // filtering moved into the Cypher MATCH, so the leg calls the plain
+    // `libqlink.search`, not `search_labeled`.)
     let captured = mock.captured.lock().unwrap();
     assert_eq!(captured.len(), 2);
     let vector_cypher = &captured[0].text;
     assert!(
-        vector_cypher.contains("libqlink.search_labeled"),
+        vector_cypher.contains("libqlink.search("),
         "vector cypher missing qlink call:\n{vector_cypher}"
     );
     assert!(vector_cypher.contains("UNION ALL"));

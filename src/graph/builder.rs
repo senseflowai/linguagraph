@@ -513,7 +513,7 @@ impl JsonPropertyInput {
 
 fn infer_property_type(value: &Value) -> PropertyType {
     match value {
-        Value::Bool(_) => PropertyType::Boolean,
+        Value::Bool(_) => PropertyType::Bool,
         Value::Number(_) => PropertyType::Number,
         Value::String(_) => PropertyType::Text,
         Value::Null | Value::Array(_) | Value::Object(_) => PropertyType::Text,
@@ -917,7 +917,7 @@ mod tests {
         assert_eq!(alice.properties["name"].value, json!("Alice"));
         assert_eq!(
             alice.properties["active"].property_type,
-            PropertyType::Boolean
+            PropertyType::Bool
         );
         assert_eq!(alice.properties["active"].value, json!(true));
 

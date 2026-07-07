@@ -17,10 +17,8 @@ fn property_type_label(t: OntologyPropertyType) -> &'static str {
     match t {
         OntologyPropertyType::Keyword => "keyword",
         OntologyPropertyType::Text => "text",
-        OntologyPropertyType::Int => "int",
-        OntologyPropertyType::Float => "float",
+        OntologyPropertyType::Number => "number",
         OntologyPropertyType::Bool => "bool",
-        OntologyPropertyType::Date => "date",
         OntologyPropertyType::Datetime => "datetime",
         OntologyPropertyType::List => "list",
     }
@@ -58,13 +56,11 @@ pub fn render_schema_suggest_prompt(
     out.push_str("## 🔹 Allowed Property Types\n\n");
     out.push_str(
         "Use ONLY these `property_type` values (lowercase):\n\n\
-                  * `string`  — short single-line string\n\
+                  * `keyword` — short single-line string / identifier / code / category\n\
                   * `text`    — long free-form text (will be embedded for semantic search)\n\
-                  * `int`     — integer\n\
-                  * `float`   — decimal number\n\
+                  * `number`  — integer or decimal number\n\
                   * `bool`    — true/false\n\
-                  * `date`    — calendar date (YYYY-MM-DD)\n\
-                  * `datetime`— ISO-8601 timestamp\n\
+                  * `datetime`— calendar date (YYYY-MM-DD) or ISO-8601 timestamp\n\
                   * `list`    — JSON array\n\n",
     );
 
@@ -195,12 +191,10 @@ mod tests {
         // otherwise the suggest output won't deserialize back into PropertySpec.
         let p = render_schema_suggest_prompt("any", "demo", &sample_ontology());
         for label in [
-            "`string`",
+            "`keyword`",
             "`text`",
-            "`int`",
-            "`float`",
+            "`number`",
             "`bool`",
-            "`date`",
             "`datetime`",
             "`list`",
         ] {

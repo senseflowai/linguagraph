@@ -5,64 +5,22 @@ use crate::graph::scope::Scope;
 
 /// Storage-shape tag carried by an ingested [`Property`].
 ///
-/// Parsed from a mapping document's PascalCase `type` name via the
-/// derived [`std::str::FromStr`]; the `#[strum]` aliases are the single
-/// place recording which spellings collapse onto each variant (e.g.
-/// `Date` / `Timestamp`). The ingest planner maps these to registry
-/// handler ids in [`crate::ingest`].
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    serde::Serialize,
-    serde::Deserialize,
-    strum::EnumString,
-    strum::Display,
-)]
-pub enum PropertyType {
-    /// Plain string, standard Cypher matching. `String` is the legacy
-    /// spelling, still accepted on input.
-    #[strum(serialize = "Keyword", serialize = "String")]
-    #[serde(alias = "String")]
-    Keyword,
-    /// Free-form text; always handled as `SemanticText` (embedded).
-    #[strum(serialize = "Text", serialize = "SemanticText")]
-    #[serde(alias = "SemanticText")]
-    Text,
-    Number,
-    Boolean,
-    DateTime,
-    #[strum(serialize = "Timestamp", serialize = "Date")]
-    #[serde(alias = "Date")]
-    Timestamp,
-}
-
-impl PropertyType {
-    /// Registry handler id this storage type resolves to. This is the
-    /// single mapping from the mapping/storage vocabulary to the type
-    /// registry: `Keyword`→`Keyword`, `Text`→`SemanticText` (semantic),
-    /// numbers/bools/dates to their scalar handlers.
-    pub fn handler_id(self) -> &'static str {
-        use crate::types::BuiltinType;
-        match self {
-            Self::Keyword => BuiltinType::Keyword.id(),
-            Self::Text => BuiltinType::SemanticText.id(),
-            Self::Number => BuiltinType::Number.id(),
-            Self::Boolean => BuiltinType::Boolean.id(),
-            Self::DateTime | Self::Timestamp => BuiltinType::Timestamp.id(),
-        }
-    }
-}
+/// This is a re-export of [`OntologyPropertyType`], the single source of
+/// truth for the property-type vocabulary. The ontology layer (what the
+/// user declares and the LLM emits) and the storage layer (what is handed
+/// to the graph builder) therefore share one enum and cannot drift apart:
+/// both speak `Keyword`, `Text`, `Number`, `Bool`, `Datetime`, `List`.
+/// The ingest planner maps these to registry handler ids via
+/// [`OntologyPropertyType::handler_id`].
+pub use crate::graph::ontology::OntologyPropertyType as PropertyType;
 
 /// Canonicalize a property-type spelling from the mapping / DSL vocabulary
 /// to a registry handler id. This is the single trust-boundary translation
-/// that lets the contract names (`Keyword`, `Text`) and their legacy
-/// aliases (`String`, `SemanticText`, `Int`, `Date`, …) all resolve to the
-/// right registered handler. Spellings that aren't built-in property types
-/// (e.g. a custom registered type) pass through unchanged.
+/// that lets the canonical names (`Keyword`, `Text`, `Number`, …) and
+/// their legacy aliases (`String`, `SemanticText`, `Int`, `Float`, `Date`,
+/// `Timestamp`, …) all resolve to the right registered handler. Spellings
+/// that aren't built-in property types (e.g. a custom registered type)
+/// pass through unchanged.
 pub fn canonical_handler_id(raw: &str) -> String {
     use std::str::FromStr;
     PropertyType::from_str(raw)

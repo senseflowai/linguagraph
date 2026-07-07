@@ -67,9 +67,9 @@ fn core_scalar_types_parse_through_the_planner() {
             .property("count", PropertyType::Number, "1,234")
             .property("ratio", PropertyType::Number, "3.5")
             .property("share", PropertyType::Number, "12.5%")
-            .property("active", PropertyType::Boolean, "yes")
-            .property("approved", PropertyType::Boolean, false)
-            .property("recorded_at", PropertyType::Timestamp, 1_704_067_200i64)
+            .property("active", PropertyType::Bool, "yes")
+            .property("approved", PropertyType::Bool, false)
+            .property("recorded_at", PropertyType::Datetime, 1_704_067_200i64)
             .add();
     })
     .unwrap();

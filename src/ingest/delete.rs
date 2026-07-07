@@ -428,7 +428,7 @@ mod tests {
                         PropertySpec {
                             name: "age".into(),
                             description: Some("age".into()),
-                            property_type: OntologyPropertyType::Int,
+                            property_type: OntologyPropertyType::Number,
                             required: false,
                         },
                     ],

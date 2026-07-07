@@ -18,26 +18,49 @@ use crate::types::BuiltinType;
 
 /// Type of a property defined in the ontology.
 ///
-/// Covers both the lexical vocabulary the LLM emits during knowledge
-/// extraction and the storage shape ingested into the graph. There are
-/// exactly two textual types:
+/// This is the **single source of truth** for the property-type
+/// vocabulary across the whole system: the types a user picks in the
+/// ontology UI, the types the LLM emits during knowledge extraction, and
+/// the types handed to the [`crate::graph::GraphBuilder`] when writing a
+/// graph. The graph builder's [`crate::graph::PropertyType`] is a
+/// re-export of this very enum, so the ontology layer and the storage
+/// layer can never drift apart.
+///
+/// There are exactly six canonical types:
 ///
 /// * `Keyword` — a plain string matched by standard Cypher operators
 ///   (`=`, `!=`, `<`, `>`, `=~`, `CONTAINS`, …); identifiers, codes,
 ///   statuses, categorical labels.
-/// * `Text` — everything else textual; always routed through the
+/// * `Text` — free-form text; always routed through the
 ///   `SemanticTextHandler` (embedded + vector-searchable).
+/// * `Number` — an integer or a float.
+/// * `Bool` — a boolean.
+/// * `Datetime` — a calendar date or an instant.
+/// * `List` — a JSON array.
 ///
 /// Two string representations co-exist by design:
 ///
-/// * **serde / prompt** — lowercase (`"text"`, `"int"`, …), the JSON
-///   shape used in stored ontologies and prompt rendering.
+/// * **serde / prompt** — lowercase (`"keyword"`, `"number"`, …), the
+///   JSON shape used in stored ontologies and prompt rendering.
 /// * **mapping `type` names** — PascalCase (`"Text"`, `"Number"`, …),
-///   parsed via the derived [`std::str::FromStr`]. The `#[strum]`
-///   aliases below are the single place that records which historical
-///   spellings collapse onto each variant (e.g. `Number` / `Int`).
+///   parsed via the derived [`std::str::FromStr`].
+///
+/// The `#[strum]` / `#[serde]` aliases below are the single place that
+/// records which historical spellings collapse onto each canonical
+/// variant (e.g. `int` / `float` → `Number`, `string` → `Keyword`,
+/// `semantictext` → `Text`, `date` / `timestamp` → `Datetime`). They keep
+/// ontologies stored under the old vocabulary readable.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::EnumString, strum::Display,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    strum::EnumString,
+    strum::Display,
 )]
 #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[serde(rename_all = "lowercase")]
@@ -45,38 +68,59 @@ pub enum OntologyPropertyType {
     /// Plain string, standard Cypher matching (`=`, `<`, `>`, `=~`, …).
     /// `string` is the legacy serialized spelling, still accepted.
     #[strum(serialize = "Keyword", serialize = "String")]
-    #[serde(alias = "string")]
+    #[serde(alias = "Keyword", alias = "string", alias = "String")]
     Keyword,
+    /// Free-form text, always embedded via the `SemanticText` handler.
     #[strum(serialize = "Text", serialize = "SemanticText")]
-    #[serde(alias = "semantictext")]
+    #[serde(alias = "Text", alias = "semantictext", alias = "SemanticText")]
     Text,
-    #[strum(serialize = "Int", serialize = "Number")]
-    Int,
-    Float,
+    /// Numeric scalar (integer or float). `int` / `float` are legacy.
+    #[strum(serialize = "Number", serialize = "Int", serialize = "Float")]
+    #[serde(
+        alias = "Number",
+        alias = "int",
+        alias = "float",
+        alias = "Int",
+        alias = "Float"
+    )]
+    Number,
+    /// Boolean. `boolean` is the legacy spelling.
     #[strum(serialize = "Bool", serialize = "Boolean")]
+    #[serde(alias = "Bool", alias = "boolean", alias = "Boolean")]
     Bool,
-    Date,
+    /// Calendar date or instant. `date` / `timestamp` are legacy.
     #[strum(
         serialize = "Datetime",
         serialize = "DateTime",
+        serialize = "Date",
         serialize = "Timestamp"
     )]
+    #[serde(
+        alias = "Datetime",
+        alias = "date",
+        alias = "timestamp",
+        alias = "Date",
+        alias = "DateTime",
+        alias = "Timestamp"
+    )]
     Datetime,
+    /// JSON array.
+    #[serde(alias = "List")]
     List,
 }
 
 impl OntologyPropertyType {
-    /// Stable type id used by the type registry to look up handlers.
+    /// Registry handler id used to ingest and store a value of this type.
     /// Sourced from [`BuiltinType`] so the registry vocabulary has a
-    /// single definition; `List` has no handler and is a pseudo-type.
-    pub fn type_id(self) -> &'static str {
+    /// single definition. `List` has no dedicated handler and is stored
+    /// plainly via the `Keyword` handler.
+    pub fn handler_id(self) -> &'static str {
         match self {
-            Self::Keyword => BuiltinType::Keyword.id(),
+            Self::Keyword | Self::List => BuiltinType::Keyword.id(),
             Self::Text => BuiltinType::SemanticText.id(),
-            Self::Int | Self::Float => BuiltinType::Number.id(),
+            Self::Number => BuiltinType::Number.id(),
             Self::Bool => BuiltinType::Boolean.id(),
-            Self::Date | Self::Datetime => BuiltinType::Timestamp.id(),
-            Self::List => "List",
+            Self::Datetime => BuiltinType::Timestamp.id(),
         }
     }
 
@@ -86,8 +130,8 @@ impl OntologyPropertyType {
     pub fn query_type_id(self) -> Option<&'static str> {
         match self {
             Self::Text => Some(BuiltinType::SemanticText.id()),
-            Self::Keyword | Self::Date | Self::Datetime => Some(self.type_id()),
-            Self::Int | Self::Float | Self::Bool | Self::List => None,
+            Self::Keyword | Self::Datetime => Some(self.handler_id()),
+            Self::Number | Self::Bool | Self::List => None,
         }
     }
 }
@@ -658,7 +702,7 @@ mod tests {
                 PropertySpec {
                     name: "age".to_string(),
                     description: Some("Age in years.".to_string()),
-                    property_type: OntologyPropertyType::Int,
+                    property_type: OntologyPropertyType::Number,
                     required: false,
                 },
             ],

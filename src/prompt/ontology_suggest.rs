@@ -154,6 +154,7 @@ mod tests {
                         description: None,
                         property_type: OntologyPropertyType::Keyword,
                         required: true,
+                        allowed_values: Vec::new(),
                     }],
                     embedding: None,
                 },

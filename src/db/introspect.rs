@@ -24,17 +24,33 @@ use super::result::Value;
 use super::{DbError, GraphClient};
 
 /// Knobs for [`introspect_schema`].
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct IntrospectOptions {
     /// Maximum number of nodes / relationships sampled per type when
     /// inferring property types. The cost of introspection scales with
     /// this; 100 is enough to identify primitive types reliably.
     pub sample_size: u64,
+    /// Maximum distinct values a keyword/string field may have to be
+    /// treated as an *enum*. Fields at or below this cardinality get
+    /// their full value set captured (canonicalised to lowercase) and
+    /// surfaced to the LLM as a closed vocabulary; fields above it are
+    /// high-cardinality (ids, codes, VINs) and get no dictionary.
+    /// Set to `0` to disable enum collection entirely.
+    pub enum_cardinality_cap: u64,
+    /// Optional prefix/tenant label. When set, enum-value collection is
+    /// scoped to nodes also carrying this label, so per-tenant value
+    /// sets don't bleed into one another. When `None`, enum values are
+    /// collected across every node of the type.
+    pub scope_label: Option<String>,
 }
 
 impl Default for IntrospectOptions {
     fn default() -> Self {
-        Self { sample_size: 100 }
+        Self {
+            sample_size: 100,
+            enum_cardinality_cap: 40,
+            scope_label: None,
+        }
     }
 }
 
@@ -58,7 +74,7 @@ pub async fn introspect_schema(
     let labels = fetch_node_labels(client).await?;
     let mut nodes = Vec::with_capacity(labels.len());
     for label in &labels {
-        let properties = fetch_props(
+        let mut properties = fetch_props(
             client,
             "MATCH (n) WHERE $label IN labels(n) \
              WITH n LIMIT $sample_size \
@@ -69,6 +85,27 @@ pub async fn introspect_schema(
             opts.sample_size,
         )
         .await?;
+        // Enrich low-cardinality keyword fields with their allowed-value
+        // dictionary. Only string-typed fields are candidates; ids/codes
+        // that exceed the cardinality cap are left without a dictionary.
+        if opts.enum_cardinality_cap > 0 {
+            for prop in &mut properties {
+                if prop.ty != PropertyType::String {
+                    continue;
+                }
+                if let Some(values) = fetch_enum_values(
+                    client,
+                    label,
+                    &prop.name,
+                    opts.enum_cardinality_cap,
+                    opts.scope_label.as_deref(),
+                )
+                .await?
+                {
+                    prop.allowed_values = values;
+                }
+            }
+        }
         let extra_labels = fetch_extra_node_labels(client, label).await?;
         // The full `extra_labels` list is preserved for callers that
         // need raw strings (e.g. domain-name resolution downstream);
@@ -254,12 +291,79 @@ async fn fetch_props(
                 name: key,
                 ty: infer_type(&sample_vec),
                 description: None,
+                allowed_values: Vec::new(),
             })
         })
         .collect();
     props.sort_by(|a, b| a.name.cmp(&b.name));
     props.dedup_by(|a, b| a.name == b.name);
     Ok(props)
+}
+
+/// Collect the distinct value set of a single string property, deciding
+/// whether the field is enum-like.
+///
+/// Returns `Some(values)` — sorted, lowercased, deduped — when the field
+/// has at most `cap` distinct non-null values (an enum). Returns `None`
+/// when the field exceeds the cap (high-cardinality: ids, codes, VINs)
+/// or has no non-null values to offer.
+///
+/// The query fetches `cap + 1` distinct values so a single row over the
+/// budget is enough to classify the field as high-cardinality without
+/// scanning the whole column.
+async fn fetch_enum_values(
+    client: &dyn GraphClient,
+    label: &str,
+    key: &str,
+    cap: u64,
+    scope_label: Option<&str>,
+) -> Result<Option<Vec<String>>, DbError> {
+    let mut params = BTreeMap::new();
+    params.insert("label".to_string(), Literal::String(label.to_string()));
+    params.insert("key".to_string(), Literal::String(key.to_string()));
+    // Fetch one more than the cap so a single overflow row classifies the
+    // field as high-cardinality.
+    let limit = cap.saturating_add(1);
+    params.insert(
+        "cap_plus_one".to_string(),
+        Literal::Int(limit.try_into().unwrap_or(i64::MAX)),
+    );
+
+    // Scope the distinct set to a tenant/prefix label when one is given,
+    // so per-tenant vocabularies stay separate.
+    let query = match scope_label {
+        Some(scope) => {
+            params.insert("scope".to_string(), Literal::String(scope.to_string()));
+            "MATCH (n) WHERE $label IN labels(n) AND $scope IN labels(n) \
+             WITH DISTINCT n[$key] AS v WHERE v IS NOT NULL \
+             RETURN v LIMIT $cap_plus_one"
+        }
+        None => {
+            "MATCH (n) WHERE $label IN labels(n) \
+             WITH DISTINCT n[$key] AS v WHERE v IS NOT NULL \
+             RETURN v LIMIT $cap_plus_one"
+        }
+    };
+
+    let res = client.execute(&cypher(query, params)).await?;
+
+    // Overflowed the budget → high-cardinality, not an enum.
+    if res.rows.len() as u64 > cap {
+        return Ok(None);
+    }
+
+    let mut values: Vec<String> = res
+        .rows
+        .iter()
+        .filter_map(|r| r.fields.get("v").and_then(value_as_string))
+        .map(|s| s.to_lowercase())
+        .collect();
+    values.sort();
+    values.dedup();
+    if values.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(values))
 }
 
 fn cypher(text: &str, params: BTreeMap<String, Literal>) -> CypherQuery {
@@ -437,14 +541,15 @@ mod tests {
         // Call order:
         //   1. fetch_node_labels
         //   2. fetch_props for "Person"
-        //   3. fetch_extra_node_labels for "Person"
-        //   4. fetch_rel_types
-        //   5. fetch_rel_endpoints for "KNOWS"
-        //   6. fetch_props for "KNOWS"
+        //   3. fetch_enum_values for "name" (only string prop)
+        //   4. fetch_extra_node_labels for "Person"
+        //   5. fetch_rel_types
+        //   6. fetch_rel_endpoints for "KNOWS"
+        //   7. fetch_props for "KNOWS"
 
-        // 6. KNOWS rel props (empty)
+        // 7. KNOWS rel props (empty)
         mock.enqueue(crate::db::QueryResult::default());
-        // 5. KNOWS endpoints
+        // 6. KNOWS endpoints
         mock.enqueue(crate::db::QueryResult {
             columns: vec!["from".into(), "to".into()],
             rows: vec![row(&[
@@ -452,13 +557,22 @@ mod tests {
                 ("to", Value::String("Person".into())),
             ])],
         });
-        // 4. rel types
+        // 5. rel types
         mock.enqueue(crate::db::QueryResult {
             columns: vec!["type".into()],
             rows: vec![row(&[("type", Value::String("KNOWS".into()))])],
         });
-        // 3. Person extra labels (empty)
+        // 4. Person extra labels (empty)
         mock.enqueue(crate::db::QueryResult::default());
+        // 3. enum values for "name": two distinct values, under the cap,
+        //    so "name" is treated as an enum (canonicalised to lowercase).
+        mock.enqueue(crate::db::QueryResult {
+            columns: vec!["v".into()],
+            rows: vec![
+                row(&[("v", Value::String("Ada".into()))]),
+                row(&[("v", Value::String("Bob".into()))]),
+            ],
+        });
         // 2. Person props
         mock.enqueue(crate::db::QueryResult {
             columns: vec!["key".into(), "samples".into()],
@@ -489,13 +603,73 @@ mod tests {
         // Sorted alphabetically: age, name.
         assert_eq!(schema.nodes[0].properties[0].name, "age");
         assert_eq!(schema.nodes[0].properties[0].ty, PropertyType::Int);
+        // Numeric field carries no enum dictionary.
+        assert!(schema.nodes[0].properties[0].allowed_values.is_empty());
         assert_eq!(schema.nodes[0].properties[1].name, "name");
         assert_eq!(schema.nodes[0].properties[1].ty, PropertyType::String);
+        // String field under the cap became an enum with lowercased values.
+        assert_eq!(
+            schema.nodes[0].properties[1].allowed_values,
+            vec!["ada".to_string(), "bob".to_string()]
+        );
 
         assert_eq!(schema.relationships.len(), 1);
         assert_eq!(schema.relationships[0].label, "KNOWS");
         assert_eq!(schema.relationships[0].from.as_deref(), Some("Person"));
         assert_eq!(schema.relationships[0].to.as_deref(), Some("Person"));
+    }
+
+    #[tokio::test]
+    async fn high_cardinality_string_field_gets_no_enum_dictionary() {
+        let mock = MockClient::new();
+
+        // Call order (LIFO enqueue below):
+        //   1. fetch_node_labels           → [Car]
+        //   2. fetch_props for "Car"       → vin (String)
+        //   3. fetch_enum_values for "vin" → 3 rows > cap(2) → None
+        //   4. fetch_extra_node_labels     → empty
+        //   5. fetch_rel_types             → empty
+
+        mock.enqueue(crate::db::QueryResult::default()); // 5. no rel types
+        mock.enqueue(crate::db::QueryResult::default()); // 4. no extra labels
+        mock.enqueue(crate::db::QueryResult {
+            // 3. three distinct values — one over the cap of 2.
+            columns: vec!["v".into()],
+            rows: vec![
+                row(&[("v", Value::String("WBA-1".into()))]),
+                row(&[("v", Value::String("WBA-2".into()))]),
+                row(&[("v", Value::String("WBA-3".into()))]),
+            ],
+        });
+        mock.enqueue(crate::db::QueryResult {
+            // 2. one string prop
+            columns: vec!["key".into(), "samples".into()],
+            rows: vec![row(&[
+                ("key", Value::String("vin".into())),
+                ("samples", Value::Json(json!(["WBA-1", "WBA-2"]))),
+            ])],
+        });
+        mock.enqueue(crate::db::QueryResult {
+            // 1. one node label
+            columns: vec!["label".into()],
+            rows: vec![row(&[("label", Value::String("Car".into()))])],
+        });
+
+        let schema = introspect_schema(
+            &mock,
+            IntrospectOptions {
+                enum_cardinality_cap: 2,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(schema.nodes[0].properties[0].name, "vin");
+        assert!(
+            schema.nodes[0].properties[0].allowed_values.is_empty(),
+            "field exceeding the cardinality cap must not carry a dictionary"
+        );
     }
 
     #[test]

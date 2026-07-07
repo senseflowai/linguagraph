@@ -173,6 +173,27 @@ document traversal endpoint:
 forces the suite prefix into `prefix_label` and `prefix_index`, just as it does
 for static or generated DSL. Do not combine `dsl` and `traversal` in one case.
 
+### Chunk multivector coverage
+
+`chunk_multivector` (config `[types.SemanticText]`) is **on by default**. Every
+`Chunk.text` is split into sentences and stored as a per-sentence multivector
+Qdrant point; the chunk channel of a traversal then scores each chunk by its
+best-matching sentence (MaxSim) instead of one averaged, noisy vector. Set
+`chunk_multivector = false` in the config only to fall back to the legacy
+single-vector path.
+
+The `text-chunks` suite exercises this end to end. `chunk-009` is a large
+(~1000-token, ~30 sentence) appendix that buries two needles on deliberately
+unrelated topics — a network root cause (`VLAN 318`, `switch stack DL-7`,
+`build R429`) and an HR detail (`retention bonus`, `twelve thousand rubles`) —
+that appear in no other chunk. The `multivector_root_cause_needle` and
+`multivector_retention_bonus_needle` cases each run a goal-only traversal
+(`"entities": []`, so only the chunk channel fires) and assert the needle text
+comes back. Both queries retrieving the same long chunk is the signal that the
+chunk was split into many embeddings and MaxSim surfaced whichever sentence
+matched: a single averaged vector could not rank highly for two far-apart
+queries.
+
 `rows` entries are subset matches:
 
 ```json

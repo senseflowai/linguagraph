@@ -51,6 +51,7 @@ fn cfg_with_semantic_text() -> Config {
             threshold: Some(0.75),          // cosine, stage 1
             reranker_threshold: Some(0.42), // reranker, stage 2
             embedding_dim: Some(8),
+            chunk_multivector: None,
             extra: Default::default(),
         },
     );
@@ -329,64 +330,28 @@ fn semantic_search_compiles_to_qlink_search_call() {
     );
 }
 
-/// When a cross-encoder reranker is attached to the pipeline, semantic
-/// search reranks **in this process**: `run` first fetches recall
-/// candidates from `libqlink.search_hybrid` (no model in Memgraph),
-/// reranks their text, drops sub-threshold hits, and folds the survivors
-/// into the main query as an `UNWIND` of precomputed `{id, score}` pairs
-/// — never calling `libqlink.search_hybrid_reranked`.
+/// SemanticText semantic search delegates recall **and** cross-encoder
+/// reranking to qlink: `run` compiles to a single
+/// `libqlink.search_hybrid_reranked` call and issues exactly one query,
+/// with no separate in-process candidate-recall round-trip and no
+/// precomputed-hits `UNWIND` stage. (The pipeline's in-process reranker is
+/// reserved for the document-traversal path — see
+/// `Pipeline::run_traversal`.)
 #[tokio::test]
-async fn semantic_search_reranks_in_process_when_reranker_attached() {
-    use linguagraph::db::{QueryResult, Row, Value as DbValue};
-    use linguagraph::embeddings::{EmbedError, Reranker};
-
-    #[derive(Debug)]
-    struct FixedReranker {
-        scores: Vec<f64>,
-    }
-    impl Reranker for FixedReranker {
-        fn rerank(
-            &self,
-            _query: &str,
-            documents: &[String],
-        ) -> std::result::Result<Vec<f64>, EmbedError> {
-            assert_eq!(documents.len(), self.scores.len());
-            Ok(self.scores.clone())
-        }
-    }
-
-    fn row_id_text(id: i64, text: &str) -> Row {
-        let mut fields = BTreeMap::new();
-        fields.insert("id".to_string(), DbValue::Int(id));
-        fields.insert("text".to_string(), DbValue::String(text.to_string()));
-        Row { fields }
-    }
+async fn semantic_search_delegates_rerank_to_qlink_in_single_query() {
+    use linguagraph::db::QueryResult;
 
     let cfg = cfg_with_semantic_text();
     let (registry, embedder) = registry_and_embedder();
     let client = Arc::new(MockClient::new());
-    // MockClient pops LIFO, so enqueue in reverse execution order: the
-    // main-query result first, the candidate-recall result last.
     client.enqueue(QueryResult {
         columns: vec![],
         rows: vec![],
     });
-    client.enqueue(QueryResult {
-        columns: vec![],
-        rows: vec![
-            row_id_text(10, "type: Company\nname: Apple"),
-            row_id_text(20, "type: Company\nname: Banana"),
-            row_id_text(30, "type: Company\nname: Cherry"),
-        ],
-    });
 
     let pipeline = Pipeline::new(client.clone(), &cfg)
         .with_registry(registry)
-        .with_embedder(embedder)
-        .with_reranker(Arc::new(FixedReranker {
-            scores: vec![0.9, 0.1, 0.7],
-        }))
-        .with_reranker_threshold(0.5);
+        .with_embedder(embedder);
 
     let dsl_query = dsl::parse_str(
         r#"{
@@ -407,51 +372,22 @@ async fn semantic_search_reranks_in_process_when_reranker_attached() {
     let captured = client.captured.lock().unwrap();
     assert_eq!(
         captured.len(),
-        2,
-        "expected a candidate-recall query then the main query; got {} queries",
+        1,
+        "semantic search should issue a single reranked query, not a recall+main pair; \
+         got {} queries",
         captured.len()
     );
-    // [0] recall: the model-free `search_hybrid`, not the reranked variant.
+    // The one query is qlink's reranked hybrid search — recall + rerank in a
+    // single CALL, so there is no separate precomputed-hits UNWIND stage.
     assert!(
-        captured[0].text.contains("CALL libqlink.search_hybrid("),
-        "first query should be the recall-only candidate fetch; got:\n{}",
+        captured[0].text.contains("libqlink.search_hybrid_reranked("),
+        "the single query should be qlink's reranked hybrid search; got:\n{}",
         captured[0].text
     );
-    assert!(!captured[0].text.contains("search_hybrid_reranked"));
-    // [1] main query: UNWIND of precomputed hits, no qlink rerank call.
     assert!(
-        captured[1].text.contains("UNWIND"),
-        "main query should UNWIND precomputed hits; got:\n{}",
-        captured[1].text
-    );
-    assert!(!captured[1].text.contains("search_hybrid_reranked"));
-    // Only the two ids scoring >= 0.5 survive, ordered by rerank score.
-    let hits = captured[1]
-        .params
-        .values()
-        .find_map(|v| match v {
-            Literal::List(items)
-                if items.iter().all(|i| matches!(i, Literal::Object(_))) && !items.is_empty() =>
-            {
-                Some(items.clone())
-            }
-            _ => None,
-        })
-        .expect("expected a bound reranked_hits list");
-    let ids: Vec<i64> = hits
-        .iter()
-        .filter_map(|h| match h {
-            Literal::Object(m) => match m.get("id") {
-                Some(Literal::Int(i)) => Some(*i),
-                _ => None,
-            },
-            _ => None,
-        })
-        .collect();
-    assert_eq!(
-        ids,
-        vec![10, 30],
-        "survivors must be rerank-ordered 10 then 30"
+        !captured[0].text.contains("UNWIND"),
+        "no separate precomputed-hits UNWIND stage should remain; got:\n{}",
+        captured[0].text
     );
 }
 
@@ -858,18 +794,16 @@ fn explicit_dsl_type_overrides_ontology_catalog() {
         }"#,
     )
     .unwrap();
-    // Compiles cleanly via the explicit SemanticText handler. `eq` is an
-    // exact op, so it lowers to a plain `c.industry = $p0` WHERE clause
-    // against the raw value — precise, never a fuzzy vector search.
+    // Compiles cleanly via the explicit SemanticText handler — proving the
+    // DSL type won over the catalog. For SemanticText every op is
+    // retrieval-oriented (see the handler's module docs), so even `eq`
+    // lowers to a single `libqlink.search_hybrid_reranked` call rather than
+    // a bare literal-equality WHERE clause.
     let cypher = pipeline.compile(dsl_query).unwrap();
     assert!(
-        cypher.text.contains("WHERE c.industry = $p0"),
-        "explicit SemanticText `eq` should be an exact WHERE clause; got:\n{}",
-        cypher.text
-    );
-    assert!(
-        !cypher.text.contains("qlink"),
-        "exact SemanticText `eq` must not touch qlink; got:\n{}",
+        cypher.text.contains("libqlink.search_hybrid_reranked("),
+        "explicit SemanticText `eq` should route through the SemanticText handler's \
+         qlink retrieval; got:\n{}",
         cypher.text
     );
 }

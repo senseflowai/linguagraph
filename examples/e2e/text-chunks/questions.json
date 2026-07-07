@@ -66,6 +66,45 @@
       }
     },
     {
+      "id": "multivector_root_cause_needle",
+      "question": "Что стало первопричиной сбоя сканеров Sokol WMS в инциденте KR-42?",
+      "traversal": {
+        "entities": [],
+        "goal": "root cause of the Sokol WMS scanner outage during incident KR-42 misconfigured VLAN switch stack firmware rollback build",
+        "query": "What was the root cause of the Sokol WMS scanner outage in incident KR-42?",
+        "limit": 4,
+        "rerank": false
+      },
+      "validation": {
+        "row_count": { "min": 1, "max": 4 },
+        "columns": ["chunk_text", "source_name"],
+        "contains": [
+          { "column": "chunk_text", "mode": "contains", "value": "switch stack DL-7" },
+          { "column": "chunk_text", "mode": "contains", "value": "build R429" },
+          { "column": "chunk_text", "mode": "contains", "value": "VLAN 318" }
+        ]
+      }
+    },
+    {
+      "id": "multivector_retention_bonus_needle",
+      "question": "Какую премию получила ночная смена Bravo за разбор завала Orion Foods?",
+      "traversal": {
+        "entities": [],
+        "goal": "retention bonus paid to Night shift Bravo operators for clearing the Orion Foods backlog without weekend overtime",
+        "query": "What retention bonus did Night shift Bravo receive for clearing the Orion Foods backlog?",
+        "limit": 4,
+        "rerank": false
+      },
+      "validation": {
+        "row_count": { "min": 1, "max": 4 },
+        "columns": ["chunk_text", "source_name"],
+        "contains": [
+          { "column": "chunk_text", "mode": "contains", "value": "twelve thousand rubles" },
+          { "column": "chunk_text", "mode": "contains", "value": "retention bonus" }
+        ]
+      }
+    },
+    {
       "id": "dsl_text_extracted_facility_systems",
       "question": "Какие системы использует Novaya Dacha distribution center?",
       "dsl": {

@@ -112,6 +112,9 @@ pub struct SemanticTextConfig {
     pub reranker_threshold: f64,
     /// When true, `Chunk.text` is embedded per-sentence into a
     /// multivector Qdrant point rather than as a single dense vector.
+    /// Defaults to `true` (see [`SemanticTextConfig::from_config`]) so a
+    /// long chunk is retrieved by the best-matching sentence (MaxSim)
+    /// instead of one averaged, noisy vector.
     /// See [`crate::config::TypeConfig::chunk_multivector`].
     pub chunk_multivector: bool,
 }
@@ -129,7 +132,7 @@ impl SemanticTextConfig {
             // matches what was historically the only knob.
             search_threshold: t.threshold.unwrap_or(DEFAULT_SEARCH_THRESHOLD),
             reranker_threshold: t.reranker_threshold.unwrap_or(DEFAULT_RERANKER_THRESHOLD),
-            chunk_multivector: t.chunk_multivector.unwrap_or(false),
+            chunk_multivector: t.chunk_multivector.unwrap_or(true),
         })
     }
 }

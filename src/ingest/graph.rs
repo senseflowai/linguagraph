@@ -576,6 +576,7 @@ mod tests {
                     top_k: 10,
                     search_threshold: 0.1,
                     reranker_threshold: 0.2,
+                    chunk_multivector: false,
                 },
                 Arc::new(MockEmbedder::new(8)),
             ))
@@ -738,6 +739,7 @@ mod tests {
                     "expected prefix in collection name, got {collection}"
                 );
             }
+            other => panic!("expected single-vector EmbedAndStore, got {other:?}"),
         }
     }
 

@@ -387,6 +387,14 @@ pub struct TypeConfig {
     /// (e.g. for the mock embedder in tests).
     #[serde(default)]
     pub embedding_dim: Option<usize>,
+    /// When set, `Chunk.text` is embedded as a per-sentence multivector
+    /// point (via `qlink.insert_hybrid_multi`) instead of a single dense
+    /// vector. Sharpens retrieval on long chunks at the cost of a
+    /// multivector-capable Qdrant collection. Defaults to `false`
+    /// (single-vector `insert_hybrid`), which stays byte-compatible with
+    /// existing collections.
+    #[serde(default)]
+    pub chunk_multivector: Option<bool>,
     /// Anything else the handler wants to read.
     #[serde(flatten, default)]
     pub extra: BTreeMap<String, toml::Value>,

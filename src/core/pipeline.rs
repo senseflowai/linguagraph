@@ -1146,15 +1146,27 @@ impl Pipeline {
             ))
         })?;
 
-        // ── 1. Embed everything in one shot. ─────────────────────────
+        // ── 1. Embed everything in one shot. A single-vector effect
+        //    contributes one text; a multivector (chunk) effect
+        //    contributes one text per sentence. Flatten them into one
+        //    batch so the model warms up once, and remember each
+        //    effect's slice of the flat vector list via `spans`.
         let embed_started = Instant::now();
-        let texts: Vec<&str> = queue
-            .iter()
-            .map(|e| match e {
-                SideEffect::EmbedAndStore { text, .. } => text.as_str(),
-            })
-            .collect();
-        let vectors = embed_with_progress(embedder, &texts).map_err(|e| {
+        let mut flat_texts: Vec<&str> = Vec::with_capacity(queue.len());
+        let mut spans: Vec<(usize, usize)> = Vec::with_capacity(queue.len());
+        for eff in &queue {
+            let start = flat_texts.len();
+            match eff {
+                SideEffect::EmbedAndStore { text, .. } => flat_texts.push(text.as_str()),
+                SideEffect::EmbedMultiAndStore { texts, .. } => {
+                    for t in texts {
+                        flat_texts.push(t.as_str());
+                    }
+                }
+            }
+            spans.push((start, flat_texts.len()));
+        }
+        let vectors = embed_with_progress(embedder, &flat_texts).map_err(|e| {
             crate::error::Error::Ingest(IngestError::Type(format!("embed_batch: {e}")))
         })?;
         tracing::info!(
@@ -1167,13 +1179,27 @@ impl Pipeline {
 
         // ── 2. Bucket. The 4-tuple key keeps every row in a bucket on
         //    the same MATCH pattern and the same Qdrant collection.
-        //    `BTreeMap` keeps groups ordered for deterministic Cypher.
+        //    Single- and multivector effects render different Cypher, so
+        //    they go into separate maps. `BTreeMap` keeps groups ordered
+        //    for deterministic Cypher.
         type GroupKey = (String, Option<String>, String, String);
-        let mut groups: std::collections::BTreeMap<GroupKey, Vec<(SideEffect, Vec<f32>)>> =
+        let mut single_groups: std::collections::BTreeMap<GroupKey, Vec<(SideEffect, Vec<f32>)>> =
             std::collections::BTreeMap::new();
-        for (eff, vec) in queue.into_iter().zip(vectors.into_iter()) {
+        let mut multi_groups: std::collections::BTreeMap<
+            GroupKey,
+            Vec<(SideEffect, Vec<Vec<f32>>)>,
+        > = std::collections::BTreeMap::new();
+        for (idx, eff) in queue.into_iter().enumerate() {
+            let (start, end) = spans[idx];
             let key = match &eff {
                 SideEffect::EmbedAndStore {
+                    collection,
+                    label,
+                    key_field,
+                    payload_label,
+                    ..
+                }
+                | SideEffect::EmbedMultiAndStore {
                     collection,
                     label,
                     key_field,
@@ -1186,19 +1212,29 @@ impl Pipeline {
                     key_field.clone(),
                 ),
             };
-            groups.entry(key).or_default().push((eff, vec));
+            match &eff {
+                SideEffect::EmbedAndStore { .. } => {
+                    let vec = vectors[start..end].first().cloned().unwrap_or_default();
+                    single_groups.entry(key).or_default().push((eff, vec));
+                }
+                SideEffect::EmbedMultiAndStore { .. } => {
+                    let matrix = vectors[start..end].to_vec();
+                    multi_groups.entry(key).or_default().push((eff, matrix));
+                }
+            }
         }
 
-        // ── 3. One UNWIND batch per group. ───────────────────────────
+        // ── 3. One UNWIND batch per group — single-vector groups first,
+        //    then multivector groups. ──────────────────────────────────
         let mut batches_run = 0usize;
         let mut rows_inserted = 0usize;
-        let group_total = groups.len();
+        let group_total = single_groups.len() + multi_groups.len();
         let side_effect_started = Instant::now();
-        for (idx, ((_coll, _plabel, _nlabel, _kfield), group)) in groups.into_iter().enumerate() {
+        for (_key, group) in single_groups {
             let batch_started = Instant::now();
             tracing::info!(
                 target: "linguagraph::pipeline",
-                batch = idx + 1,
+                batch = batches_run + 1,
                 batches = group_total,
                 rows = group.len(),
                 "executing embedding insert batch"
@@ -1210,11 +1246,34 @@ impl Pipeline {
             rows_inserted += group.len();
             tracing::info!(
                 target: "linguagraph::pipeline",
-                batch = idx + 1,
+                batch = batches_run,
                 batches = group_total,
                 rows = group.len(),
                 elapsed_ms = batch_started.elapsed().as_millis() as u64,
                 "finished embedding insert batch"
+            );
+        }
+        for (_key, group) in multi_groups {
+            let batch_started = Instant::now();
+            tracing::info!(
+                target: "linguagraph::pipeline",
+                batch = batches_run + 1,
+                batches = group_total,
+                rows = group.len(),
+                "executing multivector embedding insert batch"
+            );
+            let cypher = handlers::build_embed_insert_multi_batch(&group)
+                .map_err(|e| crate::error::Error::Ingest(IngestError::Type(e.to_string())))?;
+            let _ = self.client.execute(&cypher).await?;
+            batches_run += 1;
+            rows_inserted += group.len();
+            tracing::info!(
+                target: "linguagraph::pipeline",
+                batch = batches_run,
+                batches = group_total,
+                rows = group.len(),
+                elapsed_ms = batch_started.elapsed().as_millis() as u64,
+                "finished multivector embedding insert batch"
             );
         }
         let _ = embedder.dim(); // assert the embedder was usable

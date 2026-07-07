@@ -30,8 +30,8 @@ pub use core::{
 pub use datetime::{date_handler, timestamp_handler, DateTimeHandler};
 pub use keyword::{keyword_handler, KeywordHandler};
 pub use semantic_text::{
-    build_canonical_query, build_embed_insert_batch, SemanticTextConfig, SemanticTextHandler,
-    SideEffectEmitError,
+    build_canonical_query, build_embed_insert_batch, build_embed_insert_multi_batch,
+    SemanticTextConfig, SemanticTextHandler, SideEffectEmitError,
 };
 
 use std::sync::Arc;

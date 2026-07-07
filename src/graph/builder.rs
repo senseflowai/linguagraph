@@ -209,7 +209,18 @@ impl GraphBuilder {
     }
 
     pub fn add_entity(&mut self, entity: EntityGraph) -> EntityRef {
-        let entity = ensure_canonical_property(entity);
+        // `Chunk` never enters the soft-merge resolver (it is keyed by a
+        // strict UUID `id`) and its retrieval vector is built from the
+        // `text` field, not `_canonical`. Synthesising a `_canonical`
+        // property for it would only duplicate `text` on the node
+        // without ever being embedded, so skip it. Every other entity —
+        // including the built-in `Source`, whose only embedded field IS
+        // its `_canonical` — keeps the canonical document.
+        let entity = if entity.r#type == CHUNK_LABEL {
+            entity
+        } else {
+            ensure_canonical_property(entity)
+        };
         let entity = self.apply_default_scope(entity);
         let label = entity.r#type.clone();
         let entity_ref = EntityRef(self.graph.entities.len());
@@ -823,7 +834,9 @@ mod tests {
 
         let chunk_entity = graph.entity(chunk).unwrap();
         assert_eq!(chunk_entity.r#type, CHUNK_LABEL);
-        assert!(chunk_entity.properties.contains_key(CANONICAL_FIELD));
+        // A Chunk carries no `_canonical`: it is embedded via `text` and
+        // never soft-merges, so the canonical document would be dead weight.
+        assert!(!chunk_entity.properties.contains_key(CANONICAL_FIELD));
 
         // Exactly one part_of edge from chunk → source, no :mention.
         let edges: Vec<_> = graph

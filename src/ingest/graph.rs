@@ -381,11 +381,10 @@ fn lower_relation_property(
 
 fn node_type_id(property_type: PropertyType) -> &'static str {
     match property_type {
-        PropertyType::Keyword => BuiltinType::Keyword.id(),
+        // `Text` is the only type embedded on nodes; everything else
+        // resolves to its canonical scalar handler.
         PropertyType::Text => SemanticTextHandler::TYPE_ID,
-        PropertyType::Number => BuiltinType::Number.id(),
-        PropertyType::Boolean => BuiltinType::Boolean.id(),
-        PropertyType::DateTime | PropertyType::Timestamp => BuiltinType::Timestamp.id(),
+        other => other.handler_id(),
     }
 }
 
@@ -393,10 +392,12 @@ fn relation_type_id(property_type: PropertyType) -> &'static str {
     match property_type {
         // Relationship properties are stored plainly — never embedded —
         // so both textual types resolve to the Keyword handler here.
-        PropertyType::Keyword | PropertyType::Text => BuiltinType::Keyword.id(),
+        PropertyType::Keyword | PropertyType::Text | PropertyType::List => {
+            BuiltinType::Keyword.id()
+        }
         PropertyType::Number => BuiltinType::Number.id(),
-        PropertyType::Boolean => BuiltinType::Boolean.id(),
-        PropertyType::DateTime | PropertyType::Timestamp => BuiltinType::Timestamp.id(),
+        PropertyType::Bool => BuiltinType::Boolean.id(),
+        PropertyType::Datetime => BuiltinType::Timestamp.id(),
     }
 }
 
@@ -418,10 +419,12 @@ fn literal_from_json_as_type(
     property_type: PropertyType,
 ) -> Result<Literal, IngestError> {
     match property_type {
-        PropertyType::Keyword | PropertyType::Text => Ok(Literal::String(json_to_string(value))),
+        PropertyType::Keyword | PropertyType::Text | PropertyType::List => {
+            Ok(Literal::String(json_to_string(value)))
+        }
         PropertyType::Number => json_to_number(value, property_name),
-        PropertyType::Boolean => json_to_bool(value, property_name).map(Literal::Bool),
-        PropertyType::DateTime | PropertyType::Timestamp => match value {
+        PropertyType::Bool => json_to_bool(value, property_name).map(Literal::Bool),
+        PropertyType::Datetime => match value {
             Value::Null => Ok(Literal::Null),
             Value::String(s) => Ok(Literal::String(s.clone())),
             Value::Number(n) => Ok(Literal::String(n.to_string())),
@@ -511,13 +514,13 @@ fn json_to_bool(value: &Value, property_name: &str) -> Result<bool, IngestError>
             "false" | "no" | "n" | "0" | "off" => Ok(false),
             _ => Err(type_conversion_error(
                 property_name,
-                PropertyType::Boolean,
+                PropertyType::Bool,
                 "string",
             )),
         },
         other => Err(type_conversion_error(
             property_name,
-            PropertyType::Boolean,
+            PropertyType::Bool,
             json_kind(other),
         )),
     }
@@ -812,7 +815,7 @@ mod tests {
             Literal::Int(42)
         );
         assert_eq!(
-            literal_from_json(&json!("yes"), "active", Some(PropertyType::Boolean)).unwrap(),
+            literal_from_json(&json!("yes"), "active", Some(PropertyType::Bool)).unwrap(),
             Literal::Bool(true)
         );
         assert_eq!(

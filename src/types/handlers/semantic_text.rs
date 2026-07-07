@@ -788,7 +788,7 @@ pub fn build_embed_insert_multi_batch(
     let cypher = format!(
         "UNWIND $rows AS row\n\
          MATCH (n:{label} {{{key_field}: row.key}})\n\
-         CALL qlink.insert_hybrid_multi($coll, id(n), row.vecs, row.text, $label) YIELD success\n\
+         CALL libqlink.insert_hybrid_multi($coll, id(n), row.vecs, row.text, $label) YIELD success\n\
          RETURN count(success) AS inserted",
     );
     Ok(crate::builder::CypherQuery::new(cypher, params))
@@ -1057,7 +1057,7 @@ mod tests {
         let cypher = build_embed_insert_multi_batch(&group).unwrap();
         assert!(cypher
             .text
-            .contains("CALL qlink.insert_hybrid_multi($coll, id(n), row.vecs, row.text, $label)"));
+            .contains("CALL libqlink.insert_hybrid_multi($coll, id(n), row.vecs, row.text, $label)"));
         assert!(cypher.text.contains("MATCH (n:Chunk {id: row.key})"));
         // The matrix must survive as a list-of-lists in the row payload.
         match cypher.params.get("rows").unwrap() {

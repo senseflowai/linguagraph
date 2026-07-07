@@ -1,0 +1,328 @@
+{
+  "questions": [
+    {
+      "id": "top_saas_by_price",
+      "question": "Какие 5 самых дорогих SaaS-листингов есть на Flippa? Покажи id, title, price, revenue_average и profit_average.",
+      "validation": {
+        "row_count": {
+          "exact": 5
+        },
+        "dsl_expect": {
+          "start_label": "Listing",
+          "required_traversal_labels": [
+            "HAS_ASSET_TYPE"
+          ],
+          "required_filter_fields": [
+            "name"
+          ]
+        },
+        "contains": [
+          {
+            "column": "*",
+            "value": "13031332"
+          },
+          {
+            "column": "*",
+            "value": "12743231"
+          },
+          {
+            "column": "*",
+            "value": "13364296"
+          }
+        ],
+        "numbers": [
+          {
+            "column": "*",
+            "op": "gte",
+            "value": 1000000
+          }
+        ]
+      }
+    },
+    {
+      "id": "lion_legion_integrations",
+      "question": "Какие интеграции подключены у листинга с id 11822365 (Lion Legion)?",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        },
+        "dsl_expect": {
+          "start_label": "Listing",
+          "required_traversal_labels": [
+            "HAS_INTEGRATION"
+          ],
+          "required_filter_fields": [
+            "id"
+          ]
+        },
+        "contains": [
+          {
+            "column": "*",
+            "value": "google_analytics"
+          },
+          {
+            "column": "*",
+            "value": "paypal"
+          },
+          {
+            "column": "*",
+            "value": "shopify"
+          }
+        ]
+      }
+    },
+    {
+      "id": "powerful_domain_verifications",
+      "question": "Какие верификации есть у листинга 11776064 про Powerful Domain?",
+      "validation": {
+        "row_count": {
+          "exact": 4
+        },
+        "dsl_expect": {
+          "start_label": "Listing",
+          "required_traversal_labels": [
+            "HAS_VERIFICATION"
+          ],
+          "required_filter_fields": [
+            "id"
+          ]
+        },
+        "contains": [
+          {
+            "column": "*",
+            "value": "verified-listing"
+          },
+          {
+            "column": "*",
+            "value": "google_adsense"
+          },
+          {
+            "column": "*",
+            "value": "google_analytics"
+          },
+          {
+            "column": "*",
+            "value": "paypal"
+          }
+        ]
+      }
+    },
+    {
+      "id": "auction_starter_deals",
+      "question": "Сколько auction-листингов с начальной ценой до 1000 долларов включительно?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "dsl_expect": {
+          "start_label": "Listing",
+          "required_filter_fields": [
+            "sale_method",
+            "price"
+          ],
+          "required_filter_ops": [
+            "eq",
+            "lte"
+          ]
+        },
+        "numbers": [
+          {
+            "column": "*",
+            "op": "eq",
+            "value": 457
+          }
+        ]
+      }
+    },
+    {
+      "id": "australia_ecommerce_under_offer_count",
+      "question": "Сколько австралийских Ecommerce-листингов сейчас under offer?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "dsl_expect": {
+          "start_label": "Listing",
+          "required_traversal_labels": [
+            "HAS_ASSET_TYPE",
+            "LOCATED_IN"
+          ],
+          "required_filter_fields": [
+            "name",
+            "under_offer"
+          ]
+        },
+        "numbers": [
+          {
+            "column": "*",
+            "op": "eq",
+            "value": 4
+          }
+        ]
+      }
+    },
+    {
+      "id": "super_seller_top_revenue",
+      "question": "Какие 5 Super Seller листингов имеют самую высокую среднемесячную выручку? Покажи id, title, revenue_average и price.",
+      "validation": {
+        "row_count": {
+          "min": 5,
+          "max": 10
+        },
+        "dsl_expect": {
+          "start_label": "Listing",
+          "required_filter_fields": [
+            "super_seller"
+          ]
+        },
+        "contains": [
+          {
+            "column": "*",
+            "value": "13020599"
+          },
+          {
+            "column": "*",
+            "value": "12791779"
+          },
+          {
+            "column": "*",
+            "value": "12292010"
+          }
+        ],
+        "numbers": [
+          {
+            "column": "*",
+            "op": "gte",
+            "value": 100000
+          }
+        ]
+      }
+    },
+    {
+      "id": "managed_editors_choice_price_drop",
+      "question": "Какие Managed by Flippa и Editor's Choice листинги сильнее всего упали в цене?",
+      "validation": {
+        "row_count": {
+          "min": 5,
+          "max": 10
+        },
+        "dsl_expect": {
+          "start_label": "Listing",
+          "required_filter_fields": [
+            "managed_by_flippa",
+            "editors_choice",
+            "price_dropped"
+          ],
+          "required_return_fields": [
+            "price_dropped_percent"
+          ]
+        },
+        "contains": [
+          {
+            "column": "listing_id",
+            "value": "12295361"
+          },
+          {
+            "column": "listing_id",
+            "value": "12244075"
+          },
+          {
+            "column": "listing_id",
+            "value": "12682360"
+          }
+        ],
+        "numbers": [
+          {
+            "column": "*",
+            "op": "gte",
+            "value": 60
+          }
+        ]
+      }
+    },
+    {
+      "id": "verified_revenue_count",
+      "question": "Сколько листингов имеют verified revenue?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "dsl_expect": {
+          "start_label": "Listing",
+          "required_filter_fields": [
+            "has_verified_revenue"
+          ]
+        },
+        "numbers": [
+          {
+            "column": "*",
+            "op": "eq",
+            "value": 115
+          }
+        ]
+      }
+    },
+    {
+      "id": "high_profit_under_offer",
+      "question": "Какие 5 листингов с самой высокой profit_average одновременно имеют opportunity signal \"High monthly profit\" и risk flag \"Under offer\"? Покажи id, title, profit_average и price.",
+      "validation": {
+        "row_count": {
+          "exact": 5
+        },
+        "dsl_expect": {
+          "start_label": "Listing",
+          "required_traversal_labels": [
+            "HAS_OPPORTUNITY_SIGNAL",
+            "HAS_RISK_FLAG"
+          ],
+          "required_filter_fields": [
+            "name"
+          ]
+        },
+        "contains": [
+          {
+            "column": "*",
+            "value": "11793922"
+          },
+          {
+            "column": "*",
+            "value": "12285937"
+          },
+          {
+            "column": "*",
+            "value": "11900687"
+          }
+        ],
+        "numbers": [
+          {
+            "column": "*",
+            "op": "gte",
+            "value": 10000
+          }
+        ]
+      }
+    },
+    {
+      "id": "open_to_offer_count",
+      "question": "Сколько листингов прямо открыты к офферам?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "dsl_expect": {
+          "start_label": "Listing",
+          "required_filter_fields": [
+            "open_to_offer"
+          ]
+        },
+        "numbers": [
+          {
+            "column": "*",
+            "op": "eq",
+            "value": 5
+          }
+        ]
+      }
+    }
+  ]
+}

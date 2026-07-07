@@ -1,0 +1,666 @@
+{
+  "flippa_domain": {
+    "entity_types": [
+      {
+        "name": "Listing",
+        "description": "A Flippa marketplace listing for a digital asset offered for sale.",
+        "properties": [
+          {
+            "name": "id",
+            "description": "Primary key. Flippa listing ID.",
+            "property_type": "keyword",
+            "required": true
+          },
+          {
+            "name": "listing_url",
+            "description": "Public URL of the Flippa listing.",
+            "property_type": "keyword",
+            "required": true
+          },
+          {
+            "name": "title",
+            "description": "Listing title, useful for semantic search and claim extraction.",
+            "property_type": "keyword",
+            "required": false
+          },
+          {
+            "name": "summary",
+            "description": "Short listing summary.",
+            "property_type": "keyword",
+            "required": false
+          },
+          {
+            "name": "property_name",
+            "description": "Asset or property display name.",
+            "property_type": "keyword",
+            "required": true
+          },
+          {
+            "name": "price",
+            "description": "Current listing price in USD.",
+            "property_type": "number",
+            "required": true
+          },
+          {
+            "name": "original_price",
+            "description": "Original price before price drop, if available.",
+            "property_type": "number",
+            "required": false
+          },
+          {
+            "name": "price_dropped",
+            "description": "Whether the listing price has dropped.",
+            "property_type": "bool",
+            "required": true
+          },
+          {
+            "name": "price_dropped_percent",
+            "description": "Percentage of price drop.",
+            "property_type": "number",
+            "required": false
+          },
+          {
+            "name": "bid_count",
+            "description": "Number of bids on the listing.",
+            "property_type": "number",
+            "required": true
+          },
+          {
+            "name": "sale_method",
+            "description": "Sale method, for example auction or fixed price.",
+            "property_type": "keyword",
+            "required": true
+          },
+          {
+            "name": "sale_method_title",
+            "description": "Human-readable sale method label.",
+            "property_type": "keyword",
+            "required": false
+          },
+          {
+            "name": "status",
+            "description": "Listing status, for example open.",
+            "property_type": "keyword",
+            "required": true
+          },
+          {
+            "name": "end_at",
+            "description": "Auction or listing end timestamp.",
+            "property_type": "datetime",
+            "required": false
+          },
+          {
+            "name": "open_listing",
+            "description": "Whether the listing is currently open.",
+            "property_type": "bool",
+            "required": true
+          },
+          {
+            "name": "open_to_offer",
+            "description": "Whether seller accepts offers.",
+            "property_type": "bool",
+            "required": true
+          },
+          {
+            "name": "under_offer",
+            "description": "Whether the listing is under offer.",
+            "property_type": "bool",
+            "required": true
+          },
+          {
+            "name": "profit_average",
+            "description": "Average monthly net profit in USD.",
+            "property_type": "number",
+            "required": false
+          },
+          {
+            "name": "revenue_average",
+            "description": "Average monthly revenue in USD.",
+            "property_type": "number",
+            "required": false
+          },
+          {
+            "name": "multiple",
+            "description": "Profit multiple shown by Flippa.",
+            "property_type": "number",
+            "required": false
+          },
+          {
+            "name": "revenue_multiple",
+            "description": "Revenue multiple shown by Flippa.",
+            "property_type": "number",
+            "required": false
+          },
+          {
+            "name": "has_multiple",
+            "description": "Whether a multiple is available.",
+            "property_type": "bool",
+            "required": true
+          },
+          {
+            "name": "ttm_revenue",
+            "description": "Trailing twelve-month revenue, if available.",
+            "property_type": "number",
+            "required": false
+          },
+          {
+            "name": "target_raise_amount",
+            "description": "Target raise amount for investment-style listings.",
+            "property_type": "number",
+            "required": false
+          },
+          {
+            "name": "uniques_per_month",
+            "description": "Monthly unique visitors or users.",
+            "property_type": "number",
+            "required": false
+          },
+          {
+            "name": "annual_organic_traffic",
+            "description": "Annual organic traffic estimate.",
+            "property_type": "number",
+            "required": false
+          },
+          {
+            "name": "authority_score",
+            "description": "SEO or domain authority score.",
+            "property_type": "number",
+            "required": false
+          },
+          {
+            "name": "app_rating",
+            "description": "App rating for mobile app listings.",
+            "property_type": "number",
+            "required": false
+          },
+          {
+            "name": "established_at",
+            "description": "Asset age in years as numeric value.",
+            "property_type": "number",
+            "required": false
+          },
+          {
+            "name": "formatted_age_in_years",
+            "description": "Human-readable age label.",
+            "property_type": "keyword",
+            "required": false
+          },
+          {
+            "name": "age_label",
+            "description": "Type of age label, such as Site Age or App Age.",
+            "property_type": "keyword",
+            "required": false
+          },
+          {
+            "name": "has_verified_traffic",
+            "description": "Whether traffic is verified.",
+            "property_type": "bool",
+            "required": true
+          },
+          {
+            "name": "has_verified_revenue",
+            "description": "Whether revenue is verified.",
+            "property_type": "bool",
+            "required": true
+          },
+          {
+            "name": "display_verification_badge",
+            "description": "Whether Flippa displays a verification badge.",
+            "property_type": "bool",
+            "required": true
+          },
+          {
+            "name": "manually_vetted",
+            "description": "Whether the listing was manually vetted.",
+            "property_type": "bool",
+            "required": true
+          },
+          {
+            "name": "super_seller",
+            "description": "Whether seller is marked as super seller.",
+            "property_type": "bool",
+            "required": true
+          },
+          {
+            "name": "broker_seller",
+            "description": "Whether seller is a broker.",
+            "property_type": "bool",
+            "required": true
+          },
+          {
+            "name": "managed_by_flippa",
+            "description": "Whether listing is managed by Flippa.",
+            "property_type": "bool",
+            "required": true
+          },
+          {
+            "name": "sponsored",
+            "description": "Whether the listing is sponsored.",
+            "property_type": "bool",
+            "required": true
+          },
+          {
+            "name": "editors_choice",
+            "description": "Whether listing is marked as editor's choice.",
+            "property_type": "bool",
+            "required": true
+          },
+          {
+            "name": "confidential",
+            "description": "Whether listing is confidential.",
+            "property_type": "bool",
+            "required": true
+          },
+          {
+            "name": "ready_made",
+            "description": "Whether the asset is ready-made.",
+            "property_type": "bool",
+            "required": true
+          },
+          {
+            "name": "protect_listing",
+            "description": "Whether listing protection is enabled.",
+            "property_type": "bool",
+            "required": true
+          },
+          {
+            "name": "early_access_listing",
+            "description": "Whether the listing had early access mode.",
+            "property_type": "bool",
+            "required": true
+          },
+          {
+            "name": "early_access_days_remaining",
+            "description": "Days remaining for early access.",
+            "property_type": "number",
+            "required": false
+          },
+          {
+            "name": "early_access_open_at",
+            "description": "Timestamp when early access opens.",
+            "property_type": "datetime",
+            "required": false
+          },
+          {
+            "name": "special_tags",
+            "description": "Whether listing has special tags.",
+            "property_type": "bool",
+            "required": true
+          },
+          {
+            "name": "listing_watchable",
+            "description": "Whether listing can be watched.",
+            "property_type": "bool",
+            "required": true
+          },
+          {
+            "name": "watched",
+            "description": "Whether current viewer watches the listing.",
+            "property_type": "bool",
+            "required": true
+          },
+          {
+            "name": "show_multiple",
+            "description": "Whether multiple should be displayed.",
+            "property_type": "bool",
+            "required": true
+          },
+          {
+            "name": "invest",
+            "description": "Whether listing is investment-style.",
+            "property_type": "bool",
+            "required": true
+          },
+          {
+            "name": "partial_sale",
+            "description": "Whether listing is a partial sale.",
+            "property_type": "bool",
+            "required": false
+          },
+          {
+            "name": "equity_sale_percentage",
+            "description": "Equity percentage offered for sale.",
+            "property_type": "number",
+            "required": false
+          },
+          {
+            "name": "hide_profit",
+            "description": "Whether profit is hidden.",
+            "property_type": "bool",
+            "required": true
+          },
+          {
+            "name": "domain_only",
+            "description": "Whether the listing is domain-only.",
+            "property_type": "bool",
+            "required": true
+          },
+          {
+            "name": "primary_platform",
+            "description": "Primary platform, if supplied.",
+            "property_type": "keyword",
+            "required": false
+          },
+          {
+            "name": "thumbnail_url",
+            "description": "Primary thumbnail URL.",
+            "property_type": "keyword",
+            "required": false
+          },
+          {
+            "name": "default_image_url",
+            "description": "Default placeholder image URL.",
+            "property_type": "keyword",
+            "required": false
+          },
+          {
+            "name": "currency_label",
+            "description": "Currency display label.",
+            "property_type": "keyword",
+            "required": false
+          },
+          {
+            "name": "price_text",
+            "description": "Human-readable price label.",
+            "property_type": "keyword",
+            "required": false
+          },
+          {
+            "name": "action_button_text",
+            "description": "CTA text shown by Flippa.",
+            "property_type": "keyword",
+            "required": false
+          }
+        ]
+      },
+      {
+        "name": "AssetType",
+        "description": "Type of digital asset, such as SaaS, Ecommerce, Content, Android App, Marketplace, YouTube Channel or Amazon Store.",
+        "properties": [
+          {
+            "name": "id",
+            "description": "Primary key. Normalized asset type name.",
+            "property_type": "keyword",
+            "required": true
+          },
+          {
+            "name": "name",
+            "description": "Asset type name.",
+            "property_type": "keyword",
+            "required": true
+          }
+        ]
+      },
+      {
+        "name": "Category",
+        "description": "Flippa industry or category assigned to the listing.",
+        "properties": [
+          {
+            "name": "id",
+            "description": "Primary key. Normalized category name.",
+            "property_type": "keyword",
+            "required": true
+          },
+          {
+            "name": "name",
+            "description": "Category name.",
+            "property_type": "keyword",
+            "required": true
+          }
+        ]
+      },
+      {
+        "name": "Monetization",
+        "description": "Revenue model used by the asset.",
+        "properties": [
+          {
+            "name": "id",
+            "description": "Primary key. Normalized monetization name.",
+            "property_type": "keyword",
+            "required": true
+          },
+          {
+            "name": "name",
+            "description": "Monetization model name.",
+            "property_type": "keyword",
+            "required": true
+          }
+        ]
+      },
+      {
+        "name": "Country",
+        "description": "Country or seller/listing location as presented by Flippa.",
+        "properties": [
+          {
+            "name": "id",
+            "description": "Primary key. Normalized country or location name.",
+            "property_type": "keyword",
+            "required": true
+          },
+          {
+            "name": "name",
+            "description": "Country or location label.",
+            "property_type": "keyword",
+            "required": true
+          }
+        ]
+      },
+      {
+        "name": "Integration",
+        "description": "External platform or data provider connected to a listing, such as Stripe, Google Analytics, Google AdSense or Amazon Seller.",
+        "properties": [
+          {
+            "name": "id",
+            "description": "Primary key. Integration provider code.",
+            "property_type": "keyword",
+            "required": true
+          },
+          {
+            "name": "provider",
+            "description": "Provider name.",
+            "property_type": "keyword",
+            "required": true
+          },
+          {
+            "name": "icon_url",
+            "description": "Provider icon URL.",
+            "property_type": "keyword",
+            "required": false
+          },
+          {
+            "name": "tooltip_text",
+            "description": "Tooltip text shown for the integration.",
+            "property_type": "keyword",
+            "required": false
+          }
+        ]
+      },
+      {
+        "name": "Verification",
+        "description": "Verification signal attached to a listing.",
+        "properties": [
+          {
+            "name": "id",
+            "description": "Primary key. Verification provider or type.",
+            "property_type": "keyword",
+            "required": true
+          },
+          {
+            "name": "provider",
+            "description": "Verification provider, such as verified-listing, stripe or google_analytics.",
+            "property_type": "keyword",
+            "required": true
+          },
+          {
+            "name": "tooltip_text",
+            "description": "Explanation of verification.",
+            "property_type": "keyword",
+            "required": false
+          },
+          {
+            "name": "icon_url",
+            "description": "Verification icon URL.",
+            "property_type": "keyword",
+            "required": false
+          }
+        ]
+      },
+      {
+        "name": "Badge",
+        "description": "Visual badge or label attached to a listing.",
+        "properties": [
+          {
+            "name": "id",
+            "description": "Primary key. Normalized badge text and variant.",
+            "property_type": "keyword",
+            "required": true
+          },
+          {
+            "name": "text",
+            "description": "Badge text.",
+            "property_type": "keyword",
+            "required": true
+          },
+          {
+            "name": "variant",
+            "description": "Badge style or semantic variant.",
+            "property_type": "keyword",
+            "required": false
+          },
+          {
+            "name": "icon",
+            "description": "Badge icon identifier or URL.",
+            "property_type": "keyword",
+            "required": false
+          }
+        ]
+      },
+      {
+        "name": "KeyData",
+        "description": "Label-value fact displayed in Flippa's key data block.",
+        "properties": [
+          {
+            "name": "id",
+            "description": "Primary key. Listing ID plus normalized label.",
+            "property_type": "keyword",
+            "required": true
+          },
+          {
+            "name": "label",
+            "description": "Displayed key data label, such as Type, Industry, Monetization, Site Age or Net Profit.",
+            "property_type": "keyword",
+            "required": true
+          },
+          {
+            "name": "value",
+            "description": "Displayed key data value.",
+            "property_type": "keyword",
+            "required": true
+          }
+        ]
+      },
+      {
+        "name": "RiskFlag",
+        "description": "Derived analytical risk flag used for due diligence and ranking.",
+        "properties": [
+          {
+            "name": "id",
+            "description": "Primary key. Normalized risk flag name.",
+            "property_type": "keyword",
+            "required": true
+          },
+          {
+            "name": "name",
+            "description": "Risk flag name.",
+            "property_type": "keyword",
+            "required": true
+          },
+          {
+            "name": "description",
+            "description": "Risk flag explanation.",
+            "property_type": "keyword",
+            "required": false
+          },
+          {
+            "name": "severity",
+            "description": "Risk severity score or level.",
+            "property_type": "number",
+            "required": false
+          }
+        ]
+      },
+      {
+        "name": "OpportunitySignal",
+        "description": "Derived positive investment signal used for deal sourcing.",
+        "properties": [
+          {
+            "name": "id",
+            "description": "Primary key. Normalized opportunity signal name.",
+            "property_type": "keyword",
+            "required": true
+          },
+          {
+            "name": "name",
+            "description": "Opportunity signal name.",
+            "property_type": "keyword",
+            "required": true
+          },
+          {
+            "name": "description",
+            "description": "Explanation of the positive signal.",
+            "property_type": "keyword",
+            "required": false
+          },
+          {
+            "name": "weight",
+            "description": "Signal weight for ranking.",
+            "property_type": "number",
+            "required": false
+          }
+        ]
+      }
+    ],
+    "relation_types": [
+      {
+        "name": "HAS_ASSET_TYPE",
+        "description": "Direction Listing -> AssetType. Connects a Flippa listing to its digital asset type."
+      },
+      {
+        "name": "IN_CATEGORY",
+        "description": "Direction Listing -> Category. Connects a listing to its Flippa industry or category."
+      },
+      {
+        "name": "USES_MONETIZATION",
+        "description": "Direction Listing -> Monetization. Connects a listing to its revenue model."
+      },
+      {
+        "name": "LOCATED_IN",
+        "description": "Direction Listing -> Country. Connects a listing to the country or location shown by Flippa."
+      },
+      {
+        "name": "HAS_INTEGRATION",
+        "description": "Direction Listing -> Integration. Connects a listing to connected external data providers or commerce platforms."
+      },
+      {
+        "name": "HAS_VERIFICATION",
+        "description": "Direction Listing -> Verification. Connects a listing to verification signals such as verified-listing, google_analytics, stripe or shopify."
+      },
+      {
+        "name": "HAS_BADGE",
+        "description": "Direction Listing -> Badge. Connects a listing to visual marketplace badges such as Sponsored, Broker, Super Seller, Managed by Flippa or Editor's Choice."
+      },
+      {
+        "name": "HAS_KEY_DATA",
+        "description": "Direction Listing -> KeyData. Connects a listing to displayed label-value facts from the Flippa key data block."
+      },
+      {
+        "name": "HAS_RISK_FLAG",
+        "description": "Direction Listing -> RiskFlag. Connects a listing to derived due-diligence risk flags."
+      },
+      {
+        "name": "HAS_OPPORTUNITY_SIGNAL",
+        "description": "Direction Listing -> OpportunitySignal. Connects a listing to derived positive sourcing signals."
+      }
+    ]
+  }
+}

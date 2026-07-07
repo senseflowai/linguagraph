@@ -1,0 +1,78 @@
+{
+  "name": "flippa-basic",
+  "graph": "flippa/graph.json",
+  "ontology": "flippa/ontology.json",
+  "questions": "flippa/questions.json",
+  "settings": {
+    "prefix": "E2E_FLIPPA_BASIC",
+    "cleanup_before": true,
+    "cleanup_after": false,
+    "answer_with_llm": true,
+    "judge_with_llm": false,
+    "max_repairs": 1,
+    "llm_base_url": "http://79.117.32.66:50715/v1",
+    "llm_model": "vllm-qwen36",
+    "indexes": [
+      {
+        "label": "Listing",
+        "property": "id"
+      },
+      {
+        "label": "Listing",
+        "property": "price"
+      },
+      {
+        "label": "Listing",
+        "property": "sale_method"
+      },
+      {
+        "label": "Listing",
+        "property": "has_verified_revenue"
+      },
+      {
+        "label": "Listing",
+        "property": "under_offer"
+      },
+      {
+        "label": "Listing",
+        "property": "open_to_offer"
+      },
+      {
+        "label": "AssetType",
+        "property": "id"
+      },
+      {
+        "label": "Category",
+        "property": "id"
+      },
+      {
+        "label": "Monetization",
+        "property": "id"
+      },
+      {
+        "label": "Country",
+        "property": "id"
+      },
+      {
+        "label": "Integration",
+        "property": "provider"
+      },
+      {
+        "label": "Verification",
+        "property": "provider"
+      },
+      {
+        "label": "Badge",
+        "property": "id"
+      },
+      {
+        "label": "RiskFlag",
+        "property": "id"
+      },
+      {
+        "label": "OpportunitySignal",
+        "property": "id"
+      }
+    ]
+  }
+}

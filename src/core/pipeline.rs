@@ -37,6 +37,7 @@ pub struct Pipeline {
     max_depth: u32,
     default_limit: u32,
     ingest_batch_size: usize,
+    embedding_insert_batch_size: usize,
     ontology_catalog_storage: Option<Arc<dyn OntologyCatalogStorage>>,
     /// Registry of [`crate::types::TypeHandler`] instances. Defaults to
     /// an empty registry so plain (untyped) DSL queries don't need any
@@ -157,6 +158,7 @@ impl Pipeline {
             max_depth: config.query.max_traversal_depth,
             default_limit: config.query.default_limit,
             ingest_batch_size: 1000,
+            embedding_insert_batch_size: config.ingest.embedding_insert_batch_size,
             ontology_catalog_storage: None,
             // Default registry contains the built-in scalar parsers.
             // Graph `Text` properties route through `SemanticText`, so
@@ -215,6 +217,16 @@ impl Pipeline {
     /// who know their downstream system has stricter parameter limits.
     pub fn with_ingest_batch_size(mut self, n: usize) -> Self {
         self.ingest_batch_size = n;
+        self
+    }
+
+    /// Override the embedding-insert batch size — the number of rows per
+    /// `libqlink.insert_hybrid` query drained in [`Self::drain_side_effects`].
+    /// Independent of [`Self::with_ingest_batch_size`] because embedding
+    /// inserts (Qdrant upsert + BM25 per row) are much heavier than the
+    /// scalar node/relation MERGEs.
+    pub fn with_embedding_insert_batch_size(mut self, n: usize) -> Self {
+        self.embedding_insert_batch_size = n;
         self
     }
 
@@ -1224,57 +1236,77 @@ impl Pipeline {
             }
         }
 
-        // ── 3. One UNWIND batch per group — single-vector groups first,
-        //    then multivector groups. ──────────────────────────────────
+        // ── 3. UNWIND batches — single-vector groups first, then
+        //    multivector groups. Each group is split into chunks of at
+        //    most `embedding_insert_batch_size` rows so a large bucket
+        //    does not land as a single oversized query that trips the
+        //    Memgraph query timeout: every row drives a MATCH plus a
+        //    `libqlink.insert_hybrid` (Qdrant upsert + BM25) call, so
+        //    thousands of rows in one round-trip blows past the client
+        //    timeout in `MemgraphClient::execute`. ─────────────────────
         let mut batches_run = 0usize;
         let mut rows_inserted = 0usize;
-        let group_total = single_groups.len() + multi_groups.len();
+        let chunk_size = self.embedding_insert_batch_size.max(1);
+        // Total emitted queries across all groups, so the `batch=N/M` log
+        // stays meaningful now that one bucket can span several chunks.
+        let total_chunks: usize = single_groups
+            .values()
+            .map(|g| g.len().div_ceil(chunk_size))
+            .sum::<usize>()
+            + multi_groups
+                .values()
+                .map(|g| g.len().div_ceil(chunk_size))
+                .sum::<usize>();
         let side_effect_started = Instant::now();
         for (_key, group) in single_groups {
-            let batch_started = Instant::now();
-            tracing::info!(
-                target: "linguagraph::pipeline",
-                batch = batches_run + 1,
-                batches = group_total,
-                rows = group.len(),
-                "executing embedding insert batch"
-            );
-            let cypher = handlers::build_embed_insert_batch(&group)
-                .map_err(|e| crate::error::Error::Ingest(IngestError::Type(e.to_string())))?;
-            let _ = self.client.execute(&cypher).await?;
-            batches_run += 1;
-            rows_inserted += group.len();
-            tracing::info!(
-                target: "linguagraph::pipeline",
-                batch = batches_run,
-                batches = group_total,
-                rows = group.len(),
-                elapsed_ms = batch_started.elapsed().as_millis() as u64,
-                "finished embedding insert batch"
-            );
+            for chunk in group.chunks(chunk_size) {
+                let batch_started = Instant::now();
+                tracing::info!(
+                    target: "linguagraph::pipeline",
+                    batch = batches_run + 1,
+                    batches = total_chunks,
+                    rows = chunk.len(),
+                    "executing embedding insert batch"
+                );
+                let cypher = handlers::build_embed_insert_batch(chunk)
+                    .map_err(|e| crate::error::Error::Ingest(IngestError::Type(e.to_string())))?;
+                let _ = self.client.execute(&cypher).await?;
+                batches_run += 1;
+                rows_inserted += chunk.len();
+                tracing::info!(
+                    target: "linguagraph::pipeline",
+                    batch = batches_run,
+                    batches = total_chunks,
+                    rows = chunk.len(),
+                    elapsed_ms = batch_started.elapsed().as_millis() as u64,
+                    "finished embedding insert batch"
+                );
+            }
         }
         for (_key, group) in multi_groups {
-            let batch_started = Instant::now();
-            tracing::info!(
-                target: "linguagraph::pipeline",
-                batch = batches_run + 1,
-                batches = group_total,
-                rows = group.len(),
-                "executing multivector embedding insert batch"
-            );
-            let cypher = handlers::build_embed_insert_multi_batch(&group)
-                .map_err(|e| crate::error::Error::Ingest(IngestError::Type(e.to_string())))?;
-            let _ = self.client.execute(&cypher).await?;
-            batches_run += 1;
-            rows_inserted += group.len();
-            tracing::info!(
-                target: "linguagraph::pipeline",
-                batch = batches_run,
-                batches = group_total,
-                rows = group.len(),
-                elapsed_ms = batch_started.elapsed().as_millis() as u64,
-                "finished multivector embedding insert batch"
-            );
+            for chunk in group.chunks(chunk_size) {
+                let batch_started = Instant::now();
+                tracing::info!(
+                    target: "linguagraph::pipeline",
+                    batch = batches_run + 1,
+                    batches = total_chunks,
+                    rows = chunk.len(),
+                    "executing multivector embedding insert batch"
+                );
+                let cypher = handlers::build_embed_insert_multi_batch(chunk)
+                    .map_err(|e| crate::error::Error::Ingest(IngestError::Type(e.to_string())))?;
+                let _ = self.client.execute(&cypher).await?;
+                batches_run += 1;
+                rows_inserted += chunk.len();
+                tracing::info!(
+                    target: "linguagraph::pipeline",
+                    batch = batches_run,
+                    batches = total_chunks,
+                    rows = chunk.len(),
+                    elapsed_ms = batch_started.elapsed().as_millis() as u64,
+                    "finished multivector embedding insert batch"
+                );
+            }
         }
         let _ = embedder.dim(); // assert the embedder was usable
         tracing::info!(
@@ -2251,6 +2283,71 @@ mod tests {
         assert_eq!(summary.batches_executed, 1);
         assert_eq!(summary.node_rows, 1);
         assert_eq!(summary.relation_rows, 0);
+    }
+
+    #[tokio::test]
+    async fn drain_side_effects_chunks_embedding_inserts() {
+        // A bucket larger than `embedding_insert_batch_size` must be split
+        // across several `libqlink.insert_hybrid` queries instead of one
+        // oversized round-trip — the un-chunked single query is what
+        // tripped the Memgraph query timeout on large (>50k) ingests.
+        use crate::config::TypeConfig;
+        use crate::embeddings::MockEmbedder;
+        use crate::types::handlers::register_default;
+        use std::sync::Arc as StdArc;
+
+        let mut cfg = cfg();
+        cfg.types.insert(
+            "SemanticText".into(),
+            TypeConfig {
+                collection: Some("semantic_text".into()),
+                embedding_dim: Some(8),
+                ..TypeConfig::default()
+            },
+        );
+        let embedder: StdArc<dyn crate::embeddings::Embedder> = StdArc::new(MockEmbedder::new(8));
+        let mock = Arc::new(MockClient::new());
+        let pipeline = Pipeline::new(mock.clone(), &cfg)
+            .with_registry(StdArc::new(
+                register_default(&cfg, embedder.clone()).unwrap(),
+            ))
+            .with_embedder(embedder)
+            .with_embedding_insert_batch_size(2);
+
+        // Five same-label entities, each with a Text property → five
+        // `_canonical` embeddings in a single bucket.
+        let mut graph = GraphBuilder::new();
+        for i in 0..5 {
+            graph
+                .entity("Doc")
+                .strict_primary_key("id")
+                .property("id", PropertyType::Keyword, format!("d{i}"))
+                .property("body", PropertyType::Text, format!("body text {i}"))
+                .add();
+        }
+
+        let summary = pipeline.ingest(&graph.build()).await.unwrap();
+
+        // One bucket of 5 rows, chunk size 2 → ceil(5/2) = 3 queries.
+        assert_eq!(summary.side_effect_batches, 3);
+        assert_eq!(summary.side_effect_rows, 5);
+
+        let captured = mock.captured.lock().unwrap();
+        let inserts: Vec<_> = captured
+            .iter()
+            .filter(|c| c.text.contains("libqlink.insert_hybrid"))
+            .collect();
+        assert_eq!(inserts.len(), 3, "expected 3 chunked qlink inserts");
+        for insert in &inserts {
+            let rows = match insert.params.get("rows") {
+                Some(Literal::List(items)) => items.len(),
+                other => panic!("qlink insert missing $rows list: {other:?}"),
+            };
+            assert!(
+                rows <= 2,
+                "each chunk must respect embedding_insert_batch_size=2; got {rows}"
+            );
+        }
     }
 
     #[tokio::test]

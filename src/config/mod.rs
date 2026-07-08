@@ -33,11 +33,32 @@ pub struct Config {
 }
 
 /// Ingestion-time configuration (`[ingest]` in TOML).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IngestConfig {
     /// Soft primary-key similarity-merge resolver settings.
     #[serde(default)]
     pub soft_merge: SoftMergeConfig,
+    /// Rows per embedding-insert query in `drain_side_effects`. Each row
+    /// drives a `MATCH` plus a `libqlink.insert_hybrid` call (a Qdrant
+    /// upsert + BM25 build), so embedding inserts are far heavier than
+    /// the scalar node/relation MERGEs and need their own, smaller cap to
+    /// stay under `query_timeout_secs`. Tuned independently of the
+    /// node/relation batch size.
+    #[serde(default = "default_embedding_insert_batch_size")]
+    pub embedding_insert_batch_size: usize,
+}
+
+impl Default for IngestConfig {
+    fn default() -> Self {
+        Self {
+            soft_merge: SoftMergeConfig::default(),
+            embedding_insert_batch_size: default_embedding_insert_batch_size(),
+        }
+    }
+}
+
+fn default_embedding_insert_batch_size() -> usize {
+    500
 }
 
 /// Configuration for the soft-merge resolver that runs before every

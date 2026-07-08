@@ -929,6 +929,13 @@ api_key_env = "OPENAI_API_KEY"
 max_traversal_depth = 6
 default_limit = 100
 
+[ingest]
+# Rows per embedding-insert query when draining side effects. Each row runs a
+# MATCH plus a `libqlink.insert_hybrid` (Qdrant upsert + BM25), so this is
+# capped well below the node/relation batch size to keep large ingests under
+# `query_timeout_secs`.
+embedding_insert_batch_size = 500
+
 [ingest.soft_merge]
 # See "Soft-merge: deduplicating entities by similarity" for the full
 # semantics. Defaults bias toward false-split-over-false-merge.

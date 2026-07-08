@@ -93,6 +93,16 @@ pub struct Property {
     /// Description resolved from an `OntologyCatalog`.
     #[serde(default)]
     pub description: Option<String>,
+    /// Closed set of allowed values for an enum-like keyword field, in
+    /// canonical (lowercase) form. Populated by introspection when the
+    /// field's cardinality is low enough (see
+    /// [`IntrospectOptions::enum_cardinality_cap`](crate::db::IntrospectOptions)),
+    /// and/or declared in an ontology `PropertySpec`. Empty for
+    /// high-cardinality fields (ids, codes, VINs) and non-keyword types.
+    /// When non-empty, the prompt renders an `enum` marker on the field
+    /// and lists the values in a dedicated enumerations block.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_values: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

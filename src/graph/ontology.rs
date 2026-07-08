@@ -146,6 +146,13 @@ pub struct PropertySpec {
     pub property_type: OntologyPropertyType,
     #[serde(default)]
     pub required: bool,
+    /// Hand-declared closed vocabulary for an enum-like keyword field, in
+    /// canonical (lowercase) form. Merged with the value set discovered
+    /// by live introspection during schema enrichment (see
+    /// [`OntologyCatalog::enrich`]). Empty when the field is free-form or
+    /// its vocabulary is left to introspection.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_values: Vec<String>,
 }
 
 /// One allowed entity type the LLM may emit.
@@ -538,9 +545,21 @@ impl OntologyCatalog {
             node.domain = domain;
             node.description = spec.and_then(|s| s.description.clone());
             for prop in &mut node.properties {
-                prop.description = spec
-                    .and_then(|s| s.property(&prop.name))
-                    .and_then(|p| p.description.clone());
+                let declared = spec.and_then(|s| s.property(&prop.name));
+                prop.description = declared.and_then(|p| p.description.clone());
+                // Merge any hand-declared enum vocabulary with the set
+                // discovered by introspection: union, canonicalised to
+                // lowercase, sorted for determinism.
+                if let Some(declared_values) = declared
+                    .map(|p| &p.allowed_values)
+                    .filter(|v| !v.is_empty())
+                {
+                    for v in declared_values {
+                        prop.allowed_values.push(v.to_lowercase());
+                    }
+                    prop.allowed_values.sort();
+                    prop.allowed_values.dedup();
+                }
             }
         }
         for rel in &mut schema.relationships {
@@ -698,12 +717,14 @@ mod tests {
                     description: None,
                     property_type: OntologyPropertyType::Keyword,
                     required: true,
+                    allowed_values: Vec::new(),
                 },
                 PropertySpec {
                     name: "age".to_string(),
                     description: Some("Age in years.".to_string()),
                     property_type: OntologyPropertyType::Number,
                     required: false,
+                    allowed_values: Vec::new(),
                 },
             ],
             embedding: None,
@@ -732,6 +753,64 @@ mod tests {
         let err =
             OntologyCatalog::load_from_path(Path::new("/nonexistent/ontologies.json")).unwrap_err();
         assert!(matches!(err, OntologyError::NotFound(_)));
+    }
+
+    #[test]
+    fn enrich_merges_declared_and_introspected_allowed_values() {
+        use crate::prompt::{NodeKind, Property, PropertyType};
+
+        let mut cat = OntologyCatalog::default();
+        cat.insert(
+            "shop",
+            DomainOntology {
+                entity_types: vec![EntityTypeSpec {
+                    name: "Order".into(),
+                    description: Some("A customer order".into()),
+                    properties: vec![PropertySpec {
+                        name: "status".into(),
+                        description: Some("lifecycle state".into()),
+                        property_type: OntologyPropertyType::Keyword,
+                        required: false,
+                        // Hand-declared value present only in the ontology.
+                        allowed_values: vec!["Refunded".into()],
+                    }],
+                    embedding: None,
+                }],
+                relation_types: vec![],
+            },
+        );
+
+        let mut schema = GraphSchema {
+            nodes: vec![NodeKind {
+                label: "Order".into(),
+                domain: None,
+                extra_labels: Vec::new(),
+                scopes: Vec::new(),
+                description: None,
+                properties: vec![Property {
+                    name: "status".into(),
+                    ty: PropertyType::String,
+                    description: None,
+                    // Introspected values.
+                    allowed_values: vec!["pending".into(), "completed".into()],
+                }],
+            }],
+            relationships: vec![],
+        };
+
+        cat.enrich(&mut schema);
+
+        let prop = &schema.nodes[0].properties[0];
+        // Description resolved and the two sources unioned + lowercased + sorted.
+        assert_eq!(prop.description.as_deref(), Some("lifecycle state"));
+        assert_eq!(
+            prop.allowed_values,
+            vec![
+                "completed".to_string(),
+                "pending".to_string(),
+                "refunded".to_string()
+            ]
+        );
     }
 
     #[test]

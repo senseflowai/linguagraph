@@ -129,6 +129,20 @@ impl TypeHandler for KeywordHandler {
         Self::check_value_shape(pred.op, &pred.value)?;
 
         let lhs = super::render_property(&pred.field);
+        // Keyword values are short categorical strings (statuses, codes,
+        // enum labels) whose casing is not semantically meaningful. We
+        // match them case-insensitively by wrapping both sides in
+        // `toLower(...)` for the operators where that preserves intent.
+        //
+        // Left untouched:
+        //   * `Matches` (=~) — case is governed by regex flags.
+        //   * ordering (`Gt`/`Gte`/`Lt`/`Lte`) — lexicographic order under
+        //     `toLower` would change the semantics, and enums don't use it.
+        //
+        // Caveat: `toLower(n.field)` can prevent Memgraph from using an
+        // index on `field`. Acceptable for low-cardinality enums; if a
+        // hot high-cardinality path ever needs this, normalise on ingest
+        // and match the normalised value instead.
         let op = match pred.op {
             TypedOp::Eq => "=",
             TypedOp::Neq => "<>",
@@ -149,7 +163,7 @@ impl TypeHandler for KeywordHandler {
                 }
                 let clauses = items
                     .iter()
-                    .map(|item| format!("{lhs} = {}", ctx.bind(item.clone())))
+                    .map(|item| format!("toLower({lhs}) = toLower({})", ctx.bind(item.clone())))
                     .collect::<Vec<_>>()
                     .join(" OR ");
                 ctx.set_where(format!("({clauses})"));
@@ -167,7 +181,21 @@ impl TypeHandler for KeywordHandler {
             }
         };
         let placeholder = ctx.bind(pred.value.clone());
-        ctx.set_where(format!("{lhs} {op} {placeholder}"));
+        // Ordering and regex keep verbatim casing; equality, inequality
+        // and substring ops fold case on both operands.
+        let case_insensitive = matches!(
+            pred.op,
+            TypedOp::Eq
+                | TypedOp::Neq
+                | TypedOp::Contains
+                | TypedOp::StartsWith
+                | TypedOp::EndsWith
+        );
+        if case_insensitive {
+            ctx.set_where(format!("toLower({lhs}) {op} toLower({placeholder})"));
+        } else {
+            ctx.set_where(format!("{lhs} {op} {placeholder}"));
+        }
         Ok(())
     }
 }
@@ -251,8 +279,12 @@ mod tests {
         let mut emit_ctx = EmitCtx::new(&mut contribution, &mut binder);
         handler.emit(&mut emit_ctx, &pred).unwrap();
 
-        assert_eq!(contribution.where_inline.as_deref(), Some("c.vin = $p0"));
-        // Stored verbatim — no normalization.
+        assert_eq!(
+            contribution.where_inline.as_deref(),
+            Some("toLower(c.vin) = toLower($p0)")
+        );
+        // Stored verbatim — no normalization; casing is folded at match
+        // time via toLower, not by mutating the bound value.
         assert_eq!(
             binder.params.get("p0"),
             Some(&Literal::String("WBA 8G-510/60K587560".into()))
@@ -262,15 +294,21 @@ mod tests {
     #[test]
     fn keyword_emits_contains_verbatim() {
         let (where_inline, params) = emit_pred(TypedOp::Contains, Literal::String("BMW X".into()));
-        assert_eq!(where_inline.as_deref(), Some("c.name CONTAINS $p0"));
+        assert_eq!(
+            where_inline.as_deref(),
+            Some("toLower(c.name) CONTAINS toLower($p0)")
+        );
         assert_eq!(params.get("p0"), Some(&Literal::String("BMW X".into())));
     }
 
     #[test]
     fn keyword_emits_starts_with_and_ends_with() {
         for (op, expected) in [
-            (TypedOp::StartsWith, "c.name STARTS WITH $p0"),
-            (TypedOp::EndsWith, "c.name ENDS WITH $p0"),
+            (
+                TypedOp::StartsWith,
+                "toLower(c.name) STARTS WITH toLower($p0)",
+            ),
+            (TypedOp::EndsWith, "toLower(c.name) ENDS WITH toLower($p0)"),
         ] {
             let (where_inline, params) = emit_pred(op, Literal::String("BMW X".into()));
             assert_eq!(where_inline.as_deref(), Some(expected));
@@ -292,6 +330,15 @@ mod tests {
     }
 
     #[test]
+    fn keyword_emits_case_insensitive_eq_and_neq() {
+        let (eq, _) = emit_pred(TypedOp::Eq, Literal::String("Completed".into()));
+        assert_eq!(eq.as_deref(), Some("toLower(c.name) = toLower($p0)"));
+
+        let (neq, _) = emit_pred(TypedOp::Neq, Literal::String("Completed".into()));
+        assert_eq!(neq.as_deref(), Some("toLower(c.name) <> toLower($p0)"));
+    }
+
+    #[test]
     fn keyword_emits_regex_match() {
         let (where_inline, params) =
             emit_pred(TypedOp::Matches, Literal::String("(?i)bmw.*".into()));
@@ -310,16 +357,10 @@ mod tests {
         );
         assert_eq!(
             where_inline.as_deref(),
-            Some("(c.name = $p0 OR c.name = $p1)")
+            Some("(toLower(c.name) = toLower($p0) OR toLower(c.name) = toLower($p1))")
         );
-        assert_eq!(
-            params.get("p0"),
-            Some(&Literal::String("BMW X".into()))
-        );
-        assert_eq!(
-            params.get("p1"),
-            Some(&Literal::String("Audi-Q7".into()))
-        );
+        assert_eq!(params.get("p0"), Some(&Literal::String("BMW X".into())));
+        assert_eq!(params.get("p1"), Some(&Literal::String("Audi-Q7".into())));
     }
 
     #[test]

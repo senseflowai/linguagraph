@@ -519,6 +519,7 @@ async fn entity_type_search_returns_unique_types_with_domains_and_scopes() {
                         description: None,
                         property_type: OntologyPropertyType::Text,
                         required: false,
+                        allowed_values: Vec::new(),
                     }],
                     embedding: None,
                 },

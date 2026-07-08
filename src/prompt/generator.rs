@@ -109,6 +109,7 @@ fn render_prompt(schema: &GraphSchema, opts: &PromptOptions) -> String {
         &schema.relationships,
         opts.ontology_catalog.as_ref(),
     );
+    write_enumerations(&mut out, &schema.nodes, opts.ontology_catalog.as_ref());
 
     if let Some(reg) = &opts.type_registry {
         write_field_types(&mut out, reg);
@@ -332,6 +333,11 @@ fn render_props(
             if let Some(ty) = property_spec.and_then(field_type_marker) {
                 base = format!("{base} @{ty}");
             }
+            // Compact reference marker: the actual value list lives in the
+            // dedicated enumerations block, keeping the node schema terse.
+            if !effective_allowed_values(p, property_spec).is_empty() {
+                base = format!("{base} enum");
+            }
             let desc = p
                 .description
                 .as_deref()
@@ -347,6 +353,75 @@ fn render_props(
         return String::new();
     }
     format!(" {{ {} }}", inner.join(", "))
+}
+
+/// Effective enum vocabulary for a property: the union of the value set
+/// discovered by introspection (carried on the [`Property`]) and any
+/// hand-declared vocabulary on the ontology [`PropertySpec`]. Canonical
+/// (lowercase), sorted, deduped. Empty ⇒ the field is not enum-like and
+/// gets neither the `enum` marker nor an entry in the enumerations block.
+fn effective_allowed_values(prop: &Property, spec: Option<&PropertySpec>) -> Vec<String> {
+    let mut out: Vec<String> = prop
+        .allowed_values
+        .iter()
+        .map(|s| s.to_lowercase())
+        .collect();
+    if let Some(spec) = spec {
+        out.extend(spec.allowed_values.iter().map(|s| s.to_lowercase()));
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Render the `# Enum field values` block: one line per enum-like field,
+/// grouped as `Entity.property`, values sorted and `|`-separated.
+///
+/// Kept separate from the node schema so a field with dozens of allowed
+/// values doesn't bloat the entity description — the schema only carries a
+/// compact `enum` marker, and the full vocabulary lives here.
+fn write_enumerations(out: &mut String, nodes: &[NodeKind], catalog: Option<&OntologyCatalog>) {
+    // Collect `(Entity.property, values)` for every enum-like field.
+    let mut entries: Vec<(String, Vec<String>)> = Vec::new();
+    for node in nodes {
+        for prop in &node.properties {
+            if SCHEMA_HIDDEN_PROPS.contains(&prop.name.as_str()) {
+                continue;
+            }
+            let spec: Option<&PropertySpec> = catalog.and_then(|c| match node.domain.as_deref() {
+                Some(d) => c.get_property_in(d, &node.label, &prop.name),
+                None => c.get_property(&node.label, &prop.name),
+            });
+            let values = effective_allowed_values(prop, spec);
+            if !values.is_empty() {
+                entries.push((format!("{}.{}", node.label, prop.name), values));
+            }
+        }
+    }
+    if entries.is_empty() {
+        return;
+    }
+    // Deterministic order regardless of node/property iteration order.
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+    out.push_str("\n# Enum field values\n");
+    out.push_str(
+        "Values are given in canonical (lowercase) form; matching is \
+         case-insensitive.\n\
+         For any field marked `enum`, use ONLY a value from its list below.\n\
+         If the user's wording doesn't match verbatim, pick the closest \
+         value from the list — do not invent a new one.\n",
+    );
+    // Align the `Entity.property:` labels for readability (+1 for the colon).
+    let width = entries.iter().map(|(k, _)| k.len()).max().unwrap_or(0) + 1;
+    for (key, values) in &entries {
+        let _ = writeln!(
+            out,
+            "  {:<width$} {}",
+            format!("{key}:"),
+            values.join(" | ")
+        );
+    }
 }
 
 fn field_type_marker(spec: &PropertySpec) -> Option<&'static str> {
@@ -473,11 +548,13 @@ mod tests {
                         name: "name".into(),
                         ty: PT::String,
                         description: None,
+                        allowed_values: Vec::new(),
                     },
                     Property {
                         name: "age".into(),
                         ty: PT::Int,
                         description: None,
+                        allowed_values: Vec::new(),
                     },
                 ],
             }],
@@ -511,11 +588,13 @@ mod tests {
                         name: "id".into(),
                         ty: PT::String,
                         description: None,
+                        allowed_values: Vec::new(),
                     },
                     Property {
                         name: "state".into(),
                         ty: PT::String,
                         description: None,
+                        allowed_values: Vec::new(),
                     },
                 ],
             }],
@@ -533,6 +612,7 @@ mod tests {
                         description: Some("active or inactive".into()),
                         property_type: crate::graph::OntologyPropertyType::Keyword,
                         required: false,
+                        allowed_values: Vec::new(),
                     }],
                     embedding: None,
                 }],
@@ -703,6 +783,78 @@ mod tests {
     }
 
     #[test]
+    fn enum_fields_get_marker_and_dedicated_values_block() {
+        let schema = GraphSchema {
+            nodes: vec![NodeKind {
+                label: "Order".into(),
+                domain: None,
+                extra_labels: Vec::new(),
+                scopes: Vec::new(),
+                description: None,
+                properties: vec![
+                    Property {
+                        name: "status".into(),
+                        ty: PT::String,
+                        description: None,
+                        allowed_values: vec![
+                            "pending".into(),
+                            "completed".into(),
+                            "cancelled".into(),
+                        ],
+                    },
+                    // High-cardinality field: no dictionary, no marker.
+                    Property {
+                        name: "vin".into(),
+                        ty: PT::String,
+                        description: None,
+                        allowed_values: Vec::new(),
+                    },
+                ],
+            }],
+            relationships: vec![],
+        };
+        let prompt = generate_system_prompt(
+            &schema,
+            &PromptOptions {
+                include_examples: false,
+                ..PromptOptions::default()
+            },
+        );
+
+        // Node schema carries a compact marker but not the values.
+        assert!(prompt.contains("status: keyword enum"));
+        assert!(!prompt.contains("vin: keyword enum"));
+        // Dedicated block lists the sorted, `|`-separated vocabulary.
+        assert!(prompt.contains("# Enum field values"));
+        assert!(prompt.contains("Order.status:"));
+        assert!(prompt.contains("cancelled | completed | pending"));
+        // The high-cardinality field must not appear in the block.
+        assert!(!prompt.contains("Order.vin"));
+    }
+
+    #[test]
+    fn no_enum_block_when_no_enum_fields() {
+        let schema = GraphSchema {
+            nodes: vec![NodeKind {
+                label: "Person".into(),
+                domain: None,
+                extra_labels: Vec::new(),
+                scopes: Vec::new(),
+                description: None,
+                properties: vec![Property {
+                    name: "name".into(),
+                    ty: PT::String,
+                    description: None,
+                    allowed_values: Vec::new(),
+                }],
+            }],
+            relationships: vec![],
+        };
+        let prompt = generate_system_prompt(&schema, &PromptOptions::default());
+        assert!(!prompt.contains("# Enum field values"));
+    }
+
+    #[test]
     fn system_properties_are_excluded_from_schema_prompt() {
         let schema = GraphSchema {
             nodes: vec![NodeKind {
@@ -716,32 +868,38 @@ mod tests {
                         name: "entity_id".into(),
                         ty: PT::String,
                         description: None,
+                        allowed_values: Vec::new(),
                     },
                     Property {
                         name: "primary_key".into(),
                         ty: PT::String,
                         description: None,
+                        allowed_values: Vec::new(),
                     },
                     Property {
                         name: "_canonical".into(),
                         ty: PT::String,
                         description: None,
+                        allowed_values: Vec::new(),
                     },
                     Property {
                         name: "title".into(),
                         ty: PT::String,
                         description: None,
+                        allowed_values: Vec::new(),
                     },
                     Property {
                         name: "created_at".into(),
                         ty: PT::Datetime,
                         description: None,
+                        allowed_values: Vec::new(),
                     },
                     // Generic "id" field from a user-defined schema is NOT hidden.
                     Property {
                         name: "doc_number".into(),
                         ty: PT::String,
                         description: None,
+                        allowed_values: Vec::new(),
                     },
                 ],
             }],
@@ -776,11 +934,13 @@ mod tests {
                         name: "_canonical".into(),
                         ty: PT::String,
                         description: Some("system merge key".into()),
+                        allowed_values: Vec::new(),
                     },
                     Property {
                         name: "name".into(),
                         ty: PT::String,
                         description: None,
+                        allowed_values: Vec::new(),
                     },
                 ],
             }],

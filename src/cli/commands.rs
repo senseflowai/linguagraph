@@ -737,9 +737,14 @@ async fn cmd_schema(
     let cfg = config::load(config_path).await?;
     let client = MemgraphClient::connect(&cfg.database).await?;
 
-    let schema =
-        introspect::introspect_schema(&client, introspect::IntrospectOptions { sample_size })
-            .await?;
+    let schema = introspect::introspect_schema(
+        &client,
+        introspect::IntrospectOptions {
+            sample_size,
+            ..Default::default()
+        },
+    )
+    .await?;
 
     let body = match format {
         SchemaFormat::Json => serde_json::to_string_pretty(&schema)?,

@@ -380,7 +380,9 @@ async fn semantic_search_delegates_rerank_to_qlink_in_single_query() {
     // The one query is qlink's reranked hybrid search — recall + rerank in a
     // single CALL, so there is no separate precomputed-hits UNWIND stage.
     assert!(
-        captured[0].text.contains("libqlink.search_hybrid_reranked("),
+        captured[0]
+            .text
+            .contains("libqlink.search_hybrid_reranked("),
         "the single query should be qlink's reranked hybrid search; got:\n{}",
         captured[0].text
     );
@@ -635,6 +637,7 @@ fn prop(
         description: description.map(str::to_string),
         property_type,
         required: false,
+        allowed_values: Vec::new(),
     }
 }
 
@@ -856,8 +859,13 @@ fn keyword_property_from_ontology_catalog_auto_resolves_to_keyword_handler() {
     )
     .unwrap();
     let cypher = pipeline.compile(dsl_query).unwrap();
-    assert!(cypher.text.contains("WHERE c.industry = $p0"));
-    // Keyword stores/compares the value verbatim — no normalization.
+    // Keyword equality folds case on both operands so the LLM needn't
+    // guess the exact stored casing.
+    assert!(cypher
+        .text
+        .contains("WHERE toLower(c.industry) = toLower($p0)"));
+    // Keyword stores/compares the value verbatim — no normalization of
+    // the bound value itself (case is folded at match time via toLower).
     assert_eq!(
         cypher.params.get("p0"),
         Some(&Literal::String(" Fin-Tech ".into()))
@@ -991,11 +999,13 @@ fn prompt_surfaces_field_type_marker() {
                     name: "id".into(),
                     ty: PropertyType::String,
                     description: None,
+                    allowed_values: Vec::new(),
                 },
                 Property {
                     name: "name".into(),
                     ty: PropertyType::String,
                     description: None,
+                    allowed_values: Vec::new(),
                 },
             ],
         }],

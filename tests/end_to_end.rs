@@ -510,6 +510,8 @@ async fn entity_type_search_returns_unique_types_with_domains_and_scopes() {
     catalog.insert(
         "legal",
         DomainOntology {
+            name: None,
+            description: None,
             entity_types: vec![
                 EntityTypeSpec {
                     name: "Person".into(),
@@ -526,6 +528,7 @@ async fn entity_type_search_returns_unique_types_with_domains_and_scopes() {
                 EntityTypeSpec::with_description("Company", "a legal entity"),
             ],
             relation_types: vec![],
+            embedding: None,
         },
     );
 

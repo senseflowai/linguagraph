@@ -7,7 +7,6 @@ use std::time::Instant;
 use crate::ast::query::Literal;
 use crate::ast::{query::InsertQuery, query::ReadQuery};
 use crate::builder::{self, CypherQuery};
-use crate::resolve;
 use crate::config::{Config, SoftMergeConfig};
 use crate::db::{GraphClient, QueryResult, Row, Value as DbValue};
 use crate::dsl::{Direction as DslDirection, DslQuery, TraversalQuery};
@@ -15,6 +14,7 @@ use crate::embeddings::{SharedEmbedder, SharedReranker};
 use crate::error::Result;
 use crate::graph::{EntityTypeMatch, Graph, OntologyCatalog, OntologyCatalogStorage};
 use crate::ingest::{self, soft_merge, DeletePlan, DiscoveredNodes, IngestError, PlannerOptions};
+use crate::resolve;
 use crate::types::handlers::semantic_text::{with_prefix_index, DEFAULT_RERANKER_THRESHOLD};
 use crate::types::{handlers, SharedRegistry, SideEffect, SideEffectQueue};
 
@@ -322,9 +322,10 @@ impl Pipeline {
     }
 
     /// Fetch the live graph schema from the underlying client and, when
-    /// an [`OntologyCatalog`] snapshot is loaded, enrich every node and
-    /// relationship with descriptions (and domain labels resolved from
-    /// the Cypher labels the planner stamps at ingest time).
+    /// an [`OntologyCatalog`] snapshot is loaded, project the live schema
+    /// onto it: keep only ontology-declared nodes, properties and
+    /// relationships, then fill descriptions and domain labels resolved
+    /// from the Cypher labels the planner stamps at ingest time.
     ///
     /// Convenience pass-through to [`GraphClient::schema`] so callers
     /// can drive [`crate::prompt::generate_system_prompt`] without
@@ -341,7 +342,7 @@ impl Pipeline {
             .await?
             .filter_node_labels_containing(filter);
         if let Some(catalog) = self.ontology_catalog() {
-            catalog.enrich(&mut schema);
+            OntologyCatalog::project_schema(&mut schema, catalog.all_domains());
         }
         Ok(schema)
     }
@@ -851,18 +852,18 @@ impl Pipeline {
 
         // ── Catalog channel ─────────────────────────────────────────
         if q.include_catalog_signal {
-            if let Some(catalog) = catalog {
-                match catalog.find(&q.text, q.catalog_threshold, embedder.as_ref(), None, 0.0) {
-                    Ok(catalog_hits) => merge_catalog_signal(&mut matches, catalog_hits),
-                    Err(err) => {
-                        tracing::debug!(
-                            target: "linguagraph::entity_type_search",
-                            error = %err,
-                            "catalog signal unavailable"
-                        );
-                    }
-                }
-            }
+            // if let Some(catalog) = catalog {
+            //     match catalog.find(&q.text, q.catalog_threshold, embedder.as_ref(), None, 0.0) {
+            //         Ok(catalog_hits) => merge_catalog_signal(&mut matches, catalog_hits),
+            //         Err(err) => {
+            //             tracing::debug!(
+            //                 target: "linguagraph::entity_type_search",
+            //                 error = %err,
+            //                 "catalog signal unavailable"
+            //             );
+            //         }
+            //     }
+            // }
         }
 
         // ── Neighbour roll-up ──────────────────────────────────────

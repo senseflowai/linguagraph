@@ -915,10 +915,7 @@ mod tests {
         assert_eq!(alice.primary_key, Some(PrimaryKey::Strict("id".into())));
         assert_eq!(alice.properties["name"].property_type, PropertyType::Text);
         assert_eq!(alice.properties["name"].value, json!("Alice"));
-        assert_eq!(
-            alice.properties["active"].property_type,
-            PropertyType::Bool
-        );
+        assert_eq!(alice.properties["active"].property_type, PropertyType::Bool);
         assert_eq!(alice.properties["active"].value, json!(true));
 
         let acme = &graph.entities()[1];

@@ -12,7 +12,7 @@ mod ontology_suggest;
 mod schema;
 
 pub use generator::{
-    generate_query_prompt, generate_system_prompt, select_query_schema, PromptOptions,
+    generate_system_prompt, PromptOptions,
     PromptSchemaSelection,
 };
 pub use ontology_suggest::render_schema_suggest_prompt;

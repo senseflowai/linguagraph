@@ -145,6 +145,8 @@ mod tests {
 
     fn sample_ontology() -> DomainOntology {
         DomainOntology {
+            name: None,
+            description: None,
             entity_types: vec![
                 EntityTypeSpec {
                     name: "Person".to_string(),
@@ -161,6 +163,7 @@ mod tests {
                 EntityTypeSpec::new("Organization"),
             ],
             relation_types: vec![RelationTypeSpec::new("WORKS_FOR")],
+            embedding: None,
         }
     }
 

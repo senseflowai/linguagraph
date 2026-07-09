@@ -1104,40 +1104,40 @@ async fn generate_case_dsl(
     prefix: &str,
     max_repairs: usize,
 ) -> anyhow::Result<DslQuery> {
-    let system = prompt::generate_query_prompt(question, schema, prompt_opts);
-    let mut user = format!(
-        "Question:\n{question}\n\nReturn only one JSON DSL object. Do not wrap it in Markdown."
-    );
-    let mut last_output = String::new();
-    let mut last_error = String::new();
+    // let system = prompt::generate_query_prompt(question, schema, prompt_opts);
+    // let mut user = format!(
+    //     "Question:\n{question}\n\nReturn only one JSON DSL object. Do not wrap it in Markdown."
+    // );
+    // let mut last_output = String::new();
+    // let mut last_error = String::new();
+    //
+    // for attempt in 0..=max_repairs {
+    //     let raw = llm
+    //         .complete(&system, &user)
+    //         .await
+    //         .map_err(|e| anyhow!("LLM DSL generation failed: {e}"))?;
+    //     last_output = raw.clone();
+    //     match extract_json_object(&raw)
+    //         .and_then(|json| serde_json::from_str::<DslQuery>(&json).map_err(|e| e.into()))
+    //         .and_then(|mut dsl| {
+    //             force_prefix(&mut dsl, prefix);
+    //             dsl::parse_str(&serde_json::to_string(&dsl)?).map_err(|e| e.into())
+    //         }) {
+    //         Ok(dsl) => return Ok(dsl),
+    //         Err(err) => {
+    //             last_error = err.to_string();
+    //             if attempt < max_repairs {
+    //                 user = format!(
+    //                     "Repair the JSON DSL for this question.\n\nQuestion:\n{question}\n\n\
+    //                      Previous output:\n{last_output}\n\nValidation error:\n{last_error}\n\n\
+    //                      Return only the corrected JSON object."
+    //                 );
+    //             }
+    //         }
+    //     }
+    // }
 
-    for attempt in 0..=max_repairs {
-        let raw = llm
-            .complete(&system, &user)
-            .await
-            .map_err(|e| anyhow!("LLM DSL generation failed: {e}"))?;
-        last_output = raw.clone();
-        match extract_json_object(&raw)
-            .and_then(|json| serde_json::from_str::<DslQuery>(&json).map_err(|e| e.into()))
-            .and_then(|mut dsl| {
-                force_prefix(&mut dsl, prefix);
-                dsl::parse_str(&serde_json::to_string(&dsl)?).map_err(|e| e.into())
-            }) {
-            Ok(dsl) => return Ok(dsl),
-            Err(err) => {
-                last_error = err.to_string();
-                if attempt < max_repairs {
-                    user = format!(
-                        "Repair the JSON DSL for this question.\n\nQuestion:\n{question}\n\n\
-                         Previous output:\n{last_output}\n\nValidation error:\n{last_error}\n\n\
-                         Return only the corrected JSON object."
-                    );
-                }
-            }
-        }
-    }
-
-    bail!("could not produce valid DSL: {last_error}; last output: {last_output}")
+    bail!("could not produce valid DSL")
 }
 
 fn force_prefix(dsl: &mut DslQuery, prefix: &str) {

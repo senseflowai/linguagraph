@@ -16,8 +16,9 @@ pub use builtins::{
 };
 pub use canonical::build_canonical_text;
 pub use ontology::{
-    DomainOntology, EntityTypeMatch, EntityTypeSpec, OntologyCatalog, OntologyError,
-    OntologyPropertyType, PropertySpec, RelationTypeSpec,
+    DomainOntology, DomainOntologyMatch, EntityTypeMatch, EntityTypeSpec, OntologyCatalog,
+    OntologyError, OntologyPropertyType, PropertySpec, RelationTypeSpec,
+    DEFAULT_DOMAIN_SELECTION_THRESHOLD, DEFAULT_DOMAIN_SELECTION_TOP_K,
 };
 pub use ontology_storage::{
     InMemoryOntologyCatalogStorage, JsonFileOntologyCatalogStorage, OntologyCatalogStorage,

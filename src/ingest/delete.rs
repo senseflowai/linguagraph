@@ -415,6 +415,8 @@ mod tests {
         catalog.insert(
             "test",
             DomainOntology {
+                name: None,
+                description: None,
                 entity_types: vec![EntityTypeSpec {
                     name: "Person".into(),
                     description: Some("a human".into()),
@@ -437,6 +439,7 @@ mod tests {
                     embedding: None,
                 }],
                 relation_types: vec![],
+                embedding: None,
             },
         );
         let cols = plan("src").qlink_collections(Some(&catalog));

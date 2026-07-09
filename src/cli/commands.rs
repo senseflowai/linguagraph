@@ -658,11 +658,11 @@ async fn cmd_prompt(
     config_path: &std::path::Path,
     query: Option<String>,
     schema_path: Option<PathBuf>,
-    no_examples: bool,
-    no_specification: bool,
+    _no_examples: bool,
+    _no_specification: bool,
 ) -> Result<()> {
     let cfg = load_config_or_default(config_path).await;
-    let schema = match schema_path {
+    let mut schema = match schema_path {
         Some(p) => {
             let raw = fs::read_to_string(&p).await?;
             serde_json::from_str::<GraphSchema>(&raw)?
@@ -673,58 +673,125 @@ async fn cmd_prompt(
             client.schema().await?
         }
     };
-    let (registry, _embedder) = build_registry(&cfg)?;
+
     let ontology_catalog_embedder = if query.is_some() {
         Some(build_ontology_catalog_embedder(&cfg)?)
     } else {
         None
     };
-    let ontology_catalog_reranker = if query.is_some() {
-        Some(build_ontology_catalog_reranker(&cfg)?)
+
+    let store = JsonFileOntologyCatalogStorage::default();
+    let mut catalog = store.load().await?;
+
+    crate::graph::OntologyCatalog::project_schema(&mut schema, catalog.all_domains());
+    let domain_schemas = crate::graph::OntologyCatalog::split_schema_by_domain(&schema);
+
+    let output: Vec<DomainSchemaOutput> = if let (Some(query), Some(embedder)) =
+        (query.as_deref(), ontology_catalog_embedder.as_ref())
+    {
+        let candidate_domains: BTreeSet<String> = domain_schemas.keys().cloned().collect();
+        let matches = catalog
+            .select_domains(
+                query,
+                crate::graph::DEFAULT_DOMAIN_SELECTION_THRESHOLD,
+                crate::graph::DEFAULT_DOMAIN_SELECTION_TOP_K,
+                Some(&candidate_domains),
+                embedder.as_ref(),
+            )
+            .map_err(|e| {
+                crate::error::Error::Ingest(crate::ingest::IngestError::Type(format!(
+                    "ontology domain selection: {e}"
+                )))
+            })?;
+
+        matches
+            .into_iter()
+            .filter_map(|matched| {
+                domain_schemas
+                    .get(matched.domain)
+                    .cloned()
+                    .map(|schema| DomainSchemaOutput {
+                        domain: matched.domain.to_string(),
+                        score: Some(matched.score),
+                        schema,
+                    })
+            })
+            .collect()
     } else {
-        None
+        domain_schemas
+            .into_iter()
+            .map(|(domain, schema)| DomainSchemaOutput {
+                domain,
+                score: None,
+                schema,
+            })
+            .collect()
     };
-    let ontology_catalog = if no_specification {
-        None
-    } else {
-        let store = JsonFileOntologyCatalogStorage::default();
-        let mut catalog = store.load().await?;
-        if catalog.is_empty() {
-            None
-        } else {
-            if let Some(embedder) = ontology_catalog_embedder.as_ref() {
-                catalog.compute(embedder.as_ref()).map_err(|e| {
-                    crate::error::Error::Ingest(crate::ingest::IngestError::Type(format!(
-                        "ontology catalog embedding: {e}"
-                    )))
-                })?;
-            }
-            Some(catalog)
-        }
-    };
-    let registry_for_prompt = (*registry).clone();
-    let opts = PromptOptions {
-        include_examples: !no_examples,
-        ontology_catalog,
-        embedding_model: ontology_catalog_embedder,
-        reranking_model: ontology_catalog_reranker,
-        schema_selection: prompt::PromptSchemaSelection {
-            reranking_threshold: cfg.ontology_catalog.reranking_threshold,
-            ..Default::default()
-        },
-        type_registry: if registry_for_prompt.is_empty() {
-            None
-        } else {
-            Some(registry_for_prompt)
-        },
-        ..PromptOptions::default()
-    };
-    let prompt = match query {
-        Some(query) => prompt::generate_query_prompt(&query, &schema, &opts),
-        None => prompt::generate_system_prompt(&schema, &opts),
-    };
-    println!("{prompt}");
+
+    store.save(&catalog).await?;
+
+    println!("{}", serde_json::to_string_pretty(&output)?);
+    //println!("ontology_catalog: {:?}", catalog);
+
+    // let (registry, _embedder) = build_registry(&cfg)?;
+    // let ontology_catalog_embedder = if query.is_some() {
+    //     Some(build_ontology_catalog_embedder(&cfg)?)
+    // } else {
+    //     None
+    // };
+    // let ontology_catalog_reranker = if query.is_some() {
+    //     Some(build_ontology_catalog_reranker(&cfg)?)
+    // } else {
+    //     None
+    // };
+    // let ontology_catalog = if no_specification {
+    //     None
+    // } else {
+    //     let store = JsonFileOntologyCatalogStorage::default();
+    //     let mut catalog = store.load().await?;
+    //     if catalog.is_empty() {
+    //         None
+    //     } else {
+    //         if let Some(embedder) = ontology_catalog_embedder.as_ref() {
+    //             catalog.compute(embedder.as_ref()).map_err(|e| {
+    //                 crate::error::Error::Ingest(crate::ingest::IngestError::Type(format!(
+    //                     "ontology catalog embedding: {e}"
+    //                 )))
+    //             })?;
+    //         }
+    //         Some(catalog)
+    //     }
+    // };
+    // let registry_for_prompt = (*registry).clone();
+    // let opts = PromptOptions {
+    //     include_examples: !no_examples,
+    //     ontology_catalog,
+    //     embedding_model: ontology_catalog_embedder,
+    //     reranking_model: ontology_catalog_reranker,
+    //     schema_selection: prompt::PromptSchemaSelection {
+    //         reranking_threshold: cfg.ontology_catalog.reranking_threshold,
+    //         ..Default::default()
+    //     },
+    //     type_registry: if registry_for_prompt.is_empty() {
+    //         None
+    //     } else {
+    //         Some(registry_for_prompt)
+    //     },
+    //     ..PromptOptions::default()
+    // };
+    // let prompt = match query {
+    //     Some(query) => prompt::generate_query_prompt(&query, &schema, &opts),
+    //     None => prompt::generate_system_prompt(&schema, &opts),
+    // };
+    // println!("{prompt}");
     Ok(())
+}
+
+#[derive(Debug, serde::Serialize)]
+struct DomainSchemaOutput {
+    domain: String,
+    score: Option<f32>,
+    schema: GraphSchema,
 }
 
 async fn cmd_schema(

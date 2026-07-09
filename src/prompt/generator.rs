@@ -89,10 +89,10 @@ pub fn generate_system_prompt(schema: &GraphSchema, opts: &PromptOptions) -> Str
     render_prompt(schema, opts)
 }
 
-pub fn generate_query_prompt(query: &str, schema: &GraphSchema, opts: &PromptOptions) -> String {
-    let selected_schema = select_query_schema(query, schema, opts);
-    render_prompt(&selected_schema, opts)
-}
+// pub fn generate_query_prompt(query: &str, schema: &GraphSchema, opts: &PromptOptions) -> String {
+//     let selected_schema = select_query_schema(query, schema, opts);
+//     render_prompt(&selected_schema, opts)
+// }
 
 fn render_prompt(schema: &GraphSchema, opts: &PromptOptions) -> String {
     let mut out = String::with_capacity(2048);
@@ -126,95 +126,95 @@ fn render_prompt(schema: &GraphSchema, opts: &PromptOptions) -> String {
     out
 }
 
-/// Select the schema slice relevant to `query`.
-///
-/// The default strategy uses [`OntologyCatalog::find`] to seed relevant
-/// entity labels, then expands through schema relationships according to
-/// [`PromptSchemaSelection`]. Callers can use this directly when they need
-/// the selected schema separately from prompt rendering.
-pub fn select_query_schema(query: &str, schema: &GraphSchema, opts: &PromptOptions) -> GraphSchema {
-    // Caller-pinned labels bypass the catalog-find hop entirely. We
-    // still run the same relationship-expansion loop so the prompt
-    // includes the natural neighborhood of the pinned types.
-    let seed_labels: Option<std::collections::BTreeSet<String>> = match &opts.pinned_labels {
-        Some(labels) if !labels.is_empty() => Some(labels.iter().cloned().collect()),
-        _ => None,
-    };
-
-    let mut labels = match seed_labels {
-        Some(seed) => seed,
-        None => {
-            let Some(catalog) = opts.ontology_catalog.as_ref() else {
-                return schema.clone();
-            };
-            let Some(embedder) = opts.embedding_model.as_deref() else {
-                return schema.clone();
-            };
-            if query.trim().is_empty() {
-                return schema.clone();
-            }
-
-            let Ok(matches) = catalog.find(
-                query,
-                opts.schema_selection.entity_match_threshold,
-                embedder,
-                opts.reranking_model.as_deref(),
-                opts.schema_selection.reranking_threshold,
-            ) else {
-                return schema.clone();
-            };
-            if matches.is_empty() {
-                return GraphSchema::default();
-            }
-
-            matches
-                .into_iter()
-                .map(|m| m.entity_type.name.clone())
-                .collect()
-        }
-    };
-
-    let mut frontier = labels.clone();
-    for _ in 0..opts.schema_selection.related_entity_hops {
-        let mut next = std::collections::BTreeSet::new();
-        for rel in &schema.relationships {
-            let (Some(from), Some(to)) = (&rel.from, &rel.to) else {
-                continue;
-            };
-            if frontier.contains(from) && labels.insert(to.clone()) {
-                next.insert(to.clone());
-            }
-            if frontier.contains(to) && labels.insert(from.clone()) {
-                next.insert(from.clone());
-            }
-        }
-        if next.is_empty() {
-            break;
-        }
-        frontier = next;
-    }
-
-    let nodes = schema
-        .nodes
-        .iter()
-        .filter(|node| labels.contains(&node.label))
-        .cloned()
-        .collect();
-    let relationships = schema
-        .relationships
-        .iter()
-        .filter(|rel| match (&rel.from, &rel.to) {
-            (Some(from), Some(to)) => labels.contains(from) && labels.contains(to),
-            _ => false,
-        })
-        .cloned()
-        .collect();
-
-    GraphSchema {
-        nodes,
-        relationships,
-    }
-}
+// /// Select the schema slice relevant to `query`.
+// ///
+// /// The default strategy uses [`OntologyCatalog::find`] to seed relevant
+// /// entity labels, then expands through schema relationships according to
+// /// [`PromptSchemaSelection`]. Callers can use this directly when they need
+// /// the selected schema separately from prompt rendering.
+// pub fn select_query_schema(query: &str, schema: &GraphSchema, opts: &PromptOptions) -> GraphSchema {
+//     // Caller-pinned labels bypass the catalog-find hop entirely. We
+//     // still run the same relationship-expansion loop so the prompt
+//     // includes the natural neighborhood of the pinned types.
+//     let seed_labels: Option<std::collections::BTreeSet<String>> = match &opts.pinned_labels {
+//         Some(labels) if !labels.is_empty() => Some(labels.iter().cloned().collect()),
+//         _ => None,
+//     };
+//
+//     let mut labels = match seed_labels {
+//         Some(seed) => seed,
+//         None => {
+//             let Some(catalog) = opts.ontology_catalog.as_ref() else {
+//                 return schema.clone();
+//             };
+//             let Some(embedder) = opts.embedding_model.as_deref() else {
+//                 return schema.clone();
+//             };
+//             if query.trim().is_empty() {
+//                 return schema.clone();
+//             }
+//
+//             let Ok(matches) = catalog.find(
+//                 query,
+//                 opts.schema_selection.entity_match_threshold,
+//                 embedder,
+//                 opts.reranking_model.as_deref(),
+//                 opts.schema_selection.reranking_threshold,
+//             ) else {
+//                 return schema.clone();
+//             };
+//             if matches.is_empty() {
+//                 return GraphSchema::default();
+//             }
+//
+//             matches
+//                 .into_iter()
+//                 .map(|m| m.entity_type.name.clone())
+//                 .collect()
+//         }
+//     };
+//
+//     let mut frontier = labels.clone();
+//     for _ in 0..opts.schema_selection.related_entity_hops {
+//         let mut next = std::collections::BTreeSet::new();
+//         for rel in &schema.relationships {
+//             let (Some(from), Some(to)) = (&rel.from, &rel.to) else {
+//                 continue;
+//             };
+//             if frontier.contains(from) && labels.insert(to.clone()) {
+//                 next.insert(to.clone());
+//             }
+//             if frontier.contains(to) && labels.insert(from.clone()) {
+//                 next.insert(from.clone());
+//             }
+//         }
+//         if next.is_empty() {
+//             break;
+//         }
+//         frontier = next;
+//     }
+//
+//     let nodes = schema
+//         .nodes
+//         .iter()
+//         .filter(|node| labels.contains(&node.label))
+//         .cloned()
+//         .collect();
+//     let relationships = schema
+//         .relationships
+//         .iter()
+//         .filter(|rel| match (&rel.from, &rel.to) {
+//             (Some(from), Some(to)) => labels.contains(from) && labels.contains(to),
+//             _ => false,
+//         })
+//         .cloned()
+//         .collect();
+//
+//     GraphSchema {
+//         nodes,
+//         relationships,
+//     }
+// }
 
 /// Render a `# Field types` section enumerating registered handlers,
 /// their capabilities, supported ops, and an example DSL fragment.
@@ -604,6 +604,8 @@ mod tests {
         catalog.insert(
             "test",
             crate::graph::DomainOntology {
+                name: None,
+                description: None,
                 entity_types: vec![crate::graph::EntityTypeSpec {
                     name: "Camera".into(),
                     description: Some("An IP surveillance camera".into()),
@@ -617,6 +619,7 @@ mod tests {
                     embedding: None,
                 }],
                 relation_types: vec![],
+                embedding: None,
             },
         );
         let prompt = generate_system_prompt(
@@ -631,155 +634,6 @@ mod tests {
         assert!(prompt.contains("state: keyword /* active or inactive */"));
         assert!(prompt.contains("id: keyword"));
         assert!(!prompt.contains("id: keyword /*"));
-    }
-
-    #[test]
-    fn query_prompt_keeps_found_entities_and_two_hop_neighbors() {
-        #[derive(Debug)]
-        struct KeywordEmbedder;
-
-        impl Embedder for KeywordEmbedder {
-            fn dim(&self) -> usize {
-                2
-            }
-
-            fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbedError> {
-                Ok(texts
-                    .iter()
-                    .map(|text| {
-                        let lower = text.to_ascii_lowercase();
-                        if lower.contains("camera") || lower.contains("surveillance") {
-                            vec![1.0, 0.0]
-                        } else if lower.contains("invoice") || lower.contains("billing") {
-                            vec![0.0, 1.0]
-                        } else {
-                            vec![0.0, 0.0]
-                        }
-                    })
-                    .collect())
-            }
-        }
-
-        let schema = GraphSchema {
-            nodes: vec![
-                NodeKind {
-                    label: "Camera".into(),
-                    domain: None,
-                    extra_labels: Vec::new(),
-                    scopes: Vec::new(),
-                    description: None,
-                    properties: vec![],
-                },
-                NodeKind {
-                    label: "Site".into(),
-                    domain: None,
-                    extra_labels: Vec::new(),
-                    scopes: Vec::new(),
-                    description: None,
-                    properties: vec![],
-                },
-                NodeKind {
-                    label: "Company".into(),
-                    domain: None,
-                    extra_labels: Vec::new(),
-                    scopes: Vec::new(),
-                    description: None,
-                    properties: vec![],
-                },
-                NodeKind {
-                    label: "User".into(),
-                    domain: None,
-                    extra_labels: Vec::new(),
-                    scopes: Vec::new(),
-                    description: None,
-                    properties: vec![],
-                },
-                NodeKind {
-                    label: "Invoice".into(),
-                    domain: None,
-                    extra_labels: Vec::new(),
-                    scopes: Vec::new(),
-                    description: None,
-                    properties: vec![],
-                },
-            ],
-            relationships: vec![
-                RelKind {
-                    label: "INSTALLED_AT".into(),
-                    domain: None,
-                    description: None,
-                    from: Some("Camera".into()),
-                    to: Some("Site".into()),
-                    properties: vec![],
-                },
-                RelKind {
-                    label: "OWNED_BY".into(),
-                    domain: None,
-                    description: None,
-                    from: Some("Site".into()),
-                    to: Some("Company".into()),
-                    properties: vec![],
-                },
-                RelKind {
-                    label: "HAS_USER".into(),
-                    domain: None,
-                    description: None,
-                    from: Some("Company".into()),
-                    to: Some("User".into()),
-                    properties: vec![],
-                },
-                RelKind {
-                    label: "BILLED_BY".into(),
-                    domain: None,
-                    description: None,
-                    from: Some("Invoice".into()),
-                    to: Some("Company".into()),
-                    properties: vec![],
-                },
-            ],
-        };
-        let embedder = Arc::new(KeywordEmbedder);
-        let mut catalog = crate::graph::OntologyCatalog::default();
-        catalog.insert(
-            "test",
-            crate::graph::DomainOntology {
-                entity_types: vec![
-                    crate::graph::EntityTypeSpec::with_description(
-                        "Camera",
-                        "A surveillance camera",
-                    ),
-                    crate::graph::EntityTypeSpec::with_description("Invoice", "A billing invoice"),
-                ],
-                relation_types: vec![],
-            },
-        );
-        catalog.compute(embedder.as_ref()).unwrap();
-
-        let prompt = generate_query_prompt(
-            "camera status",
-            &schema,
-            &PromptOptions {
-                ontology_catalog: Some(catalog),
-                embedding_model: Some(embedder),
-                schema_selection: PromptSchemaSelection {
-                    entity_match_threshold: 0.9,
-                    related_entity_hops: 2,
-                    reranking_threshold: 0.0,
-                },
-                include_examples: false,
-                ..PromptOptions::default()
-            },
-        );
-
-        assert!(prompt.contains("Camera"));
-        assert!(prompt.contains("Site"));
-        assert!(prompt.contains("Company"));
-        assert!(prompt.contains("(Camera)-[:INSTALLED_AT]->(Site)"));
-        assert!(prompt.contains("(Site)-[:OWNED_BY]->(Company)"));
-        assert!(!prompt.contains("User"));
-        assert!(!prompt.contains("Invoice"));
-        assert!(!prompt.contains("HAS_USER"));
-        assert!(!prompt.contains("BILLED_BY"));
     }
 
     #[test]
@@ -917,47 +771,6 @@ mod tests {
         assert!(
             !prompt.contains("_canonical"),
             "_canonical must be excluded"
-        );
-    }
-
-    #[test]
-    fn query_prompt_excludes_canonical_system_property_from_entity_type() {
-        let schema = GraphSchema {
-            nodes: vec![NodeKind {
-                label: "Person".into(),
-                domain: None,
-                extra_labels: Vec::new(),
-                scopes: Vec::new(),
-                description: None,
-                properties: vec![
-                    Property {
-                        name: "_canonical".into(),
-                        ty: PT::String,
-                        description: Some("system merge key".into()),
-                        allowed_values: Vec::new(),
-                    },
-                    Property {
-                        name: "name".into(),
-                        ty: PT::String,
-                        description: None,
-                        allowed_values: Vec::new(),
-                    },
-                ],
-            }],
-            relationships: vec![],
-        };
-
-        let prompt = generate_query_prompt("find people", &schema, &PromptOptions::default());
-
-        assert!(prompt.contains("Person"));
-        assert!(prompt.contains("name: keyword"));
-        assert!(
-            !prompt.contains("_canonical"),
-            "_canonical must not be rendered as an entity property"
-        );
-        assert!(
-            !prompt.contains("system merge key"),
-            "hidden property descriptions must not leak into the prompt"
         );
     }
 }

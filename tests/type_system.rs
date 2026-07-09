@@ -665,6 +665,8 @@ fn semantic_catalog() -> OntologyCatalog {
     catalog.insert(
         "test",
         DomainOntology {
+            name: None,
+            description: None,
             entity_types: vec![EntityTypeSpec {
                 name: "Company".into(),
                 description: None,
@@ -676,6 +678,7 @@ fn semantic_catalog() -> OntologyCatalog {
                 embedding: None,
             }],
             relation_types: vec![],
+            embedding: None,
         },
     );
     catalog
@@ -723,6 +726,8 @@ fn untyped_datetime_filter_auto_resolves_and_expands_eq_to_a_day_range() {
     catalog.insert(
         "test",
         DomainOntology {
+            name: None,
+            description: None,
             entity_types: vec![EntityTypeSpec {
                 name: "ServiceVisit".into(),
                 description: None,
@@ -737,6 +742,7 @@ fn untyped_datetime_filter_auto_resolves_and_expands_eq_to_a_day_range() {
                 embedding: None,
             }],
             relation_types: vec![],
+            embedding: None,
         },
     );
     let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg)
@@ -884,6 +890,8 @@ fn ontology_catalog_lookup_keys_off_label_not_alias() {
     catalog.insert(
         "test",
         DomainOntology {
+            name: None,
+            description: None,
             entity_types: vec![EntityTypeSpec {
                 name: "Company".into(),
                 description: None,
@@ -895,6 +903,7 @@ fn ontology_catalog_lookup_keys_off_label_not_alias() {
                 embedding: None,
             }],
             relation_types: vec![],
+            embedding: None,
         },
     );
     // Person.name is left plain.

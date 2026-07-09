@@ -70,7 +70,9 @@ impl OntologyCatalogStorage for JsonFileOntologyCatalogStorage {
                 if bytes.is_empty() {
                     return Ok(OntologyCatalog::default());
                 }
-                Ok(serde_json::from_slice(&bytes)?)
+                let mut catalog: OntologyCatalog = serde_json::from_slice(&bytes)?;
+                catalog.hydrate_domain_names();
+                Ok(catalog)
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 Err(OntologyError::NotFound(self.path.clone()))
@@ -140,8 +142,11 @@ mod tests {
         cat.insert(
             "demo",
             DomainOntology {
+                name: None,
+                description: None,
                 entity_types: vec![EntityTypeSpec::with_description("Foo", "A foo.")],
                 relation_types: vec![RelationTypeSpec::new("KNOWS")],
+                embedding: None,
             },
         );
         cat

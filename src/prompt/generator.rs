@@ -4,17 +4,23 @@
 //! never embed examples that would leak provider-specific markers — the
 //! prompt is a portable contract.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
 use super::schema::{GraphSchema, NodeKind, Property, RelKind};
-use crate::embeddings::{SharedEmbedder, SharedReranker};
-use crate::graph::{OntologyCatalog, OntologyPropertyType, PropertySpec};
+use super::select::{select_query_schema, QuerySelectionParams};
+use crate::embeddings::{EmbedError, EmbeddingCache, Embedder, SharedEmbedder, SharedReranker};
+use crate::graph::{
+    OntologyCatalog, OntologyPropertyType, PropertySpec, DEFAULT_DOMAIN_SELECTION_THRESHOLD,
+    DEFAULT_DOMAIN_SELECTION_TOP_K,
+};
 use crate::types::TypeRegistry;
 
 /// Properties added by the senseflow ingestion pipeline that carry no
 /// semantic meaning for DSL query construction and should be hidden from
-/// the schema block shown to the LLM.
-const SCHEMA_HIDDEN_PROPS: &[&str] = &["_canonical", "entity_id", "primary_key"];
+/// the schema block shown to the LLM. Also excluded from the per-property
+/// embedding text built during query-driven schema selection.
+pub(crate) const SCHEMA_HIDDEN_PROPS: &[&str] = &["_canonical", "entity_id", "primary_key"];
 
 #[derive(Debug, Clone)]
 pub struct PromptSchemaSelection {
@@ -89,10 +95,84 @@ pub fn generate_system_prompt(schema: &GraphSchema, opts: &PromptOptions) -> Str
     render_prompt(schema, opts)
 }
 
-// pub fn generate_query_prompt(query: &str, schema: &GraphSchema, opts: &PromptOptions) -> String {
-//     let selected_schema = select_query_schema(query, schema, opts);
-//     render_prompt(&selected_schema, opts)
-// }
+/// Controls for the query-driven compact prompt built by
+/// [`generate_query_prompt`].
+#[derive(Debug, Clone)]
+pub struct QueryPromptParams {
+    /// Minimum cosine score for a domain to be routed to (see
+    /// [`OntologyCatalog::select_domains`]).
+    pub domain_threshold: f32,
+    /// Maximum number of domains kept by routing.
+    pub domain_top_k: usize,
+    /// Entity/property-level selection tunables.
+    pub selection: QuerySelectionParams,
+    /// Include worked DSL examples after the rules.
+    pub include_examples: bool,
+}
+
+impl Default for QueryPromptParams {
+    fn default() -> Self {
+        Self {
+            domain_threshold: DEFAULT_DOMAIN_SELECTION_THRESHOLD,
+            domain_top_k: DEFAULT_DOMAIN_SELECTION_TOP_K,
+            selection: QuerySelectionParams::default(),
+            include_examples: true,
+        }
+    }
+}
+
+/// Build a **compact** DSL-generation prompt tailored to `query`.
+///
+/// The full pipeline, behind one call:
+/// 1. project the live `schema` onto `catalog` (in place) and split it per
+///    domain;
+/// 2. route to the top-k domains relevant to `query` by embedding
+///    similarity;
+/// 3. within those domains, select the entities, properties (with their
+///    value sets) and 1-hop neighbours the query needs;
+/// 4. render the prompt from that narrowed schema.
+///
+/// `catalog` is mutated to cache freshly computed domain embeddings and
+/// `cache` to store entity/property embeddings — callers should persist
+/// both afterwards. Reuses [`OntologyCatalog::project_schema`],
+/// [`OntologyCatalog::split_schema_by_domain`],
+/// [`OntologyCatalog::select_domains`] and [`select_query_schema`].
+pub fn generate_query_prompt(
+    query: &str,
+    schema: &mut GraphSchema,
+    catalog: &mut OntologyCatalog,
+    embedder: &dyn Embedder,
+    cache: &mut EmbeddingCache,
+    params: &QueryPromptParams,
+) -> Result<String, EmbedError> {
+    OntologyCatalog::project_schema(schema, catalog.all_domains());
+    let domain_schemas = OntologyCatalog::split_schema_by_domain(schema);
+
+    let candidates: BTreeSet<String> = domain_schemas.keys().cloned().collect();
+    let selected: BTreeMap<String, GraphSchema> = catalog
+        .select_domains(
+            query,
+            params.domain_threshold,
+            params.domain_top_k,
+            Some(&candidates),
+            embedder,
+        )?
+        .iter()
+        .filter_map(|matched| {
+            domain_schemas
+                .get(matched.domain)
+                .map(|schema| (matched.domain.to_string(), schema.clone()))
+        })
+        .collect();
+
+    let narrowed = select_query_schema(query, &selected, cache, embedder, &params.selection)?;
+
+    let opts = PromptOptions {
+        include_examples: params.include_examples,
+        ..PromptOptions::default()
+    };
+    Ok(render_prompt(&narrowed, &opts))
+}
 
 fn render_prompt(schema: &GraphSchema, opts: &PromptOptions) -> String {
     let mut out = String::with_capacity(2048);
@@ -125,96 +205,6 @@ fn render_prompt(schema: &GraphSchema, opts: &PromptOptions) -> String {
 
     out
 }
-
-// /// Select the schema slice relevant to `query`.
-// ///
-// /// The default strategy uses [`OntologyCatalog::find`] to seed relevant
-// /// entity labels, then expands through schema relationships according to
-// /// [`PromptSchemaSelection`]. Callers can use this directly when they need
-// /// the selected schema separately from prompt rendering.
-// pub fn select_query_schema(query: &str, schema: &GraphSchema, opts: &PromptOptions) -> GraphSchema {
-//     // Caller-pinned labels bypass the catalog-find hop entirely. We
-//     // still run the same relationship-expansion loop so the prompt
-//     // includes the natural neighborhood of the pinned types.
-//     let seed_labels: Option<std::collections::BTreeSet<String>> = match &opts.pinned_labels {
-//         Some(labels) if !labels.is_empty() => Some(labels.iter().cloned().collect()),
-//         _ => None,
-//     };
-//
-//     let mut labels = match seed_labels {
-//         Some(seed) => seed,
-//         None => {
-//             let Some(catalog) = opts.ontology_catalog.as_ref() else {
-//                 return schema.clone();
-//             };
-//             let Some(embedder) = opts.embedding_model.as_deref() else {
-//                 return schema.clone();
-//             };
-//             if query.trim().is_empty() {
-//                 return schema.clone();
-//             }
-//
-//             let Ok(matches) = catalog.find(
-//                 query,
-//                 opts.schema_selection.entity_match_threshold,
-//                 embedder,
-//                 opts.reranking_model.as_deref(),
-//                 opts.schema_selection.reranking_threshold,
-//             ) else {
-//                 return schema.clone();
-//             };
-//             if matches.is_empty() {
-//                 return GraphSchema::default();
-//             }
-//
-//             matches
-//                 .into_iter()
-//                 .map(|m| m.entity_type.name.clone())
-//                 .collect()
-//         }
-//     };
-//
-//     let mut frontier = labels.clone();
-//     for _ in 0..opts.schema_selection.related_entity_hops {
-//         let mut next = std::collections::BTreeSet::new();
-//         for rel in &schema.relationships {
-//             let (Some(from), Some(to)) = (&rel.from, &rel.to) else {
-//                 continue;
-//             };
-//             if frontier.contains(from) && labels.insert(to.clone()) {
-//                 next.insert(to.clone());
-//             }
-//             if frontier.contains(to) && labels.insert(from.clone()) {
-//                 next.insert(from.clone());
-//             }
-//         }
-//         if next.is_empty() {
-//             break;
-//         }
-//         frontier = next;
-//     }
-//
-//     let nodes = schema
-//         .nodes
-//         .iter()
-//         .filter(|node| labels.contains(&node.label))
-//         .cloned()
-//         .collect();
-//     let relationships = schema
-//         .relationships
-//         .iter()
-//         .filter(|rel| match (&rel.from, &rel.to) {
-//             (Some(from), Some(to)) => labels.contains(from) && labels.contains(to),
-//             _ => false,
-//         })
-//         .cloned()
-//         .collect();
-//
-//     GraphSchema {
-//         nodes,
-//         relationships,
-//     }
-// }
 
 /// Render a `# Field types` section enumerating registered handlers,
 /// their capabilities, supported ops, and an example DSL fragment.
@@ -329,7 +319,7 @@ fn render_props(
             //   <name>: <scalar-ty> @<FieldType>           (typed, e.g. Text)
             //   <name>: <scalar-ty> /* description */      (documented only)
             //   <name>: <scalar-ty> @<FieldType> /* … */   (both)
-            let mut base = format!("{}: {}", p.name, format_ty(p.ty));
+            let mut base = format!("{}: {}", p.name, p.ty.as_str());
             if let Some(ty) = property_spec.and_then(field_type_marker) {
                 base = format!("{base} @{ty}");
             }
@@ -431,19 +421,6 @@ fn field_type_marker(spec: &PropertySpec) -> Option<&'static str> {
     }
 }
 
-fn format_ty(t: super::schema::PropertyType) -> &'static str {
-    use super::schema::PropertyType::*;
-    match t {
-        String => "keyword",
-        Int => "int",
-        Float => "float",
-        Bool => "bool",
-        Date => "date",
-        Datetime => "datetime",
-        List => "list",
-    }
-}
-
 const DSL_RULES: &str = r#"Output a single JSON object with this shape:
 {
   "action": "find" | "aggregate",  // optional; inferred from `return`
@@ -529,7 +506,6 @@ Assistant:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
 
     use crate::embeddings::{EmbedError, Embedder};
     use crate::prompt::schema::PropertyType as PT;
@@ -772,5 +748,148 @@ mod tests {
             !prompt.contains("_canonical"),
             "_canonical must be excluded"
         );
+    }
+
+    /// Deterministic 3-axis stub (mirrors the one in `select`): axis 0 =
+    /// "listing/auction/sale/title", axis 1 = "clinic/patient/visit".
+    #[derive(Debug)]
+    struct StubEmbedder;
+
+    impl Embedder for StubEmbedder {
+        fn dim(&self) -> usize {
+            3
+        }
+        fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbedError> {
+            Ok(texts
+                .iter()
+                .map(|t| {
+                    let t = t.to_lowercase();
+                    let mut v = [0.0f32, 0.0, 0.1];
+                    if ["listing", "auction", "sale", "title"]
+                        .iter()
+                        .any(|k| t.contains(k))
+                    {
+                        v[0] += 1.0;
+                    }
+                    if ["clinic", "patient", "visit"].iter().any(|k| t.contains(k)) {
+                        v[1] += 1.0;
+                    }
+                    v.to_vec()
+                })
+                .collect())
+        }
+    }
+
+    fn spec(
+        name: &str,
+        desc: &str,
+        prop: &str,
+        values: &[&str],
+    ) -> crate::graph::EntityTypeSpec {
+        crate::graph::EntityTypeSpec {
+            name: name.into(),
+            description: Some(desc.into()),
+            properties: vec![crate::graph::PropertySpec {
+                name: prop.into(),
+                description: None,
+                property_type: OntologyPropertyType::Keyword,
+                required: false,
+                allowed_values: values.iter().map(|v| v.to_string()).collect(),
+            }],
+            embedding: None,
+        }
+    }
+
+    fn domain(desc: &str, entity: crate::graph::EntityTypeSpec) -> crate::graph::DomainOntology {
+        crate::graph::DomainOntology {
+            name: None,
+            description: Some(desc.into()),
+            entity_types: vec![entity],
+            relation_types: vec![],
+            embedding: None,
+        }
+    }
+
+    fn live_node(label: &str, extra: &str, prop: &str, values: &[&str]) -> NodeKind {
+        NodeKind {
+            label: label.into(),
+            domain: None,
+            extra_labels: vec![extra.into()],
+            scopes: Vec::new(),
+            description: None,
+            properties: vec![Property {
+                name: prop.into(),
+                ty: PT::String,
+                description: None,
+                allowed_values: values.iter().map(|v| v.to_string()).collect(),
+            }],
+        }
+    }
+
+    #[test]
+    fn query_prompt_is_compact_and_domain_scoped() {
+        let mut catalog = OntologyCatalog::default();
+        catalog.insert(
+            "flippa",
+            domain(
+                "Online marketplace for buying and selling websites",
+                spec(
+                    "Listing",
+                    "A marketplace listing for sale",
+                    "sale_method",
+                    &["auction", "classified"],
+                ),
+            ),
+        );
+        catalog.insert(
+            "clinic",
+            domain(
+                "Healthcare clinic operations",
+                spec("Patient", "A clinic patient", "visit_reason", &[]),
+            ),
+        );
+
+        // Live schema carries both entities; projection binds them by the
+        // domain label in `extra_labels`.
+        let mut schema = GraphSchema {
+            nodes: vec![
+                live_node("Listing", "flippa", "sale_method", &["auction", "classified"]),
+                live_node("Patient", "clinic", "visit_reason", &[]),
+            ],
+            relationships: vec![],
+        };
+
+        let embedder = StubEmbedder;
+        let mut cache = EmbeddingCache::new("stub", embedder.dim());
+        let params = QueryPromptParams {
+            domain_threshold: 0.2,
+            domain_top_k: 3,
+            selection: QuerySelectionParams {
+                entity_threshold: 0.2,
+                property_threshold: 0.2,
+                ..QuerySelectionParams::default()
+            },
+            include_examples: false,
+        };
+
+        let prompt = generate_query_prompt(
+            "auction listings for sale",
+            &mut schema,
+            &mut catalog,
+            &embedder,
+            &mut cache,
+            &params,
+        )
+        .unwrap();
+
+        // The relevant domain's entity, its enum property and values, and
+        // the DSL contract are present …
+        assert!(prompt.contains("Listing"), "{prompt}");
+        assert!(prompt.contains("sale_method: keyword enum"), "{prompt}");
+        assert!(prompt.contains("Listing.sale_method:"), "{prompt}");
+        assert!(prompt.contains("auction | classified"), "{prompt}");
+        assert!(prompt.contains("# DSL rules"));
+        // … while the unrelated domain is excluded entirely.
+        assert!(!prompt.contains("Patient"), "unrelated domain leaked: {prompt}");
     }
 }

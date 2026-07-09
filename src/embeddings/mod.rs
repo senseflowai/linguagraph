@@ -13,6 +13,7 @@
 //! * [`llama::LlamaEmbedder`] — feature-gated wrapper around
 //!   `llama-cpp-2`. Loads a GGUF embedding model once and reuses it.
 
+pub mod cache;
 pub mod mock;
 
 #[cfg(feature = "llama")]
@@ -22,6 +23,7 @@ use std::sync::Arc;
 
 use thiserror::Error;
 
+pub use cache::EmbeddingCache;
 pub use mock::MockEmbedder;
 
 #[cfg(feature = "llama")]

@@ -22,7 +22,7 @@ pub use ontology::{
 };
 pub use ontology_storage::{
     InMemoryOntologyCatalogStorage, JsonFileOntologyCatalogStorage, OntologyCatalogStorage,
-    DEFAULT_ONTOLOGY_CATALOG_CACHE_PATH,
+    DEFAULT_ONTOLOGY_CATALOG_CACHE_PATH, DEFAULT_ONTOLOGY_EMBEDDING_CACHE_PATH,
 };
 pub use schema::{
     canonical_handler_id, EntityGraph, PrimaryKey, Property, PropertyType, RelationGraph,

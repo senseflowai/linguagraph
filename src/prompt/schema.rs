@@ -117,6 +117,22 @@ pub enum PropertyType {
     List,
 }
 
+impl PropertyType {
+    /// Canonical scalar-type label shown to the LLM in the schema block
+    /// and in property embedding text (e.g. `keyword`, `int`, `datetime`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PropertyType::String => "keyword",
+            PropertyType::Int => "int",
+            PropertyType::Float => "float",
+            PropertyType::Bool => "bool",
+            PropertyType::Date => "date",
+            PropertyType::Datetime => "datetime",
+            PropertyType::List => "list",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -16,6 +16,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
 use super::generator::SCHEMA_HIDDEN_PROPS;
+use super::is_enum_candidate_property_name;
 use super::schema::{GraphSchema, NodeKind, Property};
 use crate::embeddings::{
     ensure_indexed, EmbedError, Embedder, EmbeddingFilter, EmbeddingIndex, EmbeddingKind,
@@ -75,7 +76,7 @@ fn query_text(query: &str) -> String {
 /// otherwise the scalar type. The `description` and `values` lines are
 /// emitted only when present.
 pub(crate) fn property_embedding_text(domain: &str, label: &str, prop: &Property) -> String {
-    let is_enum = !prop.allowed_values.is_empty();
+    let is_enum = is_enum_candidate_property_name(&prop.name) && !prop.allowed_values.is_empty();
     let ty = if is_enum { "enum" } else { prop.ty.as_str() };
     let mut out = String::new();
     let _ = writeln!(out, "property: {label}.{}", prop.name);
@@ -153,7 +154,11 @@ pub(crate) async fn select_query_schema(
                     continue;
                 }
                 passages.push((
-                    EmbeddingPayload::property(domain.clone(), node.label.clone(), prop.name.clone()),
+                    EmbeddingPayload::property(
+                        domain.clone(),
+                        node.label.clone(),
+                        prop.name.clone(),
+                    ),
                     property_embedding_text(domain, &node.label, prop),
                 ));
             }
@@ -174,7 +179,13 @@ pub(crate) async fn select_query_schema(
     // selected-domain slice (bounded — a handful of domains).
     let hits = index
         .store
-        .search(index.collection, &query_embedding, passages.len(), None, &filter)
+        .search(
+            index.collection,
+            &query_embedding,
+            passages.len(),
+            None,
+            &filter,
+        )
         .await?;
 
     // Fold the hits into per-entity and per-(entity,property) best scores.
@@ -332,7 +343,8 @@ fn filter_properties(
         .iter()
         .filter(|prop| {
             !SCHEMA_HIDDEN_PROPS.contains(&prop.name.as_str())
-                && (!prop.allowed_values.is_empty()
+                && ((is_enum_candidate_property_name(&prop.name)
+                    && !prop.allowed_values.is_empty())
                     || prop_scores.get(&prop.name).copied().unwrap_or(0.0)
                         >= params.property_threshold)
         })
@@ -397,6 +409,16 @@ mod tests {
         let p = prop("vin", PT::String, &[]);
         let text = property_embedding_text("cars", "Car", &p);
         assert!(text.contains("type: string"));
+        assert!(!text.contains("type: enum"));
+        assert!(!text.contains("values:"));
+    }
+
+    #[test]
+    fn identifier_property_text_ignores_allowed_values() {
+        let p = prop("id", PT::String, &["cat-1", "cat-2"]);
+        let text = property_embedding_text("catalog", "Category", &p);
+        assert!(text.contains("property: Category.id"));
+        assert!(text.contains("type: keyword"));
         assert!(!text.contains("type: enum"));
         assert!(!text.contains("values:"));
     }

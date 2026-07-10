@@ -18,7 +18,9 @@ use serde_json::Value as Json;
 use crate::ast::query::Literal;
 use crate::builder::CypherQuery;
 use crate::graph::Scope;
-use crate::prompt::{GraphSchema, NodeKind, Property, PropertyType, RelKind};
+use crate::prompt::{
+    is_enum_candidate_property_name, GraphSchema, NodeKind, Property, PropertyType, RelKind,
+};
 
 use super::result::Value;
 use super::{DbError, GraphClient};
@@ -90,7 +92,9 @@ pub async fn introspect_schema(
         // that exceed the cardinality cap are left without a dictionary.
         if opts.enum_cardinality_cap > 0 {
             for prop in &mut properties {
-                if prop.ty != PropertyType::String {
+                if prop.ty != PropertyType::String
+                    || !is_enum_candidate_property_name(&prop.name)
+                {
                     continue;
                 }
                 if let Some(values) = fetch_enum_values(

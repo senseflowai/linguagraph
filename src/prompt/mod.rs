@@ -17,5 +17,6 @@ pub use generator::{
     QueryPromptParams,
 };
 pub use ontology_suggest::render_schema_suggest_prompt;
+pub(crate) use schema::is_enum_candidate_property_name;
 pub use schema::{GraphSchema, NodeKind, Property, PropertyType, RelKind};
 pub use select::QuerySelectionParams;

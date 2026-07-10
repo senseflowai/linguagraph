@@ -1037,7 +1037,6 @@ mod tests {
                     "LOCATED_AT",
                     "Generic location relation",
                 )],
-                embedding: None,
             },
         );
         cat.insert(
@@ -1047,7 +1046,6 @@ mod tests {
                 description: None,
                 entity_types: vec![EntityTypeSpec::new("Camera"), EntityTypeSpec::new("Place")],
                 relation_types: vec![RelationTypeSpec::new("LOCATED_AT")],
-                embedding: None,
             },
         );
 

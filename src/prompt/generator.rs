@@ -7,6 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
+use super::is_enum_candidate_property_name;
 use super::schema::{GraphSchema, NodeKind, Property, RelKind};
 use super::select::{select_query_schema, QuerySelectionParams};
 use crate::embeddings::{EmbedError, Embedder, EmbeddingIndex, SharedEmbedder, SharedReranker};
@@ -168,7 +169,8 @@ pub async fn generate_query_prompt(
         })
         .collect();
 
-    let narrowed = select_query_schema(query, &selected, embedder, index, &params.selection).await?;
+    let narrowed =
+        select_query_schema(query, &selected, embedder, index, &params.selection).await?;
 
     let opts = PromptOptions {
         include_examples: params.include_examples,
@@ -465,6 +467,9 @@ fn write_field_types(out: &mut String, registry: &TypeRegistry) {
 /// (lowercase), sorted, deduped. Empty ⇒ the field is not enum-like and
 /// gets neither the `enum` marker nor an entry in the enumerations block.
 fn effective_allowed_values(prop: &Property, spec: Option<&PropertySpec>) -> Vec<String> {
+    if !is_enum_candidate_property_name(&prop.name) {
+        return Vec::new();
+    }
     let mut out: Vec<String> = prop
         .allowed_values
         .iter()
@@ -722,6 +727,47 @@ mod tests {
         assert!(!vin_line.contains("[enum]"), "{prompt}");
         // No separate `# Enum field values` block any more.
         assert!(!prompt.contains("# Enum field values"), "{prompt}");
+    }
+
+    #[test]
+    fn identifier_values_do_not_render_as_enum() {
+        let schema = GraphSchema {
+            nodes: vec![NodeKind {
+                label: "Category".into(),
+                domain: None,
+                extra_labels: Vec::new(),
+                scopes: Vec::new(),
+                description: None,
+                properties: vec![
+                    Property {
+                        name: "id".into(),
+                        ty: PT::String,
+                        description: None,
+                        allowed_values: vec!["cat-1".into(), "cat-2".into()],
+                    },
+                    Property {
+                        name: "status".into(),
+                        ty: PT::String,
+                        description: None,
+                        allowed_values: vec!["active".into(), "archived".into()],
+                    },
+                ],
+            }],
+            relationships: vec![],
+        };
+        let prompt = generate_system_prompt(
+            &schema,
+            &PromptOptions {
+                include_examples: false,
+                ..PromptOptions::default()
+            },
+        );
+
+        assert!(prompt.contains("id: keyword"));
+        assert!(!prompt.contains("id: keyword enum"));
+        assert!(!prompt.contains("Category.id:"));
+        assert!(prompt.contains("status: keyword enum"));
+        assert!(prompt.contains("Category.status:"));
     }
 
     #[test]

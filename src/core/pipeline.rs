@@ -7,10 +7,10 @@ use std::time::Instant;
 use crate::ast::query::Literal;
 use crate::ast::{query::InsertQuery, query::ReadQuery};
 use crate::builder::{self, CypherQuery};
-use crate::config::{Config, SoftMergeConfig};
+use crate::config::{Config, GroundingConfig, SoftMergeConfig};
 use crate::db::{GraphClient, QueryResult, Row, Value as DbValue};
 use crate::dsl::{Direction as DslDirection, DslQuery, TraversalQuery};
-use crate::embeddings::{SharedEmbedder, SharedReranker};
+use crate::embeddings::{SharedEmbedder, SharedEmbeddingStore, SharedReranker};
 use crate::error::Result;
 use crate::graph::{EntityTypeMatch, Graph, OntologyCatalog, OntologyCatalogStorage};
 use crate::ingest::{self, soft_merge, DeletePlan, DiscoveredNodes, IngestError, PlannerOptions};
@@ -55,6 +55,17 @@ pub struct Pipeline {
     /// Minimum reranker score required for a reranked traversal hit to
     /// survive in the final result set.
     reranker_threshold: f64,
+    /// Optional direct vector store used by the query-time *grounding*
+    /// pass ([`Self::ground_semantic`]) to resolve SemanticText filters
+    /// to concrete node ids against the `_canonical` collection before
+    /// building Cypher. Must point at the same Qdrant that qlink writes
+    /// to. `None` (the default) disables grounding — queries then use the
+    /// server-side `libqlink` hybrid search unchanged.
+    prefetch_store: Option<SharedEmbeddingStore>,
+    /// Grounding knobs (threshold, top-k, rerank) captured from
+    /// `[query.grounding]`. Ignored unless `prefetch_store` is set and
+    /// `grounding.enabled` is true.
+    grounding: GroundingConfig,
     /// In-memory snapshot of [`OntologyCatalog`] consulted by
     /// [`Self::lower`] to auto-resolve filter types when the DSL omits
     /// `"type"`, and by [`Self::live_schema`] to enrich introspection
@@ -172,6 +183,8 @@ impl Pipeline {
                 .get("SemanticText")
                 .and_then(|t| t.reranker_threshold)
                 .unwrap_or(DEFAULT_RERANKER_THRESHOLD),
+            prefetch_store: None,
+            grounding: config.query.grounding.clone(),
             ontology_catalog: Arc::new(RwLock::new(None)),
             prefix_label: None,
             prefix_index: None,
@@ -286,6 +299,23 @@ impl Pipeline {
     /// are dropped after `Reranker::rerank` returns.
     pub fn with_reranker_threshold(mut self, threshold: f64) -> Self {
         self.reranker_threshold = threshold;
+        self
+    }
+
+    /// Attach the direct vector store used by the query-time grounding
+    /// pass. Only takes effect when `[query.grounding].enabled` is true.
+    /// The store must address the same Qdrant instance qlink populates,
+    /// so the `_canonical` point ids it returns are valid Memgraph node
+    /// ids. Pass the same store `build_embedding_store` produces.
+    pub fn with_prefetch_store(mut self, store: SharedEmbeddingStore) -> Self {
+        self.prefetch_store = Some(store);
+        self
+    }
+
+    /// Override the grounding configuration (normally taken from
+    /// `[query.grounding]` at construction).
+    pub fn with_grounding(mut self, grounding: GroundingConfig) -> Self {
+        self.grounding = grounding;
         self
     }
 
@@ -422,11 +452,199 @@ impl Pipeline {
         Ok(())
     }
 
+    /// Query-time *grounding*: resolve consolidated SemanticText filters
+    /// to concrete node ids before Cypher is built.
+    ///
+    /// For every SemanticText predicate that `lower` annotated with an
+    /// embedding + collection + label, search the `_canonical` collection
+    /// directly (reusing the already-computed query vector — no re-embed),
+    /// keep only same-label hits clearing the score bar (optionally
+    /// reranked), and, when any survive, stash them as a `prefetch_rows`
+    /// param. [`crate::types::handlers::SemanticTextHandler::emit`] then
+    /// pins the alias to those ids instead of emitting the server-side
+    /// `libqlink` hybrid search. Predicates with no confident hit are left
+    /// untouched and compile to the unchanged fallback.
+    ///
+    /// No-op unless a prefetch store is attached and
+    /// `[query.grounding].enabled` is set. Deliberately infallible from
+    /// the caller's view: a store or rerank error downgrades that alias to
+    /// the fallback (logged at debug) rather than failing the query —
+    /// grounding is a precision optimisation, not a correctness
+    /// requirement.
+    pub async fn ground_semantic(&self, ast: &mut ReadQuery) -> Result<()> {
+        if !self.grounding.enabled {
+            return Ok(());
+        }
+        let Some(store) = self.prefetch_store.as_ref() else {
+            return Ok(());
+        };
+        let Some(expr) = ast.filter.as_mut() else {
+            return Ok(());
+        };
+
+        let mut by_type: std::collections::HashMap<
+            crate::types::TypeId,
+            Vec<&mut crate::types::TypedPredicate>,
+        > = std::collections::HashMap::new();
+        collect_typed_predicates_mut(expr, &mut by_type);
+
+        let type_id =
+            crate::types::TypeId::new(crate::types::handlers::SemanticTextHandler::TYPE_ID);
+        let Some(preds) = by_type.get_mut(&type_id) else {
+            return Ok(());
+        };
+
+        for pred in preds.iter_mut() {
+            if let Err(e) = self.ground_one(store.as_ref(), pred).await {
+                tracing::debug!(
+                    target: "linguagraph::grounding",
+                    error = %e,
+                    "grounding lookup failed; falling back to libqlink search"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Ground a single SemanticText predicate in place. Returns `Ok(())`
+    /// whether or not a pin was written; only a store I/O error surfaces
+    /// as `Err`, and the caller downgrades that to the fallback.
+    async fn ground_one(
+        &self,
+        store: &dyn crate::embeddings::EmbeddingStore,
+        pred: &mut crate::types::TypedPredicate,
+    ) -> std::result::Result<(), crate::embeddings::StoreError> {
+        // A groundable predicate carries the embedding + collection +
+        // label `lower` stashed. Anything missing means it isn't a
+        // semantic search we can pin (e.g. a plain scalar predicate that
+        // happened to share the type id) — leave it alone.
+        let Some(Literal::List(emb_lits)) = pred.params.get("embedding") else {
+            return Ok(());
+        };
+        let Some(Literal::String(collection)) = pred.params.get("collection") else {
+            return Ok(());
+        };
+        let Some(Literal::String(label)) = pred.params.get("label") else {
+            return Ok(());
+        };
+        let query_str = match pred.params.get("query_str") {
+            Some(Literal::String(s)) => s.clone(),
+            _ => String::new(),
+        };
+        let vector: Vec<f32> = emb_lits
+            .iter()
+            .filter_map(|l| match l {
+                Literal::Float(f) => Some(*f as f32),
+                Literal::Int(i) => Some(*i as f32),
+                _ => None,
+            })
+            .collect();
+        if vector.is_empty() {
+            return Ok(());
+        }
+        let collection = collection.clone();
+        let label = label.clone();
+
+        // Dense search over `_canonical`. Fetch a wider `fetch_k`, then
+        // label-filter client-side (the collection is shared across
+        // labels) and threshold below.
+        let hits = store
+            .search_raw(&collection, &vector, self.grounding.fetch_k.max(1), None)
+            .await?;
+        if hits.is_empty() {
+            return Ok(());
+        }
+
+        // Keep same-label, node-id-keyed hits. A point id that doesn't
+        // parse as an integer isn't from the qlink `_canonical` collection
+        // (e.g. an ontology UUID) — skip it.
+        let mut candidates: Vec<(i64, f32, Option<String>)> = Vec::new();
+        for h in hits {
+            let Ok(nid) = h.id.parse::<i64>() else {
+                continue;
+            };
+            if !payload_label_matches(&h.payload, &label) {
+                continue;
+            }
+            let text = payload_text(&h.payload);
+            candidates.push((nid, h.score, text));
+        }
+        if candidates.is_empty() {
+            return Ok(());
+        }
+
+        // Optional cross-encoder rerank — only when a reranker is attached
+        // and every candidate carries payload text to score.
+        if self.grounding.rerank && !query_str.is_empty() {
+            if let Some(reranker) = self.reranker.as_ref() {
+                let texts: Option<Vec<String>> =
+                    candidates.iter().map(|(_, _, t)| t.clone()).collect();
+                if let Some(texts) = texts {
+                    match reranker.rerank(&query_str, &texts) {
+                        Ok(scores) if scores.len() == candidates.len() => {
+                            for (c, s) in candidates.iter_mut().zip(scores) {
+                                c.1 = s as f32;
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(e) => tracing::debug!(
+                            target: "linguagraph::grounding",
+                            error = %e,
+                            "rerank failed; keeping dense scores"
+                        ),
+                    }
+                }
+            }
+        }
+
+        candidates.retain(|(_, s, _)| *s >= self.grounding.threshold);
+        if candidates.is_empty() {
+            return Ok(());
+        }
+        candidates.sort_by(|a, b| b.1.total_cmp(&a.1));
+        candidates.truncate(self.grounding.top_k.max(1));
+
+        let rows: Vec<Literal> = candidates
+            .iter()
+            .map(|(nid, score, _)| {
+                let mut row = BTreeMap::new();
+                row.insert("nid".to_string(), Literal::Int(*nid));
+                row.insert("score".to_string(), Literal::Float(*score as f64));
+                Literal::Object(row)
+            })
+            .collect();
+
+        tracing::debug!(
+            target: "linguagraph::grounding",
+            alias = pred.field.alias.as_str(),
+            label = %label,
+            pinned = rows.len(),
+            "grounded SemanticText filter to node ids"
+        );
+        pred.params
+            .insert("prefetch_rows".to_string(), Literal::List(rows));
+        Ok(())
+    }
+
+    /// Compile a DSL document to Cypher, running the async grounding pass.
+    ///
+    /// Mirrors [`Self::compile`] (lower → prepare → build) but inserts the
+    /// async [`Self::ground_semantic`] pass between preparation and Cypher
+    /// generation. `compile` stays synchronous and grounding-free so
+    /// snapshot tests and pure callers are unaffected; grounding only
+    /// happens here, and only when configured.
+    pub async fn compile_grounded(&self, dsl: DslQuery) -> Result<CypherQuery> {
+        let mut ast = self.lower(dsl)?;
+        self.prepare(&mut ast)?;
+        self.ground_semantic(&mut ast).await?;
+        Ok(builder::build_read_with(&ast, &self.registry)?)
+    }
+
     /// Compile and execute against the configured graph client.
     pub async fn run(&self, dsl: DslQuery) -> Result<QueryResult> {
         let mut dsl = dsl;
         self.validate_dsl_relationship_directions(&mut dsl).await?;
-        let cypher = self.compile(dsl)?;
+        let cypher = self.compile_grounded(dsl).await?;
         Ok(self.client.execute(&cypher).await?)
     }
 
@@ -1855,6 +2073,47 @@ fn db_value_to_json(value: &DbValue) -> serde_json::Value {
 
 /// Walk a [`crate::ast::query::FilterExpression`] tree and collect mutable
 /// references to every `Typed` predicate, grouped by `type_id`.
+/// Candidate payload keys that may carry the Cypher node label qlink
+/// tagged a `_canonical` point with. The exact key is qlink's business
+/// (an external Memgraph module), so we probe a small set; when none is
+/// present we treat the hit as label-agnostic and let the generated
+/// `MATCH (n:Label)` do the final filtering rather than dropping a
+/// possibly-correct hit on a schema guess.
+const PAYLOAD_LABEL_KEYS: &[&str] = &["label", "labels", "payload_label", "_label"];
+
+/// Candidate payload keys that may carry the point's source text, used
+/// only for the optional grounding rerank.
+const PAYLOAD_TEXT_KEYS: &[&str] = &["text", "document", "content", "payload_text", "_text"];
+
+/// True when the payload's label field (whichever recognised key holds
+/// it) equals — or, for a list-valued field, contains — `label`. Returns
+/// `true` when no label field is found: the `_canonical` collection is
+/// shared across labels, so we defer to the Cypher `MATCH` rather than
+/// discard a hit on an unknown payload schema.
+fn payload_label_matches(payload: &serde_json::Value, label: &str) -> bool {
+    for key in PAYLOAD_LABEL_KEYS {
+        match payload.get(key) {
+            Some(serde_json::Value::String(s)) => return s == label,
+            Some(serde_json::Value::Array(items)) => {
+                return items.iter().any(|v| v.as_str() == Some(label));
+            }
+            _ => {}
+        }
+    }
+    true
+}
+
+/// Best-effort extraction of a point's source text from its payload for
+/// the optional rerank. `None` when no recognised text key is present.
+fn payload_text(payload: &serde_json::Value) -> Option<String> {
+    for key in PAYLOAD_TEXT_KEYS {
+        if let Some(serde_json::Value::String(s)) = payload.get(key) {
+            return Some(s.clone());
+        }
+    }
+    None
+}
+
 fn collect_typed_predicates_mut<'a>(
     expr: &'a mut crate::ast::query::FilterExpression,
     out: &mut std::collections::HashMap<
@@ -2899,5 +3158,234 @@ mod tests {
 
         // Missing column / empty result degrade to 0 rather than panicking.
         assert_eq!(parse_collections_swept(&QueryResult::empty()), 0);
+    }
+
+    // ── Grounding ───────────────────────────────────────────────────────
+
+    #[test]
+    fn payload_label_matches_string_array_and_absence() {
+        assert!(payload_label_matches(
+            &serde_json::json!({"label": "Company"}),
+            "Company"
+        ));
+        assert!(!payload_label_matches(
+            &serde_json::json!({"label": "Person"}),
+            "Company"
+        ));
+        assert!(payload_label_matches(
+            &serde_json::json!({"labels": ["Company", "tenantA"]}),
+            "Company"
+        ));
+        assert!(!payload_label_matches(
+            &serde_json::json!({"labels": ["Person"]}),
+            "Company"
+        ));
+        // No recognised label key → defer to the Cypher MATCH (accept).
+        assert!(payload_label_matches(
+            &serde_json::json!({"foo": "bar"}),
+            "Company"
+        ));
+        assert!(payload_label_matches(&serde_json::Value::Null, "Company"));
+    }
+
+    #[test]
+    fn payload_text_reads_first_recognised_key() {
+        assert_eq!(
+            payload_text(&serde_json::json!({"text": "hi"})),
+            Some("hi".to_string())
+        );
+        assert_eq!(
+            payload_text(&serde_json::json!({"content": "yo"})),
+            Some("yo".to_string())
+        );
+        assert_eq!(payload_text(&serde_json::json!({"nope": "x"})), None);
+    }
+
+    /// Store double that returns a fixed set of raw hits from `search_raw`
+    /// and stubs the rest of the [`crate::embeddings::EmbeddingStore`]
+    /// surface — enough to drive the grounding pass.
+    #[derive(Debug)]
+    struct FixedRawStore(Vec<crate::embeddings::RawScoredHit>);
+
+    #[async_trait::async_trait]
+    impl crate::embeddings::EmbeddingStore for FixedRawStore {
+        async fn ensure(
+            &self,
+            _c: &str,
+            _d: usize,
+        ) -> std::result::Result<(), crate::embeddings::StoreError> {
+            Ok(())
+        }
+        async fn missing(
+            &self,
+            _c: &str,
+            _ids: &[uuid::Uuid],
+        ) -> std::result::Result<Vec<uuid::Uuid>, crate::embeddings::StoreError> {
+            Ok(Vec::new())
+        }
+        async fn upsert(
+            &self,
+            _c: &str,
+            _p: Vec<crate::embeddings::StoredEmbedding>,
+        ) -> std::result::Result<(), crate::embeddings::StoreError> {
+            Ok(())
+        }
+        async fn search(
+            &self,
+            _c: &str,
+            _v: &[f32],
+            _l: usize,
+            _t: Option<f32>,
+            _f: &crate::embeddings::EmbeddingFilter,
+        ) -> std::result::Result<Vec<crate::embeddings::ScoredHit>, crate::embeddings::StoreError>
+        {
+            Ok(Vec::new())
+        }
+        async fn search_raw(
+            &self,
+            _c: &str,
+            _v: &[f32],
+            _l: usize,
+            _t: Option<f32>,
+        ) -> std::result::Result<Vec<crate::embeddings::RawScoredHit>, crate::embeddings::StoreError>
+        {
+            Ok(self.0.clone())
+        }
+    }
+
+    /// Build a Pipeline wired for grounding against `store`, plus a
+    /// single-filter SemanticText `search` DSL over `Company.name`.
+    fn grounding_fixture(
+        store: crate::embeddings::SharedEmbeddingStore,
+        threshold: f32,
+    ) -> (Pipeline, crate::dsl::DslQuery) {
+        use crate::config::TypeConfig;
+        use crate::embeddings::{MockEmbedder, SharedEmbedder};
+        use crate::types::handlers::{self, SemanticTextConfig, SemanticTextHandler};
+        use crate::types::RegistryBuilder;
+
+        let mut cfg = cfg();
+        cfg.query.grounding.enabled = true;
+        cfg.query.grounding.threshold = threshold;
+        cfg.types.insert(
+            "SemanticText".into(),
+            TypeConfig {
+                collection: Some("companies".into()),
+                embedding_dim: Some(8),
+                ..TypeConfig::default()
+            },
+        );
+
+        let embedder: SharedEmbedder = Arc::new(MockEmbedder::new(8));
+        let st_cfg = SemanticTextConfig::from_config(&cfg).unwrap();
+        let registry = handlers::register_core(RegistryBuilder::new())
+            .register(SemanticTextHandler::new(st_cfg, embedder.clone()))
+            .build();
+
+        let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg)
+            .with_registry(Arc::new(registry))
+            .with_embedder(embedder)
+            .with_prefetch_store(store);
+
+        let dsl_query = crate::dsl::parse_str(
+            r#"{
+                "action": "find",
+                "start": { "label": "Company", "alias": "c" },
+                "filters": [
+                    { "field": "c.name", "type": "SemanticText",
+                      "op": "search", "value": "apple" }
+                ],
+                "return": [{ "field": "c.name", "alias": "name" }],
+                "limit": 5
+            }"#,
+        )
+        .unwrap();
+        (pipeline, dsl_query)
+    }
+
+    #[tokio::test]
+    async fn grounding_pins_node_id_when_store_has_confident_hit() {
+        let store: crate::embeddings::SharedEmbeddingStore =
+            Arc::new(FixedRawStore(vec![crate::embeddings::RawScoredHit {
+                id: "42".into(),
+                score: 0.98,
+                payload: serde_json::json!({
+                    "label": "Company",
+                    "text": "type: Company\nname: Apple"
+                }),
+            }]));
+        let (pipeline, dsl_query) = grounding_fixture(store, 0.9);
+        let cypher = pipeline.compile_grounded(dsl_query).await.unwrap();
+
+        assert!(
+            cypher.text.contains("UNWIND") && cypher.text.contains(".nid"),
+            "grounded query must UNWIND pinned ids; got:\n{}",
+            cypher.text
+        );
+        assert!(
+            !cypher.text.contains("libqlink.search_hybrid_reranked"),
+            "grounded path must skip the server-side search; got:\n{}",
+            cypher.text
+        );
+        // The pinned rows are bound (id 42 lives in a list param, not inline).
+        assert!(cypher
+            .params
+            .values()
+            .any(|v| matches!(v, Literal::List(items) if !items.is_empty())));
+    }
+
+    #[tokio::test]
+    async fn grounding_below_threshold_falls_back_to_libqlink() {
+        // Hit exists but its score is under the bar → no pin, fallback.
+        let store: crate::embeddings::SharedEmbeddingStore =
+            Arc::new(FixedRawStore(vec![crate::embeddings::RawScoredHit {
+                id: "42".into(),
+                score: 0.50,
+                payload: serde_json::json!({"label": "Company"}),
+            }]));
+        let (pipeline, dsl_query) = grounding_fixture(store, 0.9);
+        let cypher = pipeline.compile_grounded(dsl_query).await.unwrap();
+        assert!(
+            cypher.text.contains("libqlink.search_hybrid_reranked"),
+            "low-confidence hit must fall back; got:\n{}",
+            cypher.text
+        );
+    }
+
+    #[tokio::test]
+    async fn grounding_wrong_label_hit_falls_back_to_libqlink() {
+        // Confident, but for a different entity type → dropped, fallback.
+        let store: crate::embeddings::SharedEmbeddingStore =
+            Arc::new(FixedRawStore(vec![crate::embeddings::RawScoredHit {
+                id: "42".into(),
+                score: 0.99,
+                payload: serde_json::json!({"label": "Person"}),
+            }]));
+        let (pipeline, dsl_query) = grounding_fixture(store, 0.9);
+        let cypher = pipeline.compile_grounded(dsl_query).await.unwrap();
+        assert!(
+            cypher.text.contains("libqlink.search_hybrid_reranked"),
+            "wrong-label hit must fall back; got:\n{}",
+            cypher.text
+        );
+    }
+
+    #[tokio::test]
+    async fn grounding_disabled_leaves_query_untouched() {
+        // Even with a confident hit, grounding off keeps the fallback.
+        let store: crate::embeddings::SharedEmbeddingStore =
+            Arc::new(FixedRawStore(vec![crate::embeddings::RawScoredHit {
+                id: "42".into(),
+                score: 0.99,
+                payload: serde_json::json!({"label": "Company"}),
+            }]));
+        let (mut pipeline, dsl_query) = grounding_fixture(store, 0.9);
+        pipeline = pipeline.with_grounding(crate::config::GroundingConfig::default());
+        let cypher = pipeline.compile_grounded(dsl_query).await.unwrap();
+        assert!(
+            cypher.text.contains("libqlink.search_hybrid_reranked"),
+            "grounding disabled must keep the server-side search; got:\n{}",
+            cypher.text
+        );
     }
 }

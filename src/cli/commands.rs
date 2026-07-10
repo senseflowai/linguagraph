@@ -456,6 +456,13 @@ async fn cmd_run(
     if let Some(reranker) = build_semantic_text_reranker(&cfg)? {
         pipeline = pipeline.with_reranker(reranker);
     }
+    // Query-time grounding: attach the direct Qdrant store so SemanticText
+    // filters can be pinned to concrete node ids before compilation.
+    // Gated on the config flag so a disabled deployment never opens the
+    // extra connection.
+    if cfg.query.grounding.enabled {
+        pipeline = pipeline.with_prefetch_store(build_embedding_store(&cfg)?);
+    }
     pipeline.load_ontology_catalog().await?;
     let dsl_query = dsl::parse(&path).await?;
     let result = pipeline.run(dsl_query).await?;

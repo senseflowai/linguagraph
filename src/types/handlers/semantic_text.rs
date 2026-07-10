@@ -349,6 +349,19 @@ impl TypeHandler for SemanticTextHandler {
     }
 
     fn emit(&self, ctx: &mut EmitCtx<'_>, pred: &TypedPredicate) -> Result<(), TypeError> {
+        // ── Grounded fast-path. ─────────────────────────────────────────
+        // When the query-time grounding pass resolved this filter to
+        // concrete node ids, it stashed them under `prefetch_rows` as a
+        // `LIST[{nid, score}]`. Pin the alias to those ids directly and
+        // skip the server-side `libqlink` hybrid search entirely. When
+        // the param is absent (grounding off, or no confident hit) we
+        // fall through to the unchanged fallback below.
+        if let Some(Literal::List(rows)) = pred.params.get("prefetch_rows") {
+            if !rows.is_empty() {
+                return emit_grounded(ctx, pred);
+            }
+        }
+
         match pred.op {
             // ── Semantic: one per-entity hybrid search + single rerank. ─
             //
@@ -455,6 +468,37 @@ impl TypeHandler for SemanticTextHandler {
             ),
         }
     }
+}
+
+/// Emit the grounded (pinned-by-id) variant of a SemanticText filter.
+///
+/// The grounding pass stashed a `LIST[{nid, score}]` under the
+/// `prefetch_rows` param. We `UNWIND` it *before* the MATCH — mirroring
+/// the `CALL … YIELD id, score` shape the fallback uses so the builder
+/// splices it into the same pre-match slot — then constrain the alias to
+/// those node ids and order by the stashed score.
+///
+/// Note we deliberately do **not** re-assert `alias.prop = value` for
+/// `Eq` here (unlike the fallback): the id pin is already the ground
+/// truth, and the stored canonical value may differ from the LLM's raw
+/// filter value — the very fuzziness grounding exists to absorb.
+fn emit_grounded(ctx: &mut EmitCtx<'_>, pred: &TypedPredicate) -> Result<(), TypeError> {
+    let rows = pred
+        .params
+        .get("prefetch_rows")
+        .cloned()
+        .ok_or_else(|| TypeError::Handler("missing 'prefetch_rows' param".into()))?;
+
+    let alias = pred.field.alias.as_str();
+    let n = ctx.fresh_id();
+    let pf = format!("{alias}__pf_{n}");
+    let rows_p = ctx.bind(rows);
+    ctx.push_pre_match(format!("UNWIND {rows_p} AS {pf}"));
+    ctx.set_where(format!("id({alias}) = {pf}.nid"));
+    ctx.contribution_mut()
+        .order_by
+        .push((format!("{pf}.score"), OrderDir::Desc));
+    Ok(())
 }
 
 fn semantic_text_operand_text(op: TypedOp, value: &Value) -> Result<String, TypeError> {
@@ -1479,5 +1523,89 @@ mod tests {
         assert_eq!(contrib.where_inline.as_deref(), Some("id(p) = p__qid_0"));
         assert_eq!(contrib.order_by.len(), 1);
         assert_eq!(contrib.order_by[0].0, "p__score_0");
+    }
+
+    /// Helper: build the `LIST[{nid, score}]` a grounding pass would stash.
+    fn prefetch_rows(rows: &[(i64, f64)]) -> Literal {
+        Literal::List(
+            rows.iter()
+                .map(|(nid, score)| {
+                    let mut m = BTreeMap::new();
+                    m.insert("nid".to_string(), Literal::Int(*nid));
+                    m.insert("score".to_string(), Literal::Float(*score));
+                    Literal::Object(m)
+                })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn emit_grounded_pins_node_ids_and_skips_libqlink() {
+        // With `prefetch_rows` present, emit pins the alias to the given
+        // node ids via UNWIND and drops the server-side hybrid search.
+        let h = handler();
+        let field = pref("c", "name");
+        let value = serde_json::json!("apple");
+        let mut lower = lc(&field, TypedOp::Search, &value, "Company");
+        let mut pred = h.lower(&mut lower).unwrap();
+        pred.params
+            .insert("prefetch_rows".into(), prefetch_rows(&[(42, 0.97), (7, 0.91)]));
+
+        let mut contrib = CypherContribution::default();
+        let mut binder = CountingBinder {
+            next: 0,
+            next_var: 0,
+            params: Default::default(),
+        };
+        let mut emit = EmitCtx::new(&mut contrib, &mut binder);
+        h.emit(&mut emit, &pred).unwrap();
+
+        let pre = contrib.pre_match.join("\n");
+        assert!(
+            pre.contains("UNWIND $") && pre.contains("AS c__pf_0"),
+            "expected UNWIND of pinned rows; got: {pre}"
+        );
+        assert!(
+            !pre.contains("libqlink.search_hybrid_reranked"),
+            "grounded path must not emit the hybrid search; got: {pre}"
+        );
+        assert_eq!(contrib.where_inline.as_deref(), Some("id(c) = c__pf_0.nid"));
+        assert_eq!(contrib.order_by.len(), 1);
+        assert_eq!(contrib.order_by[0].0, "c__pf_0.score");
+        // The rows land in a single bound list param (never inlined).
+        assert!(
+            binder
+                .params
+                .values()
+                .any(|v| matches!(v, Literal::List(items) if items.len() == 2)),
+            "expected a 2-row prefetch list parameter"
+        );
+    }
+
+    #[test]
+    fn emit_empty_prefetch_rows_falls_back_to_libqlink() {
+        // An empty prefetch list must not hijack the fallback path.
+        let h = handler();
+        let field = pref("c", "name");
+        let value = serde_json::json!("apple");
+        let mut lower = lc(&field, TypedOp::Search, &value, "Company");
+        let mut pred = h.lower(&mut lower).unwrap();
+        pred.params
+            .insert("prefetch_rows".into(), Literal::List(vec![]));
+
+        let mut contrib = CypherContribution::default();
+        let mut binder = CountingBinder {
+            next: 0,
+            next_var: 0,
+            params: Default::default(),
+        };
+        let mut emit = EmitCtx::new(&mut contrib, &mut binder);
+        h.emit(&mut emit, &pred).unwrap();
+
+        let pre = contrib.pre_match.join("\n");
+        assert!(
+            pre.contains("libqlink.search_hybrid_reranked"),
+            "empty prefetch must fall back to the hybrid search; got: {pre}"
+        );
     }
 }

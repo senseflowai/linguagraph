@@ -44,3 +44,17 @@ embedding_dim = 1024
 [query]
 max_traversal_depth = 6
 default_limit = 50
+
+# Query-time grounding (entity linking). When enabled, a SemanticText
+# filter is first resolved directly against the `_canonical` collection in
+# Qdrant (reusing the query embedding); a high-confidence, same-label hit
+# is pinned by node id in the generated Cypher instead of running the
+# server-side `libqlink.search_hybrid_reranked`. Anything below the bar
+# falls back to that search unchanged. Requires the [qdrant] endpoint to
+# hold the qlink-populated `_canonical` points. Off by default.
+[query.grounding]
+enabled = false
+threshold = 0.9   # min score to pin (rerank score when rerank = true, else cosine)
+top_k = 3         # how many node ids to pin per alias
+fetch_k = 20      # candidates fetched from Qdrant before label-filter + threshold
+rerank = false    # rerank candidates with the SemanticText cross-encoder first

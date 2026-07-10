@@ -256,6 +256,30 @@ Several semantic filters on one alias collapse into a single call. For exact
 matching, use `eq` / `neq` / `contains`, which compile to a plain
 `WHERE c.name = $p0` (no qlink). See `examples/find_company_*.json`.
 
+#### Grounding (optional)
+
+With `[query.grounding].enabled = true` and a Qdrant endpoint that holds the
+qlink-populated `_canonical` points, the pipeline runs an extra *grounding*
+pass before compiling: it resolves the filter directly against `_canonical`
+(reusing the query embedding — no re-embed), and when a same-label hit clears
+`threshold` (optionally after a cross-encoder rerank) it pins those node ids
+into the Cypher instead of the server-side search:
+
+```cypher
+UNWIND $p0 AS c__pf_0        -- [{nid, score}, …] resolved client-side
+MATCH (c:Company)
+WHERE id(c) = c__pf_0.nid
+RETURN c.name AS name
+ORDER BY c__pf_0.score DESC
+LIMIT 5
+```
+
+This trades a Qdrant round-trip for precision and control when the filter
+maps to a specific known entity. Anything below the confidence bar (or of a
+different label) is left untouched and falls back to
+`libqlink.search_hybrid_reranked`. Off by default. See `[query.grounding]` in
+`config.e2e.toml`.
+
 ### Adding a new type
 
 ```rust

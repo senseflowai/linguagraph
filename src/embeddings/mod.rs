@@ -13,8 +13,8 @@
 //! * [`llama::LlamaEmbedder`] — feature-gated wrapper around
 //!   `llama-cpp-2`. Loads a GGUF embedding model once and reuses it.
 
-pub mod cache;
 pub mod mock;
+pub mod store;
 
 #[cfg(feature = "llama")]
 pub mod llama;
@@ -23,8 +23,11 @@ use std::sync::Arc;
 
 use thiserror::Error;
 
-pub use cache::EmbeddingCache;
 pub use mock::MockEmbedder;
+pub use store::{
+    ensure_indexed, point_id, EmbeddingFilter, EmbeddingIndex, EmbeddingKind, EmbeddingPayload,
+    EmbeddingStore, InMemoryEmbeddingStore, ScoredHit, StoreError, StoredEmbedding,
+};
 
 #[cfg(feature = "llama")]
 pub use llama::LlamaEmbedder;
@@ -65,6 +68,9 @@ pub trait Embedder: Send + Sync + std::fmt::Debug {
 
 /// Shared embedder reference threaded through the pipeline.
 pub type SharedEmbedder = Arc<dyn Embedder>;
+
+/// Shared embedding store reference (Qdrant or in-memory).
+pub type SharedEmbeddingStore = Arc<dyn store::EmbeddingStore>;
 
 /// Cross-encoder style reranker used after coarse embedding retrieval.
 pub trait Reranker: Send + Sync + std::fmt::Debug {

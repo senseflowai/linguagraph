@@ -436,10 +436,8 @@ mod tests {
                             allowed_values: Vec::new(),
                         },
                     ],
-                    embedding: None,
                 }],
                 relation_types: vec![],
-                embedding: None,
             },
         );
         let cols = plan("src").qlink_collections(Some(&catalog));

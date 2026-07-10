@@ -9,7 +9,9 @@ use crate::config::{self, Config};
 use crate::core::Pipeline;
 use crate::db::{introspect, Column, GraphClient, MemgraphClient, QueryResult, Value};
 use crate::dsl;
-use crate::embeddings::{self, EmbeddingCache, SharedEmbedder};
+use crate::embeddings::{
+    self, EmbeddingIndex, InMemoryEmbeddingStore, SharedEmbedder, SharedEmbeddingStore,
+};
 use crate::error::Result;
 use crate::graph::{
     GraphBuilder, JsonFileOntologyCatalogStorage, OntologyCatalogStorage,
@@ -346,6 +348,24 @@ fn build_registry(cfg: &Config) -> Result<(SharedRegistry, Option<SharedEmbedder
     Ok((std::sync::Arc::new(registry), Some(embedder)))
 }
 
+/// Build the embedding store for ontology/entity vectors. Returns a Qdrant
+/// client when the `qdrant` feature is on and `[qdrant].url` is set,
+/// otherwise an in-process store (tests, or deployments without Qdrant).
+fn build_embedding_store(cfg: &Config) -> Result<SharedEmbeddingStore> {
+    #[cfg(feature = "qdrant")]
+    if !cfg.qdrant.url.trim().is_empty() {
+        let client = crate::db::QdrantClient::connect(&cfg.qdrant).map_err(|e| {
+            crate::error::Error::Ingest(crate::ingest::IngestError::Type(format!(
+                "qdrant connect: {e}"
+            )))
+        })?;
+        return Ok(Arc::new(client));
+    }
+    #[cfg(not(feature = "qdrant"))]
+    let _ = cfg;
+    Ok(Arc::new(InMemoryEmbeddingStore::new()))
+}
+
 fn build_ontology_catalog_embedder(cfg: &Config) -> Result<SharedEmbedder> {
     embeddings::default_embedder(
         cfg.ontology_catalog.embedding_model.as_deref(),
@@ -675,22 +695,37 @@ async fn cmd_prompt(
     };
 
     let store = JsonFileOntologyCatalogStorage::new(&cfg.ontology_catalog.cache_path);
-    let mut catalog = store.load().await?;
+    let catalog = store.load().await?;
 
     match query {
         Some(query) => {
             // Query-driven compact prompt: route to the relevant domains,
             // then select the entities, properties (with value sets) and
-            // 1-hop neighbours the query needs. All of that lives behind
-            // the single `prompt::generate_query_prompt` call.
+            // 1-hop neighbours the query needs. Domain/entity/property
+            // embeddings are stored in and searched from the embedding
+            // store (Qdrant when configured); all of the selection lives
+            // behind the single `prompt::generate_query_prompt` call.
             let embedder = build_ontology_catalog_embedder(&cfg)?;
+            let vector_store = build_embedding_store(&cfg)?;
+            let collection = cfg.qdrant.collection.clone();
             let model_id = cfg
                 .ontology_catalog
                 .embedding_model
                 .clone()
                 .unwrap_or_else(|| "mock".to_string());
-            let cache_path = cfg.ontology_catalog.embedding_cache_path.clone();
-            let mut cache = EmbeddingCache::load(&cache_path, &model_id, embedder.dim()).await;
+            vector_store
+                .ensure(&collection, embedder.dim())
+                .await
+                .map_err(|e| {
+                    crate::error::Error::Ingest(crate::ingest::IngestError::Type(format!(
+                        "embedding store: {e}"
+                    )))
+                })?;
+            let index = EmbeddingIndex {
+                store: vector_store.as_ref(),
+                collection: &collection,
+                model: &model_id,
+            };
 
             let params = prompt::QueryPromptParams {
                 domain_threshold: cfg.ontology_catalog.domain_selection_threshold,
@@ -706,23 +741,15 @@ async fn cmd_prompt(
             let rendered = prompt::generate_query_prompt(
                 &query,
                 &mut schema,
-                &mut catalog,
+                &catalog,
                 embedder.as_ref(),
-                &mut cache,
+                &index,
                 &params,
             )
+            .await
             .map_err(|e| {
                 crate::error::Error::Ingest(crate::ingest::IngestError::Type(format!(
                     "prompt generation: {e}"
-                )))
-            })?;
-
-            // Persist any freshly computed domain embeddings and the
-            // entity/property embedding cache so the next request reuses them.
-            store.save(&catalog).await?;
-            cache.save(&cache_path).await.map_err(|e| {
-                crate::error::Error::Ingest(crate::ingest::IngestError::Type(format!(
-                    "embedding cache save: {e}"
                 )))
             })?;
 
@@ -908,6 +935,7 @@ async fn load_config_or_default(path: &std::path::Path) -> Config {
             llm: Default::default(),
             query: Default::default(),
             ontology_catalog: Default::default(),
+            qdrant: Default::default(),
             prompt: Default::default(),
             ingest: Default::default(),
             types: Default::default(),

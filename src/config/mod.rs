@@ -17,6 +17,11 @@ pub struct Config {
     pub query: QueryConfig,
     #[serde(default, alias = "graph_specification")]
     pub ontology_catalog: OntologyCatalogConfig,
+    /// Qdrant vector store used for ontology/entity embedding storage and
+    /// server-side similarity search. Optional: when `url` is empty, prompt
+    /// generation falls back to an in-process embedding store.
+    #[serde(default)]
+    pub qdrant: QdrantConfig,
     /// Prompt-generation settings (ontologies file, default domain).
     #[serde(default)]
     pub prompt: PromptConfig,
@@ -326,11 +331,6 @@ pub struct OntologyCatalogConfig {
     /// Path to the ontology catalog cache file (JSON backend).
     #[serde(default = "default_ontology_catalog_cache_path")]
     pub cache_path: String,
-    /// Path to the entity/property embedding cache used by query-driven
-    /// prompt generation. Content-addressed and validated against the
-    /// active `{model, dim}`; recomputed transparently when stale.
-    #[serde(default = "default_ontology_embedding_cache_path")]
-    pub embedding_cache_path: String,
     /// Path to the embedding model used for entity matching. When
     /// omitted, the configured embedder falls back to the default mock
     /// backend in builds without a concrete model.
@@ -371,7 +371,6 @@ impl Default for OntologyCatalogConfig {
     fn default() -> Self {
         Self {
             cache_path: default_ontology_catalog_cache_path(),
-            embedding_cache_path: default_ontology_embedding_cache_path(),
             embedding_model: None,
             reranking_model: None,
             embedding_dim: default_ontology_catalog_embedding_dim(),
@@ -405,12 +404,52 @@ fn default_selection_neighbor_hops() -> usize {
     1
 }
 
-fn default_ontology_catalog_cache_path() -> String {
-    crate::graph::DEFAULT_ONTOLOGY_CATALOG_CACHE_PATH.into()
+/// Qdrant vector-store settings (`[qdrant]` in TOML). Used to store
+/// ontology/entity embeddings and run similarity search server-side.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QdrantConfig {
+    /// Base URL of the Qdrant REST API, e.g. `http://127.0.0.1:6333`.
+    /// Empty (the default) disables Qdrant — prompt generation then uses
+    /// an in-process embedding store.
+    #[serde(default)]
+    pub url: String,
+    /// Name of the environment variable holding the Qdrant API key.
+    /// Absent/empty is fine for an unauthenticated local instance.
+    #[serde(default = "default_qdrant_api_key_env")]
+    pub api_key_env: String,
+    /// Request timeout in seconds.
+    #[serde(default = "default_qdrant_timeout_secs")]
+    pub timeout_secs: u64,
+    /// Collection holding the ontology/entity embedding points.
+    #[serde(default = "default_qdrant_collection")]
+    pub collection: String,
 }
 
-fn default_ontology_embedding_cache_path() -> String {
-    crate::graph::DEFAULT_ONTOLOGY_EMBEDDING_CACHE_PATH.into()
+impl Default for QdrantConfig {
+    fn default() -> Self {
+        Self {
+            url: String::new(),
+            api_key_env: default_qdrant_api_key_env(),
+            timeout_secs: default_qdrant_timeout_secs(),
+            collection: default_qdrant_collection(),
+        }
+    }
+}
+
+fn default_qdrant_api_key_env() -> String {
+    "QDRANT_API_KEY".into()
+}
+
+fn default_qdrant_timeout_secs() -> u64 {
+    30
+}
+
+fn default_qdrant_collection() -> String {
+    "linguagraph_ontology".into()
+}
+
+fn default_ontology_catalog_cache_path() -> String {
+    crate::graph::DEFAULT_ONTOLOGY_CATALOG_CACHE_PATH.into()
 }
 
 fn default_ontology_catalog_embedding_dim() -> usize {

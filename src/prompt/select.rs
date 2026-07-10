@@ -8,15 +8,19 @@
 //!
 //! The signal is embedding similarity between the query and one short
 //! passage per entity and per property (see [`entity_embedding_text`] /
-//! [`property_embedding_text`]). Those passages are cached across requests
-//! by [`EmbeddingCache`]; only the query embedding is recomputed each call.
+//! [`property_embedding_text`]). Those passages are stored in an
+//! [`EmbeddingStore`](crate::embeddings::EmbeddingStore) and ranked
+//! **server-side**; only the query embedding is computed each call.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
 use super::generator::SCHEMA_HIDDEN_PROPS;
 use super::schema::{GraphSchema, NodeKind, Property};
-use crate::embeddings::{cosine_similarity, EmbedError, EmbeddingCache, Embedder};
+use crate::embeddings::{
+    ensure_indexed, EmbedError, Embedder, EmbeddingFilter, EmbeddingIndex, EmbeddingKind,
+    EmbeddingPayload,
+};
 
 /// Tunables for [`select_query_schema`].
 #[derive(Debug, Clone)]
@@ -111,85 +115,119 @@ pub(crate) fn entity_embedding_text(domain: &str, node: &NodeKind) -> String {
 struct NodeScore {
     node: NodeKind,
     entity_score: f32,
-    /// `property index -> cosine score` for non-hidden properties.
-    prop_scores: BTreeMap<usize, f32>,
+    /// `property name -> cosine score` for non-hidden properties.
+    prop_scores: BTreeMap<String, f32>,
 }
 
 /// Narrow the already domain-filtered `domain_schemas` down to the schema
 /// slice relevant to `query`.
 ///
-/// Returns a single merged [`GraphSchema`] containing the score-selected
-/// entities (with their relevant properties), their `neighbor_hops`
-/// neighbours, and every relationship whose endpoints both survive. Node
-/// `domain` fields are preserved so the renderer can still resolve
-/// per-domain catalog annotations.
-pub(crate) fn select_query_schema(
+/// Passages for every entity and property are lazily embedded and upserted
+/// into `index` (only the ones the store is missing), then a single
+/// filtered vector search scores them all **server-side**. Returns a merged
+/// [`GraphSchema`] with the score-selected entities (and their relevant
+/// properties), their `neighbor_hops` neighbours, and every relationship
+/// whose endpoints both survive. Node `domain` fields are preserved so the
+/// renderer can still resolve per-domain catalog annotations.
+pub(crate) async fn select_query_schema(
     query: &str,
     domain_schemas: &BTreeMap<String, GraphSchema>,
-    cache: &mut EmbeddingCache,
     embedder: &dyn Embedder,
+    index: &EmbeddingIndex<'_>,
     params: &QuerySelectionParams,
 ) -> Result<GraphSchema, EmbedError> {
     if domain_schemas.is_empty() {
         return Ok(GraphSchema::default());
     }
 
-    let query_embedding = embedder.embed(&query_text(query))?;
-
-    // Flatten every (domain, node) and build the embedding-text batch:
-    // one entity passage followed by its property passages, tracking where
-    // each landed so scores can be read back positionally.
-    let mut texts: Vec<String> = Vec::new();
-    let mut entity_idx: Vec<usize> = Vec::new();
-    let mut prop_idx: Vec<Vec<(usize, usize)>> = Vec::new();
-    let mut flat: Vec<NodeKind> = Vec::new();
-
+    // One entity passage plus one passage per non-hidden property.
+    let mut passages: Vec<(EmbeddingPayload, String)> = Vec::new();
     for (domain, schema) in domain_schemas {
         for node in &schema.nodes {
-            entity_idx.push(texts.len());
-            texts.push(entity_embedding_text(domain, node));
-            let mut props = Vec::new();
-            for (pi, prop) in node.properties.iter().enumerate() {
+            passages.push((
+                EmbeddingPayload::entity(domain.clone(), node.label.clone()),
+                entity_embedding_text(domain, node),
+            ));
+            for prop in &node.properties {
                 if SCHEMA_HIDDEN_PROPS.contains(&prop.name.as_str()) {
                     continue;
                 }
-                props.push((pi, texts.len()));
-                texts.push(property_embedding_text(domain, &node.label, prop));
+                passages.push((
+                    EmbeddingPayload::property(domain.clone(), node.label.clone(), prop.name.clone()),
+                    property_embedding_text(domain, &node.label, prop),
+                ));
             }
-            prop_idx.push(props);
-            flat.push(node.clone());
         }
     }
-
-    if flat.is_empty() {
+    if passages.is_empty() {
         return Ok(GraphSchema::default());
     }
 
-    let embeddings = cache.embed_cached(&texts, embedder)?;
-    let score_at = |i: usize| cosine_similarity(&query_embedding, &embeddings[i]);
+    ensure_indexed(index, embedder, &passages).await?;
+
+    let query_embedding = embedder.embed(&query_text(query))?;
+    let filter = EmbeddingFilter {
+        kinds: vec![EmbeddingKind::Entity, EmbeddingKind::Property],
+        domains: domain_schemas.keys().cloned().collect(),
+    };
+    // Retrieve a score for every passage: server-side cosine over the whole
+    // selected-domain slice (bounded — a handful of domains).
+    let hits = index
+        .store
+        .search(index.collection, &query_embedding, passages.len(), None, &filter)
+        .await?;
+
+    // Fold the hits into per-entity and per-(entity,property) best scores.
+    let mut entity_hit: BTreeMap<String, f32> = BTreeMap::new();
+    let mut prop_hit: BTreeMap<(String, String), f32> = BTreeMap::new();
+    for hit in &hits {
+        match hit.payload.kind {
+            EmbeddingKind::Entity => {
+                if let Some(e) = &hit.payload.entity {
+                    let slot = entity_hit.entry(e.clone()).or_insert(f32::MIN);
+                    *slot = slot.max(hit.score);
+                }
+            }
+            EmbeddingKind::Property => {
+                if let (Some(e), Some(p)) = (&hit.payload.entity, &hit.payload.property) {
+                    let slot = prop_hit.entry((e.clone(), p.clone())).or_insert(f32::MIN);
+                    *slot = slot.max(hit.score);
+                }
+            }
+            EmbeddingKind::Domain => {}
+        }
+    }
 
     // Score each node (entity score = max of its own passage and its best
     // property). Keyed by label — labels are unique across the projected
     // schema because each node binds to exactly one domain.
     let mut scores: BTreeMap<String, NodeScore> = BTreeMap::new();
-    for (i, node) in flat.into_iter().enumerate() {
-        let mut entity_score = score_at(entity_idx[i]);
-        let mut prop_scores = BTreeMap::new();
-        for (pi, ti) in &prop_idx[i] {
-            let s = score_at(*ti);
-            prop_scores.insert(*pi, s);
-            if s > entity_score {
-                entity_score = s;
+    for schema in domain_schemas.values() {
+        for node in &schema.nodes {
+            let mut entity_score = entity_hit.get(&node.label).copied().unwrap_or(0.0);
+            let mut prop_scores = BTreeMap::new();
+            for prop in &node.properties {
+                if SCHEMA_HIDDEN_PROPS.contains(&prop.name.as_str()) {
+                    continue;
+                }
+                let s = prop_hit
+                    .get(&(node.label.clone(), prop.name.clone()))
+                    .copied()
+                    .unwrap_or(0.0);
+                if s > entity_score {
+                    entity_score = s;
+                }
+                prop_scores.insert(prop.name.clone(), s);
             }
+            scores.insert(
+                node.label.clone(),
+                NodeScore {
+                    node: node.clone(),
+                    entity_score,
+                    prop_scores,
+                },
+            );
         }
-        scores.insert(
-            node.label.clone(),
-            NodeScore {
-                node,
-                entity_score,
-                prop_scores,
-            },
-        );
     }
 
     // Decide the score-selected entities.
@@ -286,19 +324,19 @@ pub(crate) fn select_query_schema(
 /// visible properties — falls back to the full (non-hidden) set.
 fn filter_properties(
     node: &NodeKind,
-    prop_scores: &BTreeMap<usize, f32>,
+    prop_scores: &BTreeMap<String, f32>,
     params: &QuerySelectionParams,
 ) -> Vec<Property> {
     let kept: Vec<Property> = node
         .properties
         .iter()
-        .enumerate()
-        .filter(|(pi, prop)| {
+        .filter(|prop| {
             !SCHEMA_HIDDEN_PROPS.contains(&prop.name.as_str())
                 && (!prop.allowed_values.is_empty()
-                    || prop_scores.get(pi).copied().unwrap_or(0.0) >= params.property_threshold)
+                    || prop_scores.get(&prop.name).copied().unwrap_or(0.0)
+                        >= params.property_threshold)
         })
-        .map(|(_, prop)| prop.clone())
+        .cloned()
         .collect();
 
     if kept.is_empty() {
@@ -315,6 +353,7 @@ fn filter_properties(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::embeddings::InMemoryEmbeddingStore;
     use crate::prompt::schema::{PropertyType as PT, RelKind};
 
     fn prop(name: &str, ty: PT, values: &[&str]) -> Property {
@@ -403,8 +442,21 @@ mod tests {
         }
     }
 
-    #[test]
-    fn narrows_to_relevant_entity_and_drops_others() {
+    async fn run(query: &str, schemas: &BTreeMap<String, GraphSchema>) -> GraphSchema {
+        let embedder = StubEmbedder;
+        let store = InMemoryEmbeddingStore::new();
+        let index = EmbeddingIndex {
+            store: &store,
+            collection: "test",
+            model: "stub",
+        };
+        select_query_schema(query, schemas, &embedder, &index, &params())
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn narrows_to_relevant_entity_and_drops_others() {
         let listing = node(
             "Listing",
             vec![
@@ -424,17 +476,7 @@ mod tests {
             },
         );
 
-        let embedder = StubEmbedder;
-        let mut cache = EmbeddingCache::new("stub", embedder.dim());
-        let narrowed = select_query_schema(
-            "listings sold by auction on flippa",
-            &schemas,
-            &mut cache,
-            &embedder,
-            &params(),
-        )
-        .unwrap();
-
+        let narrowed = run("listings sold by auction on flippa", &schemas).await;
         let labels: Vec<&str> = narrowed.nodes.iter().map(|n| n.label.as_str()).collect();
         assert!(labels.contains(&"Listing"), "relevant entity kept");
         assert!(
@@ -443,8 +485,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn pulls_in_one_hop_neighbor() {
+    #[tokio::test]
+    async fn pulls_in_one_hop_neighbor() {
         let listing = node(
             "Listing",
             vec![prop("sale_method", PT::String, &["auction", "instant_sale"])],
@@ -469,25 +511,15 @@ mod tests {
             },
         );
 
-        let embedder = StubEmbedder;
-        let mut cache = EmbeddingCache::new("stub", embedder.dim());
-        let narrowed = select_query_schema(
-            "auction listings",
-            &schemas,
-            &mut cache,
-            &embedder,
-            &params(),
-        )
-        .unwrap();
-
+        let narrowed = run("auction listings", &schemas).await;
         let labels: Vec<&str> = narrowed.nodes.iter().map(|n| n.label.as_str()).collect();
         assert!(labels.contains(&"Listing"));
         assert!(labels.contains(&"Seller"), "1-hop neighbour pulled in");
         assert_eq!(narrowed.relationships.len(), 1, "connecting rel kept");
     }
 
-    #[test]
-    fn keeps_enum_property_even_when_off_topic() {
+    #[tokio::test]
+    async fn keeps_enum_property_even_when_off_topic() {
         // A selected entity always retains its enum fields (useful for
         // filters) plus any query-matching property.
         let listing = node(
@@ -505,10 +537,7 @@ mod tests {
                 relationships: vec![],
             },
         );
-        let embedder = StubEmbedder;
-        let mut cache = EmbeddingCache::new("stub", embedder.dim());
-        let narrowed = select_query_schema("auction sale", &schemas, &mut cache, &embedder, &params())
-            .unwrap();
+        let narrowed = run("auction sale", &schemas).await;
         let listing = &narrowed.nodes[0];
         let names: Vec<&str> = listing.properties.iter().map(|p| p.name.as_str()).collect();
         assert!(names.contains(&"sale_method"), "enum property retained");

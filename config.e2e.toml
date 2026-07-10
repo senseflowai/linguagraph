@@ -18,6 +18,15 @@ model = "vllm-qwen36"
 temperature = 0.0
 max_tokens = 2048
 
+[qdrant]
+# Direct Qdrant endpoint for ontology/entity embedding storage + server-side
+# similarity search used by query-driven prompt generation. Leave `url` empty
+# to fall back to an in-process embedding store.
+url = "http://127.0.0.1:6333"
+api_key_env = "QDRANT_API_KEY"
+timeout_secs = 30
+collection = "linguagraph_ontology"
+
 [graph_specification]
 embedding_model = "/home/df/.cache/huggingface/hub/models--gpustack--bge-m3-GGUF/snapshots/2d48f1737679ad900d5c26c5aad5410e9c70fdca/bge-m3-Q4_K_M.gguf"
 reranking_model = "/home/df/.cache/huggingface/hub/models--gpustack--bge-reranker-v2-m3-GGUF/snapshots/3093af03b1a635e67b084b1d8c03c5f5e020fd05/bge-reranker-v2-m3-Q4_K_M.gguf"

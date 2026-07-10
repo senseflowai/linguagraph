@@ -5,5 +5,3 @@ config.toml
 .DS_Store
 .idea
 .venv
-# Derived embedding cache for query-driven prompt generation (regenerable).
-.linguagraph/ontology_embedding_cache.json

@@ -9,7 +9,7 @@ use std::fmt::Write;
 
 use super::schema::{GraphSchema, NodeKind, Property, RelKind};
 use super::select::{select_query_schema, QuerySelectionParams};
-use crate::embeddings::{EmbedError, EmbeddingCache, Embedder, SharedEmbedder, SharedReranker};
+use crate::embeddings::{EmbedError, Embedder, EmbeddingIndex, SharedEmbedder, SharedReranker};
 use crate::graph::{
     OntologyCatalog, OntologyPropertyType, PropertySpec, DEFAULT_DOMAIN_SELECTION_THRESHOLD,
     DEFAULT_DOMAIN_SELECTION_TOP_K,
@@ -132,31 +132,34 @@ impl Default for QueryPromptParams {
 ///    value sets) and 1-hop neighbours the query needs;
 /// 4. render the prompt from that narrowed schema.
 ///
-/// `catalog` is mutated to cache freshly computed domain embeddings and
-/// `cache` to store entity/property embeddings — callers should persist
-/// both afterwards. Reuses [`OntologyCatalog::project_schema`],
+/// Domain and entity/property embeddings are stored in and searched from
+/// `index` (Qdrant in production, in-memory in tests); only the query
+/// embedding is computed here. Reuses [`OntologyCatalog::project_schema`],
 /// [`OntologyCatalog::split_schema_by_domain`],
 /// [`OntologyCatalog::select_domains`] and [`select_query_schema`].
-pub fn generate_query_prompt(
+pub async fn generate_query_prompt(
     query: &str,
     schema: &mut GraphSchema,
-    catalog: &mut OntologyCatalog,
+    catalog: &OntologyCatalog,
     embedder: &dyn Embedder,
-    cache: &mut EmbeddingCache,
+    index: &EmbeddingIndex<'_>,
     params: &QueryPromptParams,
 ) -> Result<String, EmbedError> {
     OntologyCatalog::project_schema(schema, catalog.all_domains());
     let domain_schemas = OntologyCatalog::split_schema_by_domain(schema);
 
     let candidates: BTreeSet<String> = domain_schemas.keys().cloned().collect();
-    let selected: BTreeMap<String, GraphSchema> = catalog
+    let matches = catalog
         .select_domains(
             query,
             params.domain_threshold,
             params.domain_top_k,
             Some(&candidates),
             embedder,
-        )?
+            index,
+        )
+        .await?;
+    let selected: BTreeMap<String, GraphSchema> = matches
         .iter()
         .filter_map(|matched| {
             domain_schemas
@@ -165,7 +168,7 @@ pub fn generate_query_prompt(
         })
         .collect();
 
-    let narrowed = select_query_schema(query, &selected, cache, embedder, &params.selection)?;
+    let narrowed = select_query_schema(query, &selected, embedder, index, &params.selection).await?;
 
     let opts = PromptOptions {
         include_examples: params.include_examples,
@@ -592,10 +595,8 @@ mod tests {
                         required: false,
                         allowed_values: Vec::new(),
                     }],
-                    embedding: None,
                 }],
                 relation_types: vec![],
-                embedding: None,
             },
         );
         let prompt = generate_system_prompt(
@@ -796,7 +797,6 @@ mod tests {
                 required: false,
                 allowed_values: values.iter().map(|v| v.to_string()).collect(),
             }],
-            embedding: None,
         }
     }
 
@@ -806,7 +806,6 @@ mod tests {
             description: Some(desc.into()),
             entity_types: vec![entity],
             relation_types: vec![],
-            embedding: None,
         }
     }
 
@@ -826,8 +825,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn query_prompt_is_compact_and_domain_scoped() {
+    #[tokio::test]
+    async fn query_prompt_is_compact_and_domain_scoped() {
         let mut catalog = OntologyCatalog::default();
         catalog.insert(
             "flippa",
@@ -860,7 +859,12 @@ mod tests {
         };
 
         let embedder = StubEmbedder;
-        let mut cache = EmbeddingCache::new("stub", embedder.dim());
+        let store = crate::embeddings::InMemoryEmbeddingStore::new();
+        let index = EmbeddingIndex {
+            store: &store,
+            collection: "test",
+            model: "stub",
+        };
         let params = QueryPromptParams {
             domain_threshold: 0.2,
             domain_top_k: 3,
@@ -875,11 +879,12 @@ mod tests {
         let prompt = generate_query_prompt(
             "auction listings for sale",
             &mut schema,
-            &mut catalog,
+            &catalog,
             &embedder,
-            &mut cache,
+            &index,
             &params,
         )
+        .await
         .unwrap();
 
         // The relevant domain's entity, its enum property and values, and

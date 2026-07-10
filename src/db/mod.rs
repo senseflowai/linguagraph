@@ -7,6 +7,8 @@
 pub mod introspect;
 pub mod memgraph;
 pub mod mock;
+#[cfg(feature = "qdrant")]
+pub mod qdrant;
 pub mod result;
 
 use async_trait::async_trait;
@@ -15,6 +17,8 @@ use thiserror::Error;
 pub use introspect::{introspect_schema, IntrospectOptions};
 pub use memgraph::MemgraphClient;
 pub use mock::MockClient;
+#[cfg(feature = "qdrant")]
+pub use qdrant::QdrantClient;
 pub use result::{Column, NodeType, QueryResult, Row, Value};
 
 use crate::builder::CypherQuery;

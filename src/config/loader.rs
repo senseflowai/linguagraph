@@ -71,6 +71,20 @@ fn apply_env_overrides(cfg: &mut Config) {
     if let Ok(v) = std::env::var("LINGUAGRAPH__PROMPT__DEFAULT_DOMAIN") {
         cfg.prompt.default_domain = Some(v);
     }
+    if let Ok(v) = std::env::var("LINGUAGRAPH__QDRANT__URL") {
+        cfg.qdrant.url = v;
+    }
+    if let Ok(v) = std::env::var("LINGUAGRAPH__QDRANT__API_KEY_ENV") {
+        cfg.qdrant.api_key_env = v;
+    }
+    if let Ok(v) = std::env::var("LINGUAGRAPH__QDRANT__TIMEOUT_SECS") {
+        if let Ok(n) = v.parse() {
+            cfg.qdrant.timeout_secs = n;
+        }
+    }
+    if let Ok(v) = std::env::var("LINGUAGRAPH__QDRANT__COLLECTION") {
+        cfg.qdrant.collection = v;
+    }
 }
 
 fn validate(cfg: &Config) -> Result<(), ConfigError> {
@@ -96,6 +110,12 @@ fn validate(cfg: &Config) -> Result<(), ConfigError> {
         return Err(ConfigError::InvalidValue {
             key: "llm.temperature".into(),
             message: "must be in [0.0, 2.0]".into(),
+        });
+    }
+    if !cfg.qdrant.url.is_empty() && cfg.qdrant.collection.trim().is_empty() {
+        return Err(ConfigError::InvalidValue {
+            key: "qdrant.collection".into(),
+            message: "must not be empty when qdrant.url is set".into(),
         });
     }
     Ok(())

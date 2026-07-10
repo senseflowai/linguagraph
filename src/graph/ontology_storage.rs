@@ -35,12 +35,6 @@ pub trait OntologyCatalogStorage: Send + Sync + std::fmt::Debug {
 /// Default on-disk location for the JSON catalog cache.
 pub const DEFAULT_ONTOLOGY_CATALOG_CACHE_PATH: &str = ".linguagraph/ontology_catalog.json";
 
-/// Default on-disk location for the entity/property embedding cache used
-/// by query-driven prompt generation. Kept separate from the catalog so
-/// the catalog stays small and its diffs stay readable.
-pub const DEFAULT_ONTOLOGY_EMBEDDING_CACHE_PATH: &str =
-    ".linguagraph/ontology_embedding_cache.json";
-
 /// Filesystem-backed storage: reads and atomically rewrites a single
 /// JSON file holding the full catalog.
 #[derive(Debug, Clone)]
@@ -152,7 +146,6 @@ mod tests {
                 description: None,
                 entity_types: vec![EntityTypeSpec::with_description("Foo", "A foo.")],
                 relation_types: vec![RelationTypeSpec::new("KNOWS")],
-                embedding: None,
             },
         );
         cat

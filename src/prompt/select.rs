@@ -396,7 +396,7 @@ mod tests {
     fn scalar_property_text_omits_enum_and_values() {
         let p = prop("vin", PT::String, &[]);
         let text = property_embedding_text("cars", "Car", &p);
-        assert!(text.contains("type: keyword"));
+        assert!(text.contains("type: string"));
         assert!(!text.contains("type: enum"));
         assert!(!text.contains("values:"));
     }

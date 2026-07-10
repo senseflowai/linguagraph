@@ -119,12 +119,14 @@ pub enum PropertyType {
 
 impl PropertyType {
     /// Canonical scalar-type label shown to the LLM in the schema block
-    /// and in property embedding text (e.g. `keyword`, `int`, `datetime`).
+    /// and in property embedding text (e.g. `string`, `number`, `datetime`).
+    /// The vocabulary is deliberately small: `string` (not `keyword` — the
+    /// DSL has no Elasticsearch concept) and `number` (int and float
+    /// collapse to one type the model reasons about identically).
     pub fn as_str(self) -> &'static str {
         match self {
-            PropertyType::String => "keyword",
-            PropertyType::Int => "int",
-            PropertyType::Float => "float",
+            PropertyType::String => "string",
+            PropertyType::Int | PropertyType::Float => "number",
             PropertyType::Bool => "bool",
             PropertyType::Date => "date",
             PropertyType::Datetime => "datetime",

@@ -842,12 +842,7 @@ mod tests {
         }
     }
 
-    fn spec(
-        name: &str,
-        desc: &str,
-        prop: &str,
-        values: &[&str],
-    ) -> crate::graph::EntityTypeSpec {
+    fn spec(name: &str, desc: &str, prop: &str, values: &[&str]) -> crate::graph::EntityTypeSpec {
         crate::graph::EntityTypeSpec {
             name: name.into(),
             description: Some(desc.into()),
@@ -913,7 +908,12 @@ mod tests {
         // domain label in `extra_labels`.
         let mut schema = GraphSchema {
             nodes: vec![
-                live_node("Listing", "flippa", "sale_method", &["auction", "classified"]),
+                live_node(
+                    "Listing",
+                    "flippa",
+                    "sale_method",
+                    &["auction", "classified"],
+                ),
                 live_node("Patient", "clinic", "visit_reason", &[]),
             ],
             relationships: vec![],
@@ -961,6 +961,9 @@ mod tests {
         assert!(prompt.contains("# RULES"), "{prompt}");
         assert!(!prompt.contains("keyword"), "{prompt}");
         // … while the unrelated domain is excluded entirely.
-        assert!(!prompt.contains("Patient"), "unrelated domain leaked: {prompt}");
+        assert!(
+            !prompt.contains("Patient"),
+            "unrelated domain leaked: {prompt}"
+        );
     }
 }

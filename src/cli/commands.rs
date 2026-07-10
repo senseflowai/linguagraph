@@ -761,7 +761,11 @@ async fn cmd_prompt(
             crate::graph::OntologyCatalog::project_schema(&mut schema, catalog.all_domains());
             let opts = PromptOptions {
                 include_examples: !no_examples,
-                ontology_catalog: if no_specification { None } else { Some(catalog) },
+                ontology_catalog: if no_specification {
+                    None
+                } else {
+                    Some(catalog)
+                },
                 ..PromptOptions::default()
             };
             println!("{}", prompt::generate_system_prompt(&schema, &opts));

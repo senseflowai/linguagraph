@@ -543,7 +543,6 @@ impl OntologyCatalog {
         let source_relationships = schema.relationships.clone();
         let mut projected_nodes = Vec::new();
         let mut kept_node_keys = BTreeSet::new();
-        let mut kept_node_labels = BTreeSet::new();
 
         for domain in &domains {
             let Some(domain_name) = domain.name() else {
@@ -563,7 +562,6 @@ impl OntologyCatalog {
                 retain_declared_properties(&mut node.properties, spec);
 
                 if kept_node_keys.insert((domain_name.to_string(), node.label.clone())) {
-                    kept_node_labels.insert(node.label.clone());
                     projected_nodes.push(node);
                 }
             }
@@ -580,8 +578,16 @@ impl OntologyCatalog {
                 for source_rel in source_relationships.iter().filter(|rel| {
                     rel.label == spec.name
                         && relationship_matches_domain(rel, domain_name)
-                        && endpoint_is_kept(rel.from.as_deref(), &kept_node_labels)
-                        && endpoint_is_kept(rel.to.as_deref(), &kept_node_labels)
+                        && endpoint_is_kept_in_domain(
+                            rel.from.as_deref(),
+                            domain_name,
+                            &kept_node_keys,
+                        )
+                        && endpoint_is_kept_in_domain(
+                            rel.to.as_deref(),
+                            domain_name,
+                            &kept_node_keys,
+                        )
                 }) {
                     let mut rel = source_rel.clone();
                     rel.domain = Some(domain_name.to_string());
@@ -643,9 +649,13 @@ fn merged_allowed_values(introspected: &[String], declared: &[String]) -> Vec<St
     values
 }
 
-fn endpoint_is_kept(endpoint: Option<&str>, kept_node_labels: &BTreeSet<String>) -> bool {
+fn endpoint_is_kept_in_domain(
+    endpoint: Option<&str>,
+    domain_name: &str,
+    kept_node_keys: &BTreeSet<(String, String)>,
+) -> bool {
     match endpoint {
-        Some(label) => kept_node_labels.contains(label),
+        Some(label) => kept_node_keys.contains(&(domain_name.to_string(), label.to_string())),
         None => true,
     }
 }
@@ -1007,6 +1017,76 @@ mod tests {
         assert_eq!(rel.label, "PLACED");
         assert_eq!(rel.description.as_deref(), Some("Customer placed an order"));
         assert!(rel.properties.is_empty());
+    }
+
+    #[test]
+    fn project_schema_keeps_relationships_inside_their_projected_domain() {
+        use crate::prompt::{NodeKind, RelKind};
+
+        let mut cat = OntologyCatalog::default();
+        cat.insert(
+            "core",
+            DomainOntology {
+                name: None,
+                description: None,
+                entity_types: vec![
+                    EntityTypeSpec::new("Person"),
+                    EntityTypeSpec::new("Location"),
+                ],
+                relation_types: vec![RelationTypeSpec::with_description(
+                    "LOCATED_AT",
+                    "Generic location relation",
+                )],
+                embedding: None,
+            },
+        );
+        cat.insert(
+            "camera",
+            DomainOntology {
+                name: None,
+                description: None,
+                entity_types: vec![EntityTypeSpec::new("Camera"), EntityTypeSpec::new("Place")],
+                relation_types: vec![RelationTypeSpec::new("LOCATED_AT")],
+                embedding: None,
+            },
+        );
+
+        let mut schema = GraphSchema {
+            nodes: vec![
+                NodeKind {
+                    label: "Camera".into(),
+                    domain: None,
+                    extra_labels: vec!["camera".into()],
+                    scopes: Vec::new(),
+                    description: None,
+                    properties: Vec::new(),
+                },
+                NodeKind {
+                    label: "Place".into(),
+                    domain: None,
+                    extra_labels: vec!["camera".into()],
+                    scopes: Vec::new(),
+                    description: None,
+                    properties: Vec::new(),
+                },
+            ],
+            relationships: vec![RelKind {
+                label: "LOCATED_AT".into(),
+                domain: None,
+                description: None,
+                from: Some("Camera".into()),
+                to: Some("Place".into()),
+                properties: Vec::new(),
+            }],
+        };
+
+        OntologyCatalog::project_schema(&mut schema, cat.all_domains());
+
+        assert_eq!(schema.relationships.len(), 1);
+        let rel = &schema.relationships[0];
+        assert_eq!(rel.label, "LOCATED_AT");
+        assert_eq!(rel.domain.as_deref(), Some("camera"));
+        assert_eq!(rel.description, None);
     }
 
     #[test]

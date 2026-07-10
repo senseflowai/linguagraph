@@ -460,7 +460,11 @@ mod tests {
         let listing = node(
             "Listing",
             vec![
-                prop("sale_method", PT::String, &["auction", "classified", "instant_sale"]),
+                prop(
+                    "sale_method",
+                    PT::String,
+                    &["auction", "classified", "instant_sale"],
+                ),
                 prop("title", PT::String, &[]),
             ],
         );
@@ -489,7 +493,11 @@ mod tests {
     async fn pulls_in_one_hop_neighbor() {
         let listing = node(
             "Listing",
-            vec![prop("sale_method", PT::String, &["auction", "instant_sale"])],
+            vec![prop(
+                "sale_method",
+                PT::String,
+                &["auction", "instant_sale"],
+            )],
         );
         // Seller has no query-matching text, but is one hop from Listing.
         let seller = node("Seller", vec![prop("rating", PT::Float, &[])]);

@@ -71,9 +71,11 @@ cuda = ["llama-cpp-2/cuda"]
 llama = ["dep:llama-cpp-2"]
 # OpenAI-compatible LLM backend (vLLM and friends).
 openai = ["dep:reqwest"]
+# Direct Qdrant REST client for ontology/entity embedding storage + search.
+qdrant = ["dep:reqwest"]
 # Derive `utoipa::ToSchema` on public ontology types for OpenAPI consumers.
 utoipa = ["dep:utoipa"]
-default = ["llama", "openai"]
+default = ["llama", "openai", "qdrant"]
 
 [profile.release]
 lto = "thin"

@@ -333,7 +333,6 @@ mod tests {
                 description: None,
                 entity_types: vec![EntityTypeSpec::with_description("Person", "a human")],
                 relation_types: vec![],
-                embedding: None,
             },
         );
         cat

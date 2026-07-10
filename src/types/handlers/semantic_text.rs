@@ -1035,10 +1035,7 @@ mod tests {
         h.on_ingest(&mut ctx).unwrap();
         ctx.finish();
         assert_eq!(q.len(), 1);
-        assert!(matches!(
-            &q.into_vec()[0],
-            SideEffect::EmbedAndStore { .. }
-        ));
+        assert!(matches!(&q.into_vec()[0], SideEffect::EmbedAndStore { .. }));
     }
 
     #[test]
@@ -1055,9 +1052,9 @@ mod tests {
         };
         let group = vec![(eff, vec![vec![0.1_f32, 0.2], vec![0.3, 0.4]])];
         let cypher = build_embed_insert_multi_batch(&group).unwrap();
-        assert!(cypher
-            .text
-            .contains("CALL libqlink.insert_hybrid_multi($coll, id(n), row.vecs, row.text, $label)"));
+        assert!(cypher.text.contains(
+            "CALL libqlink.insert_hybrid_multi($coll, id(n), row.vecs, row.text, $label)"
+        ));
         assert!(cypher.text.contains("MATCH (n:Chunk {id: row.key})"));
         // The matrix must survive as a list-of-lists in the row payload.
         match cypher.params.get("rows").unwrap() {

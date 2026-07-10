@@ -158,12 +158,10 @@ mod tests {
                         required: true,
                         allowed_values: Vec::new(),
                     }],
-                    embedding: None,
                 },
                 EntityTypeSpec::new("Organization"),
             ],
             relation_types: vec![RelationTypeSpec::new("WORKS_FOR")],
-            embedding: None,
         }
     }
 

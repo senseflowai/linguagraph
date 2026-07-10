@@ -105,6 +105,33 @@ pub struct Property {
     pub allowed_values: Vec<String>,
 }
 
+/// Whether a string property is useful as an enum vocabulary in prompts.
+///
+/// Low-cardinality identifiers are common in small graphs (`Category.id`,
+/// `AssetType.id`, foreign keys, UUID fields), but their concrete values do
+/// not help the LLM choose filters. They also bloat the enum block and can
+/// make query-driven schema selection keep otherwise irrelevant fields.
+pub(crate) fn is_enum_candidate_property_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    let normalized = lower.replace('-', "_");
+    if matches!(
+        normalized.as_str(),
+        "id" | "uuid" | "guid" | "primary_key" | "entity_id" | "vin"
+    ) {
+        return false;
+    }
+    if normalized.ends_with("_id") || normalized.ends_with("_ids") {
+        return false;
+    }
+    if name.len() > 2 && (name.ends_with("Id") || name.ends_with("ID")) {
+        return false;
+    }
+    if name.len() > 3 && (name.ends_with("Ids") || name.ends_with("IDs")) {
+        return false;
+    }
+    true
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum PropertyType {
@@ -115,6 +142,24 @@ pub enum PropertyType {
     Date,
     Datetime,
     List,
+}
+
+impl PropertyType {
+    /// Canonical scalar-type label shown to the LLM in the schema block
+    /// and in property embedding text (e.g. `string`, `number`, `datetime`).
+    /// The vocabulary is deliberately small: `string` (not `keyword` — the
+    /// DSL has no Elasticsearch concept) and `number` (int and float
+    /// collapse to one type the model reasons about identically).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PropertyType::String => "string",
+            PropertyType::Int | PropertyType::Float => "number",
+            PropertyType::Bool => "bool",
+            PropertyType::Date => "date",
+            PropertyType::Datetime => "datetime",
+            PropertyType::List => "list",
+        }
+    }
 }
 
 #[cfg(test)]

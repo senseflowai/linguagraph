@@ -9,7 +9,9 @@ use crate::config::{self, Config};
 use crate::core::Pipeline;
 use crate::db::{introspect, Column, GraphClient, MemgraphClient, QueryResult, Value};
 use crate::dsl;
-use crate::embeddings::{self, SharedEmbedder};
+use crate::embeddings::{
+    self, EmbeddingIndex, InMemoryEmbeddingStore, SharedEmbedder, SharedEmbeddingStore,
+};
 use crate::error::Result;
 use crate::graph::{
     GraphBuilder, JsonFileOntologyCatalogStorage, OntologyCatalogStorage,
@@ -346,6 +348,24 @@ fn build_registry(cfg: &Config) -> Result<(SharedRegistry, Option<SharedEmbedder
     Ok((std::sync::Arc::new(registry), Some(embedder)))
 }
 
+/// Build the embedding store for ontology/entity vectors. Returns a Qdrant
+/// client when the `qdrant` feature is on and `[qdrant].url` is set,
+/// otherwise an in-process store (tests, or deployments without Qdrant).
+fn build_embedding_store(cfg: &Config) -> Result<SharedEmbeddingStore> {
+    #[cfg(feature = "qdrant")]
+    if !cfg.qdrant.url.trim().is_empty() {
+        let client = crate::db::QdrantClient::connect(&cfg.qdrant).map_err(|e| {
+            crate::error::Error::Ingest(crate::ingest::IngestError::Type(format!(
+                "qdrant connect: {e}"
+            )))
+        })?;
+        return Ok(Arc::new(client));
+    }
+    #[cfg(not(feature = "qdrant"))]
+    let _ = cfg;
+    Ok(Arc::new(InMemoryEmbeddingStore::new()))
+}
+
 fn build_ontology_catalog_embedder(cfg: &Config) -> Result<SharedEmbedder> {
     embeddings::default_embedder(
         cfg.ontology_catalog.embedding_model.as_deref(),
@@ -658,8 +678,8 @@ async fn cmd_prompt(
     config_path: &std::path::Path,
     query: Option<String>,
     schema_path: Option<PathBuf>,
-    _no_examples: bool,
-    _no_specification: bool,
+    no_examples: bool,
+    no_specification: bool,
 ) -> Result<()> {
     let cfg = load_config_or_default(config_path).await;
     let mut schema = match schema_path {
@@ -674,124 +694,85 @@ async fn cmd_prompt(
         }
     };
 
-    let ontology_catalog_embedder = if query.is_some() {
-        Some(build_ontology_catalog_embedder(&cfg)?)
-    } else {
-        None
-    };
+    let store = JsonFileOntologyCatalogStorage::new(&cfg.ontology_catalog.cache_path);
+    let catalog = store.load().await?;
 
-    let store = JsonFileOntologyCatalogStorage::default();
-    let mut catalog = store.load().await?;
+    match query {
+        Some(query) => {
+            // Query-driven compact prompt: route to the relevant domains,
+            // then select the entities, properties (with value sets) and
+            // 1-hop neighbours the query needs. Domain/entity/property
+            // embeddings are stored in and searched from the embedding
+            // store (Qdrant when configured); all of the selection lives
+            // behind the single `prompt::generate_query_prompt` call.
+            let embedder = build_ontology_catalog_embedder(&cfg)?;
+            let vector_store = build_embedding_store(&cfg)?;
+            let collection = cfg.qdrant.collection.clone();
+            let model_id = cfg
+                .ontology_catalog
+                .embedding_model
+                .clone()
+                .unwrap_or_else(|| "mock".to_string());
+            vector_store
+                .ensure(&collection, embedder.dim())
+                .await
+                .map_err(|e| {
+                    crate::error::Error::Ingest(crate::ingest::IngestError::Type(format!(
+                        "embedding store: {e}"
+                    )))
+                })?;
+            let index = EmbeddingIndex {
+                store: vector_store.as_ref(),
+                collection: &collection,
+                model: &model_id,
+            };
 
-    crate::graph::OntologyCatalog::project_schema(&mut schema, catalog.all_domains());
-    let domain_schemas = crate::graph::OntologyCatalog::split_schema_by_domain(&schema);
-
-    let output: Vec<DomainSchemaOutput> = if let (Some(query), Some(embedder)) =
-        (query.as_deref(), ontology_catalog_embedder.as_ref())
-    {
-        let candidate_domains: BTreeSet<String> = domain_schemas.keys().cloned().collect();
-        let matches = catalog
-            .select_domains(
-                query,
-                crate::graph::DEFAULT_DOMAIN_SELECTION_THRESHOLD,
-                crate::graph::DEFAULT_DOMAIN_SELECTION_TOP_K,
-                Some(&candidate_domains),
+            let params = prompt::QueryPromptParams {
+                domain_threshold: cfg.ontology_catalog.domain_selection_threshold,
+                domain_top_k: cfg.ontology_catalog.domain_selection_top_k,
+                selection: prompt::QuerySelectionParams {
+                    entity_threshold: cfg.ontology_catalog.entity_selection_threshold,
+                    property_threshold: cfg.ontology_catalog.property_selection_threshold,
+                    neighbor_hops: cfg.ontology_catalog.selection_neighbor_hops,
+                    ..prompt::QuerySelectionParams::default()
+                },
+                include_examples: !no_examples,
+            };
+            let rendered = prompt::generate_query_prompt(
+                &query,
+                &mut schema,
+                &catalog,
                 embedder.as_ref(),
+                &index,
+                &params,
             )
+            .await
             .map_err(|e| {
                 crate::error::Error::Ingest(crate::ingest::IngestError::Type(format!(
-                    "ontology domain selection: {e}"
+                    "prompt generation: {e}"
                 )))
             })?;
 
-        matches
-            .into_iter()
-            .filter_map(|matched| {
-                domain_schemas
-                    .get(matched.domain)
-                    .cloned()
-                    .map(|schema| DomainSchemaOutput {
-                        domain: matched.domain.to_string(),
-                        score: Some(matched.score),
-                        schema,
-                    })
-            })
-            .collect()
-    } else {
-        domain_schemas
-            .into_iter()
-            .map(|(domain, schema)| DomainSchemaOutput {
-                domain,
-                score: None,
-                schema,
-            })
-            .collect()
-    };
+            println!("{rendered}");
+        }
+        None => {
+            // No query -> no similarity signal: render the full schema,
+            // projected onto the ontology for descriptions and enum values.
+            crate::graph::OntologyCatalog::project_schema(&mut schema, catalog.all_domains());
+            let opts = PromptOptions {
+                include_examples: !no_examples,
+                ontology_catalog: if no_specification {
+                    None
+                } else {
+                    Some(catalog)
+                },
+                ..PromptOptions::default()
+            };
+            println!("{}", prompt::generate_system_prompt(&schema, &opts));
+        }
+    }
 
-    store.save(&catalog).await?;
-
-    println!("{}", serde_json::to_string_pretty(&output)?);
-    //println!("ontology_catalog: {:?}", catalog);
-
-    // let (registry, _embedder) = build_registry(&cfg)?;
-    // let ontology_catalog_embedder = if query.is_some() {
-    //     Some(build_ontology_catalog_embedder(&cfg)?)
-    // } else {
-    //     None
-    // };
-    // let ontology_catalog_reranker = if query.is_some() {
-    //     Some(build_ontology_catalog_reranker(&cfg)?)
-    // } else {
-    //     None
-    // };
-    // let ontology_catalog = if no_specification {
-    //     None
-    // } else {
-    //     let store = JsonFileOntologyCatalogStorage::default();
-    //     let mut catalog = store.load().await?;
-    //     if catalog.is_empty() {
-    //         None
-    //     } else {
-    //         if let Some(embedder) = ontology_catalog_embedder.as_ref() {
-    //             catalog.compute(embedder.as_ref()).map_err(|e| {
-    //                 crate::error::Error::Ingest(crate::ingest::IngestError::Type(format!(
-    //                     "ontology catalog embedding: {e}"
-    //                 )))
-    //             })?;
-    //         }
-    //         Some(catalog)
-    //     }
-    // };
-    // let registry_for_prompt = (*registry).clone();
-    // let opts = PromptOptions {
-    //     include_examples: !no_examples,
-    //     ontology_catalog,
-    //     embedding_model: ontology_catalog_embedder,
-    //     reranking_model: ontology_catalog_reranker,
-    //     schema_selection: prompt::PromptSchemaSelection {
-    //         reranking_threshold: cfg.ontology_catalog.reranking_threshold,
-    //         ..Default::default()
-    //     },
-    //     type_registry: if registry_for_prompt.is_empty() {
-    //         None
-    //     } else {
-    //         Some(registry_for_prompt)
-    //     },
-    //     ..PromptOptions::default()
-    // };
-    // let prompt = match query {
-    //     Some(query) => prompt::generate_query_prompt(&query, &schema, &opts),
-    //     None => prompt::generate_system_prompt(&schema, &opts),
-    // };
-    // println!("{prompt}");
     Ok(())
-}
-
-#[derive(Debug, serde::Serialize)]
-struct DomainSchemaOutput {
-    domain: String,
-    score: Option<f32>,
-    schema: GraphSchema,
 }
 
 async fn cmd_schema(
@@ -958,6 +939,7 @@ async fn load_config_or_default(path: &std::path::Path) -> Config {
             llm: Default::default(),
             query: Default::default(),
             ontology_catalog: Default::default(),
+            qdrant: Default::default(),
             prompt: Default::default(),
             ingest: Default::default(),
             types: Default::default(),

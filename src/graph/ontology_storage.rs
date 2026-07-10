@@ -146,7 +146,6 @@ mod tests {
                 description: None,
                 entity_types: vec![EntityTypeSpec::with_description("Foo", "A foo.")],
                 relation_types: vec![RelationTypeSpec::new("KNOWS")],
-                embedding: None,
             },
         );
         cat

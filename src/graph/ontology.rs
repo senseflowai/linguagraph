@@ -12,7 +12,10 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::embeddings::{cosine_similarity, EmbedError, Embedder, Reranker};
+use crate::embeddings::{
+    ensure_indexed, EmbedError, Embedder, EmbeddingFilter, EmbeddingIndex, EmbeddingKind,
+    EmbeddingPayload,
+};
 use crate::prompt::{GraphSchema, Property};
 use crate::types::BuiltinType;
 
@@ -167,12 +170,6 @@ pub struct EntityTypeSpec {
     /// Typed properties the LLM should extract for entities of this type.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub properties: Vec<PropertySpec>,
-    /// Cached embedding of the entity description, used by
-    /// [`OntologyCatalog::find`] for semantic entity matching. Recomputed
-    /// from `name + description + properties` whenever the catalog is
-    /// saved through storage.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub embedding: Option<Vec<f32>>,
 }
 
 impl EntityTypeSpec {
@@ -181,7 +178,6 @@ impl EntityTypeSpec {
             name: name.into(),
             description: None,
             properties: vec![],
-            embedding: None,
         }
     }
 
@@ -190,12 +186,7 @@ impl EntityTypeSpec {
             name: name.into(),
             description: Some(desc.into()),
             properties: vec![],
-            embedding: None,
         }
-    }
-
-    pub fn embedding(&self) -> Option<&[f32]> {
-        self.embedding.as_deref()
     }
 
     /// Find a property of this entity by name.
@@ -247,11 +238,6 @@ pub struct DomainOntology {
     pub entity_types: Vec<EntityTypeSpec>,
     #[serde(default)]
     pub relation_types: Vec<RelationTypeSpec>,
-    /// Cached embedding of the whole domain description, used by
-    /// [`OntologyCatalog::select_domains`] for query-time domain
-    /// routing. Recomputed by [`OntologyCatalog::compute`] when absent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub embedding: Option<Vec<f32>>,
 }
 
 impl DomainOntology {
@@ -432,86 +418,26 @@ impl OntologyCatalog {
                 name: name.to_string(),
                 description: Some(description.to_string()),
                 properties: Vec::new(),
-                embedding: None,
             }),
         }
     }
 
     /// Merge entries from `other` into `self`. For each `(domain, name)`
-    /// pair, the incoming description / properties / relation list win,
-    /// but an existing embedding is kept when the incoming record has
-    /// none — so a catalog merge after `find()` doesn't blow away the
-    /// vectors that were already computed.
+    /// pair, the incoming description / properties / relation list win.
     pub fn merge(&mut self, other: &OntologyCatalog) {
         for (domain, incoming) in &other.domains {
             let target = self.domains.entry(domain.clone()).or_default();
             target.name = Some(domain.clone());
-            let preserved_domain_embedding = target.embedding.clone();
             target.description = incoming.description.clone();
-            if incoming.embedding.is_some() {
-                target.embedding = incoming.embedding.clone();
-            } else {
-                target.embedding = preserved_domain_embedding;
-            }
             for spec in &incoming.entity_types {
-                let preserved_embedding = target
-                    .entity_types
-                    .iter()
-                    .find(|e| e.name == spec.name)
-                    .and_then(|e| e.embedding.clone());
                 target.entity_types.retain(|e| e.name != spec.name);
-                let mut copy = spec.clone();
-                if copy.embedding.is_none() {
-                    copy.embedding = preserved_embedding;
-                }
-                target.entity_types.push(copy);
+                target.entity_types.push(spec.clone());
             }
             for rel in &incoming.relation_types {
                 target.relation_types.retain(|r| r.name != rel.name);
                 target.relation_types.push(rel.clone());
             }
         }
-    }
-
-    /// Recompute embeddings for every domain and entity type whose
-    /// `embedding` is `None`. Existing embeddings are preserved.
-    pub fn compute(&mut self, embedder: &dyn Embedder) -> Result<(), EmbedError> {
-        self.compute_domain_embeddings(embedder)?;
-
-        // Collect texts and their (domain, name) coordinates so we can
-        // batch the embedder call once across the whole catalog.
-        let mut jobs: Vec<(String, String, String)> = Vec::new();
-        for (domain, ontology) in &self.domains {
-            for entity in &ontology.entity_types {
-                if entity.embedding.is_none() {
-                    jobs.push((
-                        domain.clone(),
-                        entity.name.clone(),
-                        entity_embedding_text(entity),
-                    ));
-                }
-            }
-        }
-        if jobs.is_empty() {
-            return Ok(());
-        }
-        let texts: Vec<&str> = jobs.iter().map(|(_, _, t)| t.as_str()).collect();
-        let embeddings = embedder.embed_batch(&texts)?;
-        if embeddings.len() != jobs.len() {
-            return Err(EmbedError::Backend(format!(
-                "embedder returned {} vectors for {} entity specs",
-                embeddings.len(),
-                jobs.len()
-            )));
-        }
-        for ((domain, name, _), vec) in jobs.into_iter().zip(embeddings.into_iter()) {
-            if let Some(ontology) = self.domains.get_mut(&domain) {
-                if let Some(spec) = ontology.entity_types.iter_mut().find(|e| e.name == name) {
-                    spec.embedding = Some(vec);
-                }
-            }
-        }
-        Ok(())
     }
 
     pub fn split_schema_by_domain(schema: &GraphSchema) -> BTreeMap<String, GraphSchema> {
@@ -542,101 +468,67 @@ impl OntologyCatalog {
         schemas
     }
 
-    pub fn select_domains(
-        &mut self,
+    /// Route `query` to its most relevant domains by embedding similarity,
+    /// searched **server-side** through `index`.
+    ///
+    /// Domain passages are lazily embedded and upserted into the store (only
+    /// the ones it is missing), then a single filtered vector search returns
+    /// the top `top_k` domains scoring `>= threshold`, highest first.
+    /// `candidates`, when set, restricts routing to those domains (the ones
+    /// actually present in the live graph).
+    pub async fn select_domains(
+        &self,
         query: &str,
         threshold: f32,
         top_k: usize,
         candidates: Option<&BTreeSet<String>>,
         embedder: &dyn Embedder,
+        index: &EmbeddingIndex<'_>,
     ) -> Result<Vec<DomainOntologyMatch<'_>>, EmbedError> {
-        let domain_passages: BTreeMap<String, String> = self
+        let passages: Vec<(EmbeddingPayload, String)> = self
             .domains
             .iter()
             .filter(|(domain, _)| candidates.is_none_or(|set| set.contains(*domain)))
-            .map(|(domain, ontology)| (domain.clone(), domain_embedding_text(domain, ontology)))
+            .map(|(domain, ontology)| {
+                (
+                    EmbeddingPayload::domain(domain.clone()),
+                    domain_embedding_text(domain, ontology),
+                )
+            })
             .collect();
-        self.compute_missing_domain_embeddings(&domain_passages, embedder)?;
+        if passages.is_empty() {
+            return Ok(Vec::new());
+        }
 
-        let query_text = domain_query_text(query);
-        let query_embedding = embedder.embed(query_text.as_str())?;
+        ensure_indexed(index, embedder, &passages).await?;
+
+        let query_embedding = embedder.embed(domain_query_text(query).as_str())?;
+        let filter = EmbeddingFilter {
+            kinds: vec![EmbeddingKind::Domain],
+            domains: passages.iter().map(|(p, _)| p.domain.clone()).collect(),
+        };
+        let hits = index
+            .store
+            .search(
+                index.collection,
+                &query_embedding,
+                top_k,
+                Some(threshold),
+                &filter,
+            )
+            .await?;
+
         let mut matches = Vec::new();
-        for (domain, ontology) in &self.domains {
-            if !domain_passages.contains_key(domain) {
-                continue;
-            }
-            let Some(embedding) = ontology.embedding.as_deref() else {
-                continue;
-            };
-            if embedding.len() != query_embedding.len() {
-                return Err(EmbedError::Backend(format!(
-                    "embedding dimension mismatch for domain '{}': domain vector has {}, query vector has {}",
-                    domain,
-                    embedding.len(),
-                    query_embedding.len()
-                )));
-            }
-            let score = cosine_similarity(&query_embedding, embedding);
-            if score >= threshold {
+        for hit in hits {
+            if let Some((key, ontology)) = self.domains.get_key_value(&hit.payload.domain) {
                 matches.push(DomainOntologyMatch {
-                    domain: domain.as_str(),
+                    domain: key.as_str(),
                     ontology,
-                    score,
+                    score: hit.score,
                 });
             }
         }
-        matches.sort_by(|a, b| {
-            b.score
-                .total_cmp(&a.score)
-                .then_with(|| a.domain.cmp(b.domain))
-        });
-        matches.truncate(top_k);
         Ok(matches)
-    }
-
-    pub fn compute_domain_embeddings(&mut self, embedder: &dyn Embedder) -> Result<(), EmbedError> {
-        let domain_passages: BTreeMap<String, String> = self
-            .domains
-            .iter()
-            .map(|(domain, ontology)| (domain.clone(), domain_embedding_text(domain, ontology)))
-            .collect();
-        self.compute_missing_domain_embeddings(&domain_passages, embedder)
-    }
-
-    fn compute_missing_domain_embeddings(
-        &mut self,
-        domain_passages: &BTreeMap<String, String>,
-        embedder: &dyn Embedder,
-    ) -> Result<(), EmbedError> {
-        let jobs: Vec<(String, String)> = self
-            .domains
-            .iter()
-            .filter(|(_, ontology)| ontology.embedding.is_none())
-            .filter_map(|(domain, _)| {
-                domain_passages
-                    .get(domain)
-                    .map(|passage| (domain.clone(), passage.clone()))
-            })
-            .collect();
-        if jobs.is_empty() {
-            return Ok(());
-        }
-
-        let texts: Vec<&str> = jobs.iter().map(|(_, text)| text.as_str()).collect();
-        let embeddings = embedder.embed_batch(&texts)?;
-        if embeddings.len() != jobs.len() {
-            return Err(EmbedError::Backend(format!(
-                "embedder returned {} vectors for {} domain specs",
-                embeddings.len(),
-                jobs.len()
-            )));
-        }
-        for ((domain, _), embedding) in jobs.into_iter().zip(embeddings.into_iter()) {
-            if let Some(ontology) = self.domains.get_mut(&domain) {
-                ontology.embedding = Some(embedding);
-            }
-        }
-        Ok(())
     }
 
     /// Project a live [`GraphSchema`] onto this catalog in place.
@@ -651,7 +543,6 @@ impl OntologyCatalog {
         let source_relationships = schema.relationships.clone();
         let mut projected_nodes = Vec::new();
         let mut kept_node_keys = BTreeSet::new();
-        let mut kept_node_labels = BTreeSet::new();
 
         for domain in &domains {
             let Some(domain_name) = domain.name() else {
@@ -671,7 +562,6 @@ impl OntologyCatalog {
                 retain_declared_properties(&mut node.properties, spec);
 
                 if kept_node_keys.insert((domain_name.to_string(), node.label.clone())) {
-                    kept_node_labels.insert(node.label.clone());
                     projected_nodes.push(node);
                 }
             }
@@ -688,8 +578,16 @@ impl OntologyCatalog {
                 for source_rel in source_relationships.iter().filter(|rel| {
                     rel.label == spec.name
                         && relationship_matches_domain(rel, domain_name)
-                        && endpoint_is_kept(rel.from.as_deref(), &kept_node_labels)
-                        && endpoint_is_kept(rel.to.as_deref(), &kept_node_labels)
+                        && endpoint_is_kept_in_domain(
+                            rel.from.as_deref(),
+                            domain_name,
+                            &kept_node_keys,
+                        )
+                        && endpoint_is_kept_in_domain(
+                            rel.to.as_deref(),
+                            domain_name,
+                            &kept_node_keys,
+                        )
                 }) {
                     let mut rel = source_rel.clone();
                     rel.domain = Some(domain_name.to_string());
@@ -751,9 +649,13 @@ fn merged_allowed_values(introspected: &[String], declared: &[String]) -> Vec<St
     values
 }
 
-fn endpoint_is_kept(endpoint: Option<&str>, kept_node_labels: &BTreeSet<String>) -> bool {
+fn endpoint_is_kept_in_domain(
+    endpoint: Option<&str>,
+    domain_name: &str,
+    kept_node_keys: &BTreeSet<(String, String)>,
+) -> bool {
     match endpoint {
-        Some(label) => kept_node_labels.contains(label),
+        Some(label) => kept_node_keys.contains(&(domain_name.to_string(), label.to_string())),
         None => true,
     }
 }
@@ -777,29 +679,6 @@ pub struct DomainOntologyMatch<'a> {
 
 fn domain_query_text(query: &str) -> String {
     format!("User query:{query}\nTask: Identify the most relevant ontology domains for this query")
-}
-
-fn domain_query_text_rerank(query: &str) -> String {
-    format!(
-        r#"Task:
-You are selecting the ontology that will be used to generate a graph query DSL.
-
-For each ontology, estimate whether it contains the graph schema required to answer the user's request.
-
-A relevant ontology should contain:
-- the likely starting entity;
-- the entities implied by the query;
-- the relationships required for traversal;
-- the concepts needed to express the requested filters, aggregations, sorting, or grouping.
-
-Ignore language differences and wording differences.
-
-Higher relevance means this ontology is sufficient to build a correct graph query.
-
-User query:
-{}"#,
-        query
-    )
 }
 
 fn domain_embedding_text(domain: &str, ontology: &DomainOntology) -> String {
@@ -902,7 +781,6 @@ mod tests {
                 description: None,
                 entity_types: vec![EntityTypeSpec::with_description("Foo", "A foo.")],
                 relation_types: vec![RelationTypeSpec::new("KNOWS")],
-                embedding: None,
             },
         );
         let raw = serde_json::to_string(&cat).unwrap();
@@ -936,7 +814,6 @@ mod tests {
                     allowed_values: Vec::new(),
                 },
             ],
-            embedding: None,
         };
         let raw = serde_json::to_string(&spec).unwrap();
         let back: EntityTypeSpec = serde_json::from_str(&raw).unwrap();
@@ -986,7 +863,6 @@ mod tests {
                             // Hand-declared value present only in the ontology.
                             allowed_values: vec!["Refunded".into()],
                         }],
-                        embedding: None,
                     },
                     EntityTypeSpec {
                         name: "Customer".into(),
@@ -998,14 +874,12 @@ mod tests {
                             required: true,
                             allowed_values: Vec::new(),
                         }],
-                        embedding: None,
                     },
                 ],
                 relation_types: vec![
                     RelationTypeSpec::with_description("PLACED", "Customer placed an order"),
                     RelationTypeSpec::with_description("AUDITED", "Audit relation"),
                 ],
-                embedding: None,
             },
         );
         cat.insert(
@@ -1017,13 +891,11 @@ mod tests {
                     name: "DebugNode".into(),
                     description: Some("Debug-only node".into()),
                     properties: Vec::new(),
-                    embedding: None,
                 }],
                 relation_types: vec![RelationTypeSpec::with_description(
                     "AUDITED",
                     "Audit relation",
                 )],
-                embedding: None,
             },
         );
 
@@ -1145,6 +1017,74 @@ mod tests {
         assert_eq!(rel.label, "PLACED");
         assert_eq!(rel.description.as_deref(), Some("Customer placed an order"));
         assert!(rel.properties.is_empty());
+    }
+
+    #[test]
+    fn project_schema_keeps_relationships_inside_their_projected_domain() {
+        use crate::prompt::{NodeKind, RelKind};
+
+        let mut cat = OntologyCatalog::default();
+        cat.insert(
+            "core",
+            DomainOntology {
+                name: None,
+                description: None,
+                entity_types: vec![
+                    EntityTypeSpec::new("Person"),
+                    EntityTypeSpec::new("Location"),
+                ],
+                relation_types: vec![RelationTypeSpec::with_description(
+                    "LOCATED_AT",
+                    "Generic location relation",
+                )],
+            },
+        );
+        cat.insert(
+            "camera",
+            DomainOntology {
+                name: None,
+                description: None,
+                entity_types: vec![EntityTypeSpec::new("Camera"), EntityTypeSpec::new("Place")],
+                relation_types: vec![RelationTypeSpec::new("LOCATED_AT")],
+            },
+        );
+
+        let mut schema = GraphSchema {
+            nodes: vec![
+                NodeKind {
+                    label: "Camera".into(),
+                    domain: None,
+                    extra_labels: vec!["camera".into()],
+                    scopes: Vec::new(),
+                    description: None,
+                    properties: Vec::new(),
+                },
+                NodeKind {
+                    label: "Place".into(),
+                    domain: None,
+                    extra_labels: vec!["camera".into()],
+                    scopes: Vec::new(),
+                    description: None,
+                    properties: Vec::new(),
+                },
+            ],
+            relationships: vec![RelKind {
+                label: "LOCATED_AT".into(),
+                domain: None,
+                description: None,
+                from: Some("Camera".into()),
+                to: Some("Place".into()),
+                properties: Vec::new(),
+            }],
+        };
+
+        OntologyCatalog::project_schema(&mut schema, cat.all_domains());
+
+        assert_eq!(schema.relationships.len(), 1);
+        let rel = &schema.relationships[0];
+        assert_eq!(rel.label, "LOCATED_AT");
+        assert_eq!(rel.domain.as_deref(), Some("camera"));
+        assert_eq!(rel.description, None);
     }
 
     #[test]

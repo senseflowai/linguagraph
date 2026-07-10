@@ -17,6 +17,11 @@ pub struct Config {
     pub query: QueryConfig,
     #[serde(default, alias = "graph_specification")]
     pub ontology_catalog: OntologyCatalogConfig,
+    /// Qdrant vector store used for ontology/entity embedding storage and
+    /// server-side similarity search. Optional: when `url` is empty, prompt
+    /// generation falls back to an in-process embedding store.
+    #[serde(default)]
+    pub qdrant: QdrantConfig,
     /// Prompt-generation settings (ontologies file, default domain).
     #[serde(default)]
     pub prompt: PromptConfig,
@@ -343,6 +348,23 @@ pub struct OntologyCatalogConfig {
     /// Minimum score required after reranking.
     #[serde(default = "default_ontology_catalog_reranking_threshold")]
     pub reranking_threshold: f64,
+    /// Minimum cosine score for a domain to be routed to during
+    /// query-driven prompt generation. Tune per embedding model.
+    #[serde(default = "default_domain_selection_threshold")]
+    pub domain_selection_threshold: f32,
+    /// Maximum number of domains kept by query routing.
+    #[serde(default = "default_domain_selection_top_k")]
+    pub domain_selection_top_k: usize,
+    /// Minimum cosine score for an entity to be kept in the compact prompt.
+    #[serde(default = "default_entity_selection_threshold")]
+    pub entity_selection_threshold: f32,
+    /// Minimum cosine score for a property to be kept in the compact prompt.
+    #[serde(default = "default_property_selection_threshold")]
+    pub property_selection_threshold: f32,
+    /// Relationship hops expanded around the query-selected entities to
+    /// pull in their neighbours.
+    #[serde(default = "default_selection_neighbor_hops")]
+    pub selection_neighbor_hops: usize,
 }
 
 impl Default for OntologyCatalogConfig {
@@ -353,8 +375,77 @@ impl Default for OntologyCatalogConfig {
             reranking_model: None,
             embedding_dim: default_ontology_catalog_embedding_dim(),
             reranking_threshold: default_ontology_catalog_reranking_threshold(),
+            domain_selection_threshold: default_domain_selection_threshold(),
+            domain_selection_top_k: default_domain_selection_top_k(),
+            entity_selection_threshold: default_entity_selection_threshold(),
+            property_selection_threshold: default_property_selection_threshold(),
+            selection_neighbor_hops: default_selection_neighbor_hops(),
         }
     }
+}
+
+fn default_domain_selection_threshold() -> f32 {
+    crate::graph::DEFAULT_DOMAIN_SELECTION_THRESHOLD
+}
+
+fn default_domain_selection_top_k() -> usize {
+    crate::graph::DEFAULT_DOMAIN_SELECTION_TOP_K
+}
+
+fn default_entity_selection_threshold() -> f32 {
+    0.30
+}
+
+fn default_property_selection_threshold() -> f32 {
+    0.28
+}
+
+fn default_selection_neighbor_hops() -> usize {
+    1
+}
+
+/// Qdrant vector-store settings (`[qdrant]` in TOML). Used to store
+/// ontology/entity embeddings and run similarity search server-side.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QdrantConfig {
+    /// Base URL of the Qdrant REST API, e.g. `http://127.0.0.1:6333`.
+    /// Empty (the default) disables Qdrant — prompt generation then uses
+    /// an in-process embedding store.
+    #[serde(default)]
+    pub url: String,
+    /// Name of the environment variable holding the Qdrant API key.
+    /// Absent/empty is fine for an unauthenticated local instance.
+    #[serde(default = "default_qdrant_api_key_env")]
+    pub api_key_env: String,
+    /// Request timeout in seconds.
+    #[serde(default = "default_qdrant_timeout_secs")]
+    pub timeout_secs: u64,
+    /// Collection holding the ontology/entity embedding points.
+    #[serde(default = "default_qdrant_collection")]
+    pub collection: String,
+}
+
+impl Default for QdrantConfig {
+    fn default() -> Self {
+        Self {
+            url: String::new(),
+            api_key_env: default_qdrant_api_key_env(),
+            timeout_secs: default_qdrant_timeout_secs(),
+            collection: default_qdrant_collection(),
+        }
+    }
+}
+
+fn default_qdrant_api_key_env() -> String {
+    "QDRANT_API_KEY".into()
+}
+
+fn default_qdrant_timeout_secs() -> u64 {
+    30
+}
+
+fn default_qdrant_collection() -> String {
+    "linguagraph_ontology".into()
 }
 
 fn default_ontology_catalog_cache_path() -> String {

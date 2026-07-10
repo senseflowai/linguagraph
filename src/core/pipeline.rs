@@ -2108,6 +2108,7 @@ mod tests {
             llm: LlmConfig::default(),
             query: QueryConfig::default(),
             ontology_catalog: OntologyCatalogConfig::default(),
+            qdrant: Default::default(),
             prompt: Default::default(),
             ingest: Default::default(),
             types: Default::default(),

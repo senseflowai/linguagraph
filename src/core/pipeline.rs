@@ -36,6 +36,7 @@ pub struct Pipeline {
     client: Arc<dyn GraphClient>,
     max_depth: u32,
     default_limit: u32,
+    max_limit: u32,
     ingest_batch_size: usize,
     embedding_insert_batch_size: usize,
     ontology_catalog_storage: Option<Arc<dyn OntologyCatalogStorage>>,
@@ -71,6 +72,13 @@ pub struct Pipeline {
     /// `"type"`, and by [`Self::live_schema`] to enrich introspection
     /// results with descriptions.
     ontology_catalog: Arc<RwLock<Option<Arc<OntologyCatalog>>>>,
+    /// Cached raw introspected schema (the un-filtered, un-projected
+    /// result of [`GraphClient::schema`]). Introspection scans the whole
+    /// database, so it is done once and reused by [`Self::live_schema`]
+    /// and the per-query direction check in [`Self::run`]; without this,
+    /// every `run` re-introspected the entire (possibly multi-tenant)
+    /// graph. Invalidated by [`Self::ingest`], which mutates the graph.
+    schema_cache: Arc<RwLock<Option<crate::prompt::GraphSchema>>>,
     /// Optional Cypher label stamped onto every ingested entity and
     /// onto every node in lowered queries. Lets a caller scope inserts
     /// and reads to a tenant, dataset or document without having to
@@ -100,6 +108,7 @@ impl std::fmt::Debug for Pipeline {
         f.debug_struct("Pipeline")
             .field("max_depth", &self.max_depth)
             .field("default_limit", &self.default_limit)
+            .field("max_limit", &self.max_limit)
             .field("ingest_batch_size", &self.ingest_batch_size)
             .field(
                 "ontology_catalog_storage",
@@ -168,6 +177,7 @@ impl Pipeline {
             client,
             max_depth: config.query.max_traversal_depth,
             default_limit: config.query.default_limit,
+            max_limit: config.query.max_limit,
             ingest_batch_size: 1000,
             embedding_insert_batch_size: config.ingest.embedding_insert_batch_size,
             ontology_catalog_storage: None,
@@ -186,6 +196,7 @@ impl Pipeline {
             prefetch_store: None,
             grounding: config.query.grounding.clone(),
             ontology_catalog: Arc::new(RwLock::new(None)),
+            schema_cache: Arc::new(RwLock::new(None)),
             prefix_label: None,
             prefix_index: None,
             semantic_collection,
@@ -230,6 +241,15 @@ impl Pipeline {
     /// who know their downstream system has stricter parameter limits.
     pub fn with_ingest_batch_size(mut self, n: usize) -> Self {
         self.ingest_batch_size = n;
+        self
+    }
+
+    /// Override the DSL read-path safety ceiling ([`crate::config::QueryConfig::max_limit`]):
+    /// the maximum number of rows a compiled query may return, applied both
+    /// as a cap on an explicit `limit` and as the effective limit when the
+    /// query omits one.
+    pub fn with_max_limit(mut self, n: u32) -> Self {
+        self.max_limit = n;
         self
     }
 
@@ -367,14 +387,47 @@ impl Pipeline {
         filter: &[S],
     ) -> Result<crate::prompt::GraphSchema> {
         let mut schema = self
-            .client
-            .schema()
+            .client_schema_cached()
             .await?
             .filter_node_labels_containing(filter);
         if let Some(catalog) = self.ontology_catalog() {
             OntologyCatalog::project_schema(&mut schema, catalog.all_domains());
         }
         Ok(schema)
+    }
+
+    /// Return the raw introspected schema, introspecting once and caching
+    /// the result. Schema introspection scans the whole database, so
+    /// callers that consult it on a hot path — notably the per-query
+    /// relationship-direction check in [`Self::run`] and every
+    /// [`Self::live_schema`] call — must not trigger a fresh scan each
+    /// time. The cache is cleared by [`Self::ingest`], the only pipeline
+    /// operation that mutates the graph; a caller mutating the graph
+    /// out-of-band should build a fresh pipeline (or introspect directly).
+    async fn client_schema_cached(&self) -> Result<crate::prompt::GraphSchema> {
+        if let Some(schema) = self
+            .schema_cache
+            .read()
+            .expect("schema cache lock poisoned")
+            .clone()
+        {
+            return Ok(schema);
+        }
+        let schema = self.client.schema().await?;
+        *self
+            .schema_cache
+            .write()
+            .expect("schema cache lock poisoned") = Some(schema.clone());
+        Ok(schema)
+    }
+
+    /// Drop the cached introspection so the next [`Self::live_schema`] /
+    /// direction check re-scans. Called after an ingest changes the graph.
+    fn invalidate_schema_cache(&self) {
+        *self
+            .schema_cache
+            .write()
+            .expect("schema cache lock poisoned") = None;
     }
 
     // ── Read path ───────────────────────────────────────────────────────────
@@ -403,9 +456,15 @@ impl Pipeline {
             }
         }
         let mut q = resolve::lower_full(dsl, self.max_depth, &self.registry, catalog.as_deref())?;
-        if q.limit.is_none() {
-            q.limit = Some(self.default_limit);
-        }
+        // Apply the safety ceiling: an explicit limit is capped at
+        // `max_limit`, and a query that omits `limit` returns every matching
+        // row up to that ceiling (rather than being truncated to a small
+        // arbitrary default). Keeps unbounded "list everything" questions
+        // correct while still bounding the result set.
+        q.limit = Some(match q.limit {
+            Some(l) => l.min(self.max_limit),
+            None => self.max_limit,
+        });
         Ok(q)
     }
 
@@ -656,10 +715,26 @@ impl Pipeline {
 
     /// Compile and execute against the configured graph client.
     pub async fn run(&self, dsl: DslQuery) -> Result<QueryResult> {
+        let cypher = self.compile_for_run(dsl).await?;
+        self.execute(&cypher).await
+    }
+
+    /// Full read-path compilation as [`Self::run`] performs it: correct
+    /// LLM-emitted relationship directions against the live schema, then
+    /// lower → prepare → ground → build. Exposed so callers that need the
+    /// *exact* Cypher that will execute (e.g. to report or log it) don't
+    /// have to re-derive it with a separate grounding-free [`Self::compile`],
+    /// which would show the server-side `libqlink` fallback instead of the
+    /// grounded query that actually runs.
+    pub async fn compile_for_run(&self, dsl: DslQuery) -> Result<CypherQuery> {
         let mut dsl = dsl;
         self.validate_dsl_relationship_directions(&mut dsl).await?;
-        let cypher = self.compile_grounded(dsl).await?;
-        Ok(self.client.execute(&cypher).await?)
+        self.compile_grounded(dsl).await
+    }
+
+    /// Execute an already-compiled query against the configured client.
+    pub async fn execute(&self, cypher: &CypherQuery) -> Result<QueryResult> {
+        Ok(self.client.execute(cypher).await?)
     }
 
     /// Correct LLM-emitted relationship directions against the live schema.
@@ -1250,6 +1325,10 @@ impl Pipeline {
         // texts in one call, then issue *one* `qlink.insert_batch` per
         // (collection, label) group — never per-row.
         let (se_batches, se_rows) = self.drain_side_effects(effects).await?;
+
+        // The graph changed: drop the cached introspection so the next
+        // schema-dependent call re-scans.
+        self.invalidate_schema_cache();
 
         Ok(IngestSummary {
             batches_executed: total,

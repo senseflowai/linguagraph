@@ -693,13 +693,18 @@ async fn run_case(
 
     errors.extend(validate_dsl(&case.validation.dsl_expect, &dsl));
 
-    match pipeline.compile(dsl.clone()) {
+    // Compile exactly the query that will run (direction-corrected +
+    // grounded), so the report shows the grounded Cypher that executes —
+    // not a separate grounding-free `compile()` that always renders the
+    // server-side `libqlink` fallback.
+    let compiled = match pipeline.compile_for_run(dsl.clone()).await {
         Ok(query) => {
             cypher = Some(query.text.clone());
             cypher_params = Some(mask_cypher_params(
                 &query.params,
                 settings.include_embeddings_in_report,
             ));
+            query
         }
         Err(err) => {
             errors.push(format!("cypher compile failed: {err}"));
@@ -718,9 +723,9 @@ async fn run_case(
                 judge: judge_report,
             };
         }
-    }
+    };
 
-    let result = match pipeline.run(dsl.clone()).await {
+    let result = match pipeline.execute(&compiled).await {
         Ok(result) => result,
         Err(err) => {
             errors.push(format!("query failed: {err}"));

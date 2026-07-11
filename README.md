@@ -951,7 +951,10 @@ api_key_env = "OPENAI_API_KEY"
 
 [query]
 max_traversal_depth = 6
-default_limit = 100
+default_limit = 100          # traversal (RAG chunk) retrieval default
+max_limit = 5000             # read-path safety ceiling: a query that omits
+                             # `limit` returns all matching rows up to this cap,
+                             # and an explicit `limit` is capped here too
 
 [ingest]
 # Rows per embedding-insert query when draining side effects. Each row runs a

@@ -44,6 +44,10 @@ embedding_dim = 1024
 [query]
 max_traversal_depth = 6
 default_limit = 50
+# Safety ceiling on rows a compiled DSL read query may return. A query that
+# omits `limit` returns every matching row up to this cap (rather than being
+# truncated to a small default); an explicit `limit` is also capped here.
+max_limit = 5000
 
 # Query-time grounding (entity linking). When enabled, a SemanticText
 # filter whose cardinality resolves to "one" is first resolved directly

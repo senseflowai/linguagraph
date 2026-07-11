@@ -174,6 +174,7 @@ fn aggregate_name(f: AggregateFn) -> &'static str {
         AggregateFn::Avg => "avg",
         AggregateFn::Min => "min",
         AggregateFn::Max => "max",
+        AggregateFn::Collect => "collect",
     }
 }
 
@@ -347,6 +348,8 @@ pub enum AggregateFn {
     Avg,
     Min,
     Max,
+    /// Gather the values into a list per group (Cypher `collect(...)`).
+    Collect,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

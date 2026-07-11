@@ -266,6 +266,7 @@ pub enum AggregateFn {
     Avg,
     Min,
     Max,
+    Collect,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

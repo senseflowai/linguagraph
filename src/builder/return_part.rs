@@ -132,6 +132,7 @@ fn render_return(item: &ReturnClause) -> String {
                 AggregateFn::Avg => format!("avg({inner})"),
                 AggregateFn::Min => format!("min({inner})"),
                 AggregateFn::Max => format!("max({inner})"),
+                AggregateFn::Collect => format!("collect({inner})"),
             };
             match alias {
                 Some(a) => format!("{call} AS {a}"),

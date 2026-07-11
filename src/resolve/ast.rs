@@ -693,6 +693,7 @@ fn lower_agg(a: d::AggregateFn) -> AggregateFn {
         d::AggregateFn::Avg => AggregateFn::Avg,
         d::AggregateFn::Min => AggregateFn::Min,
         d::AggregateFn::Max => AggregateFn::Max,
+        d::AggregateFn::Collect => AggregateFn::Collect,
     }
 }
 

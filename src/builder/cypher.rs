@@ -215,6 +215,7 @@ fn render_aggregate_name(func: &AggregateFn, field: &PropertyRef) -> String {
         AggregateFn::Avg => format!("avg({inner})"),
         AggregateFn::Min => format!("min({inner})"),
         AggregateFn::Max => format!("max({inner})"),
+        AggregateFn::Collect => format!("collect({inner})"),
     }
 }
 

@@ -529,7 +529,7 @@ const OUTPUT_SHAPE: &str = r#"{
   "return": [
     { "field": "<alias>.<prop>", "alias": "<name>" },
     { "field": "<alias>.<datetime_prop>", "date_part": "year|quarter|month|day|hour", "alias": "<name>" },
-    { "aggregate": "count|sum|avg|min|max", "field": "<alias>[.<prop>]", "alias": "<name>" }
+    { "aggregate": "count|sum|avg|min|max|collect", "field": "<alias>[.<prop>]", "alias": "<name>" }  // collect -> list of values per group
   ],
   "group_by": [ "<alias>.<prop>" | { "field": "<alias>.<datetime_prop>", "date_part": "year|quarter|month|day|hour", "alias": "<name>" } ],
   "sort":     [ { "field": "<alias>.<prop> or projected alias", "order": "asc|desc" } ],

@@ -586,17 +586,13 @@ impl Pipeline {
         let Some(Literal::String(label)) = pred.params.get("label") else {
             return Ok(());
         };
-        // Grounding pins a filter to concrete node ids — sound only when
-        // the query names one specific entity. A `cardinality: "many"`
-        // filter (explicit, or inferred from a non-`eq` op) wants every
-        // matching row, which grounding's small `top_k` would truncate;
-        // leave it untouched so it falls through to the uncapped
-        // server-side `libqlink` hybrid search instead.
-        let cardinality_one =
-            matches!(pred.params.get("cardinality"), Some(Literal::String(s)) if s == "one");
-        if !cardinality_one {
-            return Ok(());
-        }
+        // `cardinality: "one"` pins the single best match (a specific named
+        // entity); `"many"` pins the whole candidate pool (the question
+        // wants every match — the DSL's own LIMIT / `max_limit` caps the
+        // rows). Both are resolved the same way: a client-side hybrid
+        // search, so the query never needs the server-side `libqlink` CALL.
+        let many =
+            matches!(pred.params.get("cardinality"), Some(Literal::String(s)) if s == "many");
         let query_str = match pred.params.get("query_str") {
             Some(Literal::String(s)) => s.clone(),
             _ => String::new(),
@@ -615,19 +611,27 @@ impl Pipeline {
         let collection = collection.clone();
         let label = label.clone();
 
-        // Dense search over `_canonical`. Fetch a wider `fetch_k`, then
-        // label-filter client-side (the collection is shared across
-        // labels) and threshold below.
-        let hits = store
-            .search_raw(&collection, &vector, self.grounding.fetch_k.max(1), None)
-            .await?;
-        if hits.is_empty() {
-            return Ok(());
-        }
-
-        // Keep same-label, node-id-keyed hits. A point id that doesn't
-        // parse as an integer isn't from the qlink `_canonical` collection
-        // (e.g. an ontology UUID) — skip it.
+        // Retrieval mode set by the resolver from the folded ops:
+        //  * `lexical` (`contains` / `eq` / …) → BM25-only over the
+        //    `text_bm25` sparse index. A bare-value query returns exactly
+        //    the docs that contain the term(s) — literal `contains` via the
+        //    index — with no dense neighbours polluting the pool.
+        //  * `hybrid` (`search`) → dense ⊕ BM25 fused with RRF, for
+        //    semantic/fuzzy retrieval.
+        // Label-filtering runs server-side; the per-hit check below is a
+        // defensive re-filter that also drops any non-node-id point.
+        let lexical =
+            matches!(pred.params.get("mode"), Some(Literal::String(s)) if s == "lexical");
+        let fetch_k = self.grounding.fetch_k.max(1);
+        let hits = if lexical {
+            store
+                .search_bm25(&collection, &query_str, Some(&label), fetch_k)
+                .await?
+        } else {
+            store
+                .search_hybrid(&collection, &query_str, &vector, Some(&label), fetch_k)
+                .await?
+        };
         let mut candidates: Vec<(i64, f32, Option<String>)> = Vec::new();
         for h in hits {
             let Ok(nid) = h.id.parse::<i64>() else {
@@ -636,46 +640,52 @@ impl Pipeline {
             if !payload_label_matches(&h.payload, &label) {
                 continue;
             }
-            let text = payload_text(&h.payload);
+            let text = payload_canonical_text(&h.payload);
             candidates.push((nid, h.score, text));
         }
         if candidates.is_empty() {
+            // A lexical (`contains` / `eq`) filter that matched nothing means
+            // the literal answer is *no rows* — pin an empty set so the query
+            // returns zero rows rather than falling back to a semantic guess
+            // (BM25 over `_canonical` returns only docs sharing a term, so an
+            // empty result is a true "not found"). Semantic filters instead
+            // leave the pin unset and fall through to the server-side search.
+            if lexical {
+                pred.params
+                    .insert("prefetch_rows".to_string(), Literal::List(Vec::new()));
+            }
             return Ok(());
         }
 
-        // Optional cross-encoder rerank — only when a reranker is attached
-        // and every candidate carries payload text to score.
-        if self.grounding.rerank && !query_str.is_empty() {
+        // Qdrant returns fused hits already in descending RRF-score order.
+        // `cardinality: "one"` names a single entity: when a cross-encoder
+        // reranker is attached and every candidate carries its `_canonical`
+        // text, rerank the hybrid recall pool and keep the single best pick
+        // — recall (dense ⊕ BM25) widens the net, the reranker sharpens the
+        // choice. `many` keeps the RRF order and pins the whole pool.
+        if !many {
             if let Some(reranker) = self.reranker.as_ref() {
                 let texts: Option<Vec<String>> =
                     candidates.iter().map(|(_, _, t)| t.clone()).collect();
-                if let Some(texts) = texts {
+                if let Some(texts) = texts.filter(|t| !t.is_empty()) {
                     match reranker.rerank(&query_str, &texts) {
                         Ok(scores) if scores.len() == candidates.len() => {
                             for (c, s) in candidates.iter_mut().zip(scores) {
                                 c.1 = s as f32;
                             }
+                            candidates.sort_by(|a, b| b.1.total_cmp(&a.1));
                         }
                         Ok(_) => {}
                         Err(e) => tracing::debug!(
                             target: "linguagraph::grounding",
                             error = %e,
-                            "rerank failed; keeping dense scores"
+                            "rerank failed; keeping RRF order"
                         ),
                     }
                 }
             }
+            candidates.truncate(1);
         }
-
-        candidates.retain(|(_, s, _)| *s >= self.grounding.threshold);
-        if candidates.is_empty() {
-            return Ok(());
-        }
-        candidates.sort_by(|a, b| b.1.total_cmp(&a.1));
-        // We only get here for `cardinality: "one"` (checked above), so
-        // pin just the single best match — a near-tie with an unrelated
-        // node shouldn't fan the result out to several rows.
-        candidates.truncate(1);
 
         let rows: Vec<Literal> = candidates
             .iter()
@@ -691,8 +701,9 @@ impl Pipeline {
             target: "linguagraph::grounding",
             alias = pred.field.alias.as_str(),
             label = %label,
+            cardinality = if many { "many" } else { "one" },
             pinned = rows.len(),
-            "grounded SemanticText filter to node ids"
+            "grounded SemanticText filter to node ids (hybrid)"
         );
         pred.params
             .insert("prefetch_rows".to_string(), Literal::List(rows));
@@ -2174,9 +2185,22 @@ fn db_value_to_json(value: &DbValue) -> serde_json::Value {
 /// possibly-correct hit on a schema guess.
 const PAYLOAD_LABEL_KEYS: &[&str] = &["label", "labels", "payload_label", "_label"];
 
-/// Candidate payload keys that may carry the point's source text, used
-/// only for the optional grounding rerank.
-const PAYLOAD_TEXT_KEYS: &[&str] = &["text", "document", "content", "payload_text", "_text"];
+/// Candidate payload keys carrying a point's source text, used to rerank
+/// grounding candidates. qlink writes the canonical document under
+/// `_canonical`; the others are accepted for points from other producers.
+const PAYLOAD_TEXT_KEYS: &[&str] = &["_canonical", "text", "document", "content", "_text"];
+
+/// Best-effort extraction of a grounding candidate's source text from its
+/// payload, for the cross-encoder rerank. `None` when no recognised text
+/// key is present (the caller then skips reranking that pool).
+fn payload_canonical_text(payload: &serde_json::Value) -> Option<String> {
+    for key in PAYLOAD_TEXT_KEYS {
+        if let Some(serde_json::Value::String(s)) = payload.get(key) {
+            return Some(s.clone());
+        }
+    }
+    None
+}
 
 /// True when the payload's label field (whichever recognised key holds
 /// it) equals — or, for a list-valued field, contains — `label`. Returns
@@ -2194,17 +2218,6 @@ fn payload_label_matches(payload: &serde_json::Value, label: &str) -> bool {
         }
     }
     true
-}
-
-/// Best-effort extraction of a point's source text from its payload for
-/// the optional rerank. `None` when no recognised text key is present.
-fn payload_text(payload: &serde_json::Value) -> Option<String> {
-    for key in PAYLOAD_TEXT_KEYS {
-        if let Some(serde_json::Value::String(s)) = payload.get(key) {
-            return Some(s.clone());
-        }
-    }
-    None
 }
 
 fn collect_typed_predicates_mut<'a>(
@@ -3281,19 +3294,6 @@ mod tests {
         assert!(payload_label_matches(&serde_json::Value::Null, "Company"));
     }
 
-    #[test]
-    fn payload_text_reads_first_recognised_key() {
-        assert_eq!(
-            payload_text(&serde_json::json!({"text": "hi"})),
-            Some("hi".to_string())
-        );
-        assert_eq!(
-            payload_text(&serde_json::json!({"content": "yo"})),
-            Some("yo".to_string())
-        );
-        assert_eq!(payload_text(&serde_json::json!({"nope": "x"})), None);
-    }
-
     /// Store double that returns a fixed set of raw hits from `search_raw`
     /// and stubs the rest of the [`crate::embeddings::EmbeddingStore`]
     /// surface — enough to drive the grounding pass.
@@ -3436,19 +3436,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn grounding_below_threshold_falls_back_to_libqlink() {
-        // Hit exists but its score is under the bar → no pin, fallback.
-        let store: crate::embeddings::SharedEmbeddingStore =
-            Arc::new(FixedRawStore(vec![crate::embeddings::RawScoredHit {
-                id: "42".into(),
-                score: 0.50,
-                payload: serde_json::json!({"label": "Company"}),
-            }]));
+    async fn grounding_no_hits_falls_back_to_libqlink() {
+        // The hybrid search returns nothing → nothing to pin, so the query
+        // keeps the server-side search.
+        let store: crate::embeddings::SharedEmbeddingStore = Arc::new(FixedRawStore(vec![]));
         let (pipeline, dsl_query) = grounding_fixture(store, 0.9);
         let cypher = pipeline.compile_grounded(dsl_query).await.unwrap();
         assert!(
             cypher.text.contains("libqlink.search_hybrid_reranked"),
-            "low-confidence hit must fall back; got:\n{}",
+            "no hit must fall back; got:\n{}",
             cypher.text
         );
     }
@@ -3491,26 +3487,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn grounding_skips_many_cardinality_even_with_a_confident_hit() {
-        // "Show every review mentioning bad quality" — even a slam-dunk
-        // hit must not be pinned: `cardinality: "many"` means the query
-        // wants every matching row, and grounding only ever pins one.
-        let store: crate::embeddings::SharedEmbeddingStore =
-            Arc::new(FixedRawStore(vec![crate::embeddings::RawScoredHit {
+    async fn grounding_many_cardinality_pins_all_candidates() {
+        // "Show every review mentioning bad quality" — `cardinality: "many"`
+        // now grounds too: every candidate the hybrid search returns is
+        // pinned by node id (the DSL's own LIMIT / `max_limit` caps the
+        // rows), so the server-side CALL is skipped just like the "one" case.
+        let store: crate::embeddings::SharedEmbeddingStore = Arc::new(FixedRawStore(vec![
+            crate::embeddings::RawScoredHit {
                 id: "42".into(),
-                score: 0.99,
+                score: 0.9,
                 payload: serde_json::json!({"label": "Company"}),
-            }]));
+            },
+            crate::embeddings::RawScoredHit {
+                id: "43".into(),
+                score: 0.8,
+                payload: serde_json::json!({"label": "Company"}),
+            },
+        ]));
         let (pipeline, dsl_query) = grounding_fixture_with_cardinality(store, 0.9, "many");
         let cypher = pipeline.compile_grounded(dsl_query).await.unwrap();
         assert!(
-            cypher.text.contains("libqlink.search_labeled("),
-            "`many` must route through the dense-only fallback; got:\n{}",
+            cypher.text.contains("UNWIND") && cypher.text.contains(".nid"),
+            "`many` must pin candidates by node id; got:\n{}",
             cypher.text
         );
         assert!(
-            !cypher.text.contains(".nid"),
-            "`many` must never be pinned by node id; got:\n{}",
+            !cypher.text.contains("libqlink.search_labeled"),
+            "`many` must not fall back to the dense-only search; got:\n{}",
             cypher.text
         );
     }

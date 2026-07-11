@@ -292,10 +292,17 @@ struct SemGroup {
     /// for a fuzzy/broader match. Fallback signal when no term states
     /// `cardinality` explicitly.
     all_singular_op: bool,
+    /// True while every folded op is a *lexical* matcher (`eq` / `neq` /
+    /// `contains` / …) rather than a semantic one (`search` /
+    /// `hybrid_search`). Lexical groups retrieve through the BM25 sparse
+    /// branch only — a bare-value sparse query returns exactly the docs
+    /// that contain the term(s), i.e. literal `contains` via the index —
+    /// while a semantic group runs the dense ⊕ BM25 hybrid.
+    lexical: bool,
 }
 
-/// SemanticText ops that fold into one consolidated per-entity hybrid
-/// search over `_canonical`.
+/// SemanticText ops that fold into one consolidated per-entity search
+/// over `_canonical`.
 fn is_foldable_entity_op(op: TypedOp) -> bool {
     matches!(
         op,
@@ -306,6 +313,16 @@ fn is_foldable_entity_op(op: TypedOp) -> bool {
             | TypedOp::Search
             | TypedOp::SearchReranked
             | TypedOp::HybridSearch
+    )
+}
+
+/// SemanticText ops that ask for *semantic* (fuzzy/meaning) retrieval and
+/// so want the dense ⊕ BM25 hybrid. Everything else foldable (`eq`,
+/// `contains`, …) is lexical and uses the BM25 branch alone.
+fn is_semantic_op(op: TypedOp) -> bool {
+    matches!(
+        op,
+        TypedOp::Search | TypedOp::SearchReranked | TypedOp::HybridSearch
     )
 }
 
@@ -375,6 +392,7 @@ fn lower_filters(
                     let term = semantic_text_term_value(op, &f.value)?;
                     let alias = field.alias.as_str();
                     let is_eq = op == TypedOp::Eq;
+                    let is_semantic = is_semantic_op(op);
                     let explicit_cardinality = f
                         .cardinality
                         .as_deref()
@@ -387,6 +405,7 @@ fn lower_filters(
                         Some(g) => {
                             g.terms.push((field.property.clone(), term));
                             g.all_singular_op = g.all_singular_op && is_eq;
+                            g.lexical = g.lexical && !is_semantic;
                             g.cardinality_hint =
                                 merge_cardinality_hint(g.cardinality_hint, explicit_cardinality);
                         }
@@ -395,6 +414,7 @@ fn lower_filters(
                             label: label.clone(),
                             terms: vec![(field.property.clone(), term)],
                             all_singular_op: is_eq,
+                            lexical: !is_semantic,
                             cardinality_hint: explicit_cardinality,
                         }),
                     }
@@ -455,7 +475,21 @@ fn lower_filters(
     // registry already holds for `SemanticText`; an inferred type means it
     // is registered, so `get` cannot miss here.
     for group in semantic_groups {
-        let query_text = build_canonical_query(&group.label, &group.terms, true);
+        // Lexical groups (`contains` / `eq` / …) query BM25 with the bare
+        // term values, so the sparse index returns exactly the docs that
+        // contain those tokens. Semantic groups (`search`) mirror the
+        // `_canonical` document format so the dense branch matches its
+        // embedding distribution.
+        let query_text = if group.lexical {
+            group
+                .terms
+                .iter()
+                .map(|(_, v)| v.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+        } else {
+            build_canonical_query(&group.label, &group.terms, true)
+        };
         let value = serde_json::Value::String(query_text);
         let field = PropertyRef {
             alias: Alias::new(group.alias.as_str()),
@@ -482,6 +516,10 @@ fn lower_filters(
         typed.params.insert(
             "cardinality".to_string(),
             Literal::String(cardinality.as_str().to_string()),
+        );
+        typed.params.insert(
+            "mode".to_string(),
+            Literal::String(if group.lexical { "lexical" } else { "hybrid" }.to_string()),
         );
         preds.push(FilterExpression::Typed(typed));
     }

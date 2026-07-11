@@ -413,7 +413,13 @@ mod tests {
         );
 
         let hits = store
-            .search("c", &vec3(1.0, 0.0, 0.0), 10, None, &EmbeddingFilter::default())
+            .search(
+                "c",
+                &vec3(1.0, 0.0, 0.0),
+                10,
+                None,
+                &EmbeddingFilter::default(),
+            )
             .await
             .unwrap();
         assert_eq!(hits.len(), 1);
@@ -459,7 +465,13 @@ mod tests {
 
         // Threshold drops the orthogonal vector.
         let hits = store
-            .search("c", &vec3(1.0, 0.0, 0.0), 10, Some(0.5), &EmbeddingFilter::default())
+            .search(
+                "c",
+                &vec3(1.0, 0.0, 0.0),
+                10,
+                Some(0.5),
+                &EmbeddingFilter::default(),
+            )
             .await
             .unwrap();
         assert_eq!(hits.len(), 1);

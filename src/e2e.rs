@@ -19,7 +19,9 @@ use crate::config::{self, Config};
 use crate::core::Pipeline;
 use crate::db::{GraphClient, MemgraphClient, QueryResult, Value as DbValue};
 use crate::dsl::{self, DslQuery, TraversalQuery};
-use crate::embeddings::{self, SharedEmbedder};
+use crate::embeddings::{
+    self, EmbeddingIndex, InMemoryEmbeddingStore, SharedEmbedder, SharedEmbeddingStore,
+};
 use crate::graph::{Graph, GraphBuilder, OntologyCatalog, OntologyCatalogStorage, PrimaryKey};
 use crate::llm::LlmClient;
 use crate::prompt::{self, PromptOptions};
@@ -363,6 +365,7 @@ pub async fn run_suite(opts: E2eRunOptions) -> anyhow::Result<E2eReport> {
     }
 
     let catalog = load_catalog(&ontology_path).await?;
+    let catalog = Arc::new(catalog);
     let questions = load_questions(&questions_path).await?;
     let questions = if let Some(case_id) = &opts.case_id {
         let filtered: Vec<_> = questions
@@ -388,14 +391,16 @@ pub async fn run_suite(opts: E2eRunOptions) -> anyhow::Result<E2eReport> {
 
     let client: Arc<dyn GraphClient> = Arc::new(MemgraphClient::connect(&cfg.database).await?);
     let (registry, embedder) = build_registry(&cfg)?;
+    let prompt_embedder = build_ontology_catalog_embedder(&cfg)?;
+    let embedding_store = build_embedding_store(&cfg)?;
     let ontology_storage: Arc<dyn OntologyCatalogStorage> = Arc::new(
-        crate::graph::InMemoryOntologyCatalogStorage::new(catalog.clone()),
+        crate::graph::InMemoryOntologyCatalogStorage::new((*catalog).clone()),
     );
     let mut pipeline = Pipeline::new(client.clone(), &cfg)
         .with_ingest_batch_size(settings.batch_size)
         .with_registry(registry.clone())
         .with_ontology_catalog_storage(ontology_storage)
-        .with_ontology_catalog(Arc::new(catalog))
+        .with_ontology_catalog(catalog.clone())
         .with_prefix_label(Some(prefix.clone()))
         .with_prefix_index(Some(prefix.clone()));
     if let Some(embedder) = embedder {
@@ -403,6 +408,9 @@ pub async fn run_suite(opts: E2eRunOptions) -> anyhow::Result<E2eReport> {
     }
     if let Some(reranker) = build_semantic_text_reranker(&cfg)? {
         pipeline = pipeline.with_reranker(reranker);
+    }
+    if cfg.query.grounding.enabled {
+        pipeline = pipeline.with_prefetch_store(embedding_store.clone());
     }
     pipeline.load_ontology_catalog().await?;
 
@@ -450,6 +458,15 @@ pub async fn run_suite(opts: E2eRunOptions) -> anyhow::Result<E2eReport> {
             llm.clone(),
             &schema,
             &prompt_opts,
+            catalog.as_ref(),
+            prompt_embedder.as_ref(),
+            embedding_store.as_ref(),
+            &cfg.qdrant.collection,
+            cfg.ontology_catalog
+                .embedding_model
+                .as_deref()
+                .unwrap_or("mock"),
+            &cfg.ontology_catalog,
             &prefix,
             &settings,
         )
@@ -496,6 +513,12 @@ async fn run_case(
     llm: Arc<dyn LlmClient>,
     schema: &prompt::GraphSchema,
     prompt_opts: &PromptOptions,
+    catalog: &OntologyCatalog,
+    prompt_embedder: &dyn embeddings::Embedder,
+    embedding_store: &dyn embeddings::EmbeddingStore,
+    prompt_collection: &str,
+    prompt_model: &str,
+    ontology_cfg: &config::OntologyCatalogConfig,
     prefix: &str,
     settings: &SuiteSettings,
 ) -> E2eCaseReport {
@@ -625,6 +648,12 @@ async fn run_case(
                 &case.question,
                 schema,
                 prompt_opts,
+                catalog,
+                prompt_embedder,
+                embedding_store,
+                prompt_collection,
+                prompt_model,
+                ontology_cfg,
                 prefix,
                 settings.max_repairs,
             )
@@ -970,6 +999,26 @@ fn build_semantic_text_reranker(
     Ok(Some(reranker))
 }
 
+fn build_embedding_store(cfg: &Config) -> anyhow::Result<SharedEmbeddingStore> {
+    #[cfg(feature = "qdrant")]
+    if !cfg.qdrant.url.trim().is_empty() {
+        let client = crate::db::QdrantClient::connect(&cfg.qdrant)
+            .map_err(|e| anyhow!("qdrant connect: {e}"))?;
+        return Ok(Arc::new(client));
+    }
+    #[cfg(not(feature = "qdrant"))]
+    let _ = cfg;
+    Ok(Arc::new(InMemoryEmbeddingStore::new()))
+}
+
+fn build_ontology_catalog_embedder(cfg: &Config) -> anyhow::Result<SharedEmbedder> {
+    embeddings::default_embedder(
+        cfg.ontology_catalog.embedding_model.as_deref(),
+        cfg.ontology_catalog.embedding_dim,
+    )
+    .map_err(|e| anyhow!("ontology catalog embedder init: {e}"))
+}
+
 #[cfg(feature = "openai")]
 fn build_llm_client(cfg: &Config) -> anyhow::Result<Arc<dyn LlmClient>> {
     Ok(Arc::new(crate::llm::OpenAiClient::from_config(&cfg.llm)))
@@ -1101,43 +1150,79 @@ async fn generate_case_dsl(
     question: &str,
     schema: &prompt::GraphSchema,
     prompt_opts: &PromptOptions,
+    catalog: &OntologyCatalog,
+    prompt_embedder: &dyn embeddings::Embedder,
+    embedding_store: &dyn embeddings::EmbeddingStore,
+    prompt_collection: &str,
+    prompt_model: &str,
+    ontology_cfg: &config::OntologyCatalogConfig,
     prefix: &str,
     max_repairs: usize,
 ) -> anyhow::Result<DslQuery> {
-    // let system = prompt::generate_query_prompt(question, schema, prompt_opts);
-    // let mut user = format!(
-    //     "Question:\n{question}\n\nReturn only one JSON DSL object. Do not wrap it in Markdown."
-    // );
-    // let mut last_output = String::new();
-    // let mut last_error = String::new();
-    //
-    // for attempt in 0..=max_repairs {
-    //     let raw = llm
-    //         .complete(&system, &user)
-    //         .await
-    //         .map_err(|e| anyhow!("LLM DSL generation failed: {e}"))?;
-    //     last_output = raw.clone();
-    //     match extract_json_object(&raw)
-    //         .and_then(|json| serde_json::from_str::<DslQuery>(&json).map_err(|e| e.into()))
-    //         .and_then(|mut dsl| {
-    //             force_prefix(&mut dsl, prefix);
-    //             dsl::parse_str(&serde_json::to_string(&dsl)?).map_err(|e| e.into())
-    //         }) {
-    //         Ok(dsl) => return Ok(dsl),
-    //         Err(err) => {
-    //             last_error = err.to_string();
-    //             if attempt < max_repairs {
-    //                 user = format!(
-    //                     "Repair the JSON DSL for this question.\n\nQuestion:\n{question}\n\n\
-    //                      Previous output:\n{last_output}\n\nValidation error:\n{last_error}\n\n\
-    //                      Return only the corrected JSON object."
-    //                 );
-    //             }
-    //         }
-    //     }
-    // }
+    embedding_store
+        .ensure(prompt_collection, prompt_embedder.dim())
+        .await
+        .map_err(|e| anyhow!("embedding store: {e}"))?;
+    let index = EmbeddingIndex {
+        store: embedding_store,
+        collection: prompt_collection,
+        model: prompt_model,
+    };
+    let params = prompt::QueryPromptParams {
+        domain_threshold: ontology_cfg.domain_selection_threshold,
+        domain_top_k: ontology_cfg.domain_selection_top_k,
+        selection: prompt::QuerySelectionParams {
+            entity_threshold: ontology_cfg.entity_selection_threshold,
+            property_threshold: ontology_cfg.property_selection_threshold,
+            neighbor_hops: ontology_cfg.selection_neighbor_hops,
+            ..prompt::QuerySelectionParams::default()
+        },
+        include_examples: prompt_opts.include_examples,
+    };
+    let mut schema = schema.clone();
+    let system = prompt::generate_query_prompt(
+        question,
+        &mut schema,
+        catalog,
+        prompt_embedder,
+        &index,
+        &params,
+    )
+    .await
+    .map_err(|e| anyhow!("query prompt generation failed: {e}"))?;
+    let mut user = format!(
+        "Question:\n{question}\n\nReturn only one JSON DSL object. Do not wrap it in Markdown."
+    );
+    let mut last_output = String::new();
+    let mut last_error = String::new();
 
-    bail!("could not produce valid DSL")
+    for attempt in 0..=max_repairs {
+        let raw = llm
+            .complete(&system, &user)
+            .await
+            .map_err(|e| anyhow!("LLM DSL generation failed: {e}"))?;
+        last_output = raw.clone();
+        match extract_json_object(&raw)
+            .and_then(|json| serde_json::from_str::<DslQuery>(&json).map_err(|e| e.into()))
+            .and_then(|mut dsl| {
+                force_prefix(&mut dsl, prefix);
+                dsl::parse_str(&serde_json::to_string(&dsl)?).map_err(|e| e.into())
+            }) {
+            Ok(dsl) => return Ok(dsl),
+            Err(err) => {
+                last_error = err.to_string();
+                if attempt < max_repairs {
+                    user = format!(
+                        "Repair the JSON DSL for this question.\n\nQuestion:\n{question}\n\n\
+                         Previous output:\n{last_output}\n\nValidation error:\n{last_error}\n\n\
+                         Return only the corrected JSON object."
+                    );
+                }
+            }
+        }
+    }
+
+    bail!("could not produce valid DSL: {last_error}; last output: {last_output}")
 }
 
 fn force_prefix(dsl: &mut DslQuery, prefix: &str) {
@@ -1680,6 +1765,7 @@ mod tests {
                 op: "in".into(),
                 value: json!(["CIS", "EMEA"]),
                 field_type: None,
+                cardinality: None,
             }],
             return_: Vec::new(),
             group_by: Vec::new(),

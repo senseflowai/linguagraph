@@ -67,6 +67,7 @@ fn cfg_with_semantic_text() -> Config {
         llm: LlmConfig::default(),
         query: QueryConfig::default(),
         ontology_catalog: OntologyCatalogConfig::default(),
+        qdrant: Default::default(),
         prompt: Default::default(),
         ingest: Default::default(),
         types,
@@ -221,7 +222,7 @@ fn semantic_search_compiles_to_qlink_search_call() {
             "start": { "label": "Company", "alias": "c" },
             "filters": [
                 { "field": "c.name", "type": "SemanticText",
-                  "op": "search_reranked", "value": "apple" }
+                  "op": "search_reranked", "value": "apple", "cardinality": "one" }
             ],
             "return": [{ "field": "c.name", "alias": "name" }],
             "limit": 5
@@ -359,7 +360,7 @@ async fn semantic_search_delegates_rerank_to_qlink_in_single_query() {
             "start": { "label": "Company", "alias": "c" },
             "filters": [
                 { "field": "c.name", "type": "SemanticText",
-                  "op": "search", "value": "apple" }
+                  "op": "search", "value": "apple", "cardinality": "one" }
             ],
             "return": [{ "field": "c.name", "alias": "name" }],
             "limit": 5
@@ -413,9 +414,9 @@ fn multiple_semantic_filters_on_same_alias_consolidate_into_one_call() {
             "start": { "label": "Camera", "alias": "c" },
             "filters": [
                 { "field": "c.origin_place_description", "type": "SemanticText",
-                  "op": "search", "value": "Mangilik 55" },
+                  "op": "search", "value": "Mangilik 55", "cardinality": "one" },
                 { "field": "c.name", "type": "SemanticText",
-                  "op": "search", "value": "TargetAI" }
+                  "op": "search", "value": "TargetAI", "cardinality": "one" }
             ],
             "return": [
                 { "field": "c.name", "alias": "name" },
@@ -490,7 +491,7 @@ fn aggregate_with_semantic_search_drops_handler_order_by() {
             ],
             "filters": [
                 { "field": "p.name", "type": "SemanticText",
-                  "op": "search_reranked", "value": "office" }
+                  "op": "search_reranked", "value": "office", "cardinality": "one" }
             ],
             "return": [
                 { "aggregate": "count", "field": "c.id", "alias": "camera_count" }
@@ -531,7 +532,7 @@ fn hybrid_search_routes_to_canonical_hybrid_retrieval() {
             "start": { "label": "Company", "alias": "c" },
             "filters": [
                 { "field": "c.name", "type": "SemanticText",
-                  "op": "hybrid_search", "value": "apple" }
+                  "op": "hybrid_search", "value": "apple", "cardinality": "one" }
             ],
             "return": [{ "field": "c.name", "alias": "name" }]
         }"#,
@@ -675,10 +676,8 @@ fn semantic_catalog() -> OntologyCatalog {
                     prop("name", OntologyPropertyType::Text, Some("the company name")),
                     prop("industry", OntologyPropertyType::Keyword, None),
                 ],
-                embedding: None,
             }],
             relation_types: vec![],
-            embedding: None,
         },
     );
     catalog
@@ -739,10 +738,8 @@ fn untyped_datetime_filter_auto_resolves_and_expands_eq_to_a_day_range() {
                         Some("when the visit started"),
                     ),
                 ],
-                embedding: None,
             }],
             relation_types: vec![],
-            embedding: None,
         },
     );
     let pipeline = Pipeline::new(Arc::new(MockClient::new()), &cfg)
@@ -900,10 +897,8 @@ fn ontology_catalog_lookup_keys_off_label_not_alias() {
                     OntologyPropertyType::Text,
                     Some("the company name"),
                 )],
-                embedding: None,
             }],
             relation_types: vec![],
-            embedding: None,
         },
     );
     // Person.name is left plain.
@@ -1030,7 +1025,10 @@ fn prompt_surfaces_field_type_marker() {
         },
     );
     assert!(
-        prompt.contains("name: keyword @Text /* the company name */"),
+        prompt.lines().any(|line| {
+            let line = line.trim_start();
+            line.starts_with("name ") && line.contains("text") && line.contains("[free-text]")
+        }),
         "prompt should annotate typed properties; got:\n{prompt}"
     );
 }

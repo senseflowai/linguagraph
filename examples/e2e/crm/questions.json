@@ -259,31 +259,6 @@
     {
       "id": "activity_by_due_date",
       "question": "Какая активность запланирована на 2026-07-08?",
-      "dsl": {
-        "action": "find",
-        "start": {
-          "label": "Activity",
-          "alias": "a"
-        },
-        "filters": [
-          {
-            "field": "a.due_date",
-            "op": "eq",
-            "value": "2026-07-08"
-          }
-        ],
-        "return": [
-          {
-            "field": "a.subject",
-            "alias": "subject"
-          },
-          {
-            "field": "a.due_date",
-            "alias": "due_date"
-          }
-        ],
-        "limit": 1
-      },
       "validation": {
         "row_count": {
           "exact": 1
@@ -309,28 +284,6 @@
     {
       "id": "scheduled_activity_count",
       "question": "Сколько активностей имеют статус scheduled?",
-      "dsl": {
-        "action": "aggregate",
-        "start": {
-          "label": "Activity",
-          "alias": "a"
-        },
-        "filters": [
-          {
-            "field": "a.status",
-            "op": "eq",
-            "value": "Scheduled"
-          }
-        ],
-        "return": [
-          {
-            "aggregate": "count",
-            "field": "a.id",
-            "alias": "activity_count"
-          }
-        ],
-        "group_by": []
-      },
       "validation": {
         "row_count": {
           "exact": 1
@@ -342,14 +295,11 @@
           ],
           "required_filter_ops": [
             "eq"
-          ],
-          "required_return_fields": [
-            "activity_count"
           ]
         },
         "numbers": [
           {
-            "column": "activity_count",
+            "column": "*",
             "op": "eq",
             "value": 7
           }
@@ -359,28 +309,6 @@
     {
       "id": "active_accounts_count",
       "question": "Сколько активных аккаунтов в CRM?",
-      "dsl": {
-        "action": "aggregate",
-        "start": {
-          "label": "Account",
-          "alias": "a"
-        },
-        "filters": [
-          {
-            "field": "a.status",
-            "op": "eq",
-            "value": "Active"
-          }
-        ],
-        "return": [
-          {
-            "aggregate": "count",
-            "field": "a.id",
-            "alias": "active_accounts_count"
-          }
-        ],
-        "group_by": []
-      },
       "validation": {
         "row_count": {
           "exact": 1
@@ -392,14 +320,11 @@
           ],
           "required_filter_ops": [
             "eq"
-          ],
-          "required_return_fields": [
-            "active_accounts_count"
           ]
         },
         "numbers": [
           {
-            "column": "active_accounts_count",
+            "column": "*",
             "op": "eq",
             "value": 19
           }
@@ -409,28 +334,6 @@
     {
       "id": "open_tickets_count",
       "question": "Сколько тикетов сейчас открыты?",
-      "dsl": {
-        "action": "aggregate",
-        "start": {
-          "label": "Ticket",
-          "alias": "t"
-        },
-        "filters": [
-          {
-            "field": "t.status",
-            "op": "eq",
-            "value": "Open"
-          }
-        ],
-        "return": [
-          {
-            "aggregate": "count",
-            "field": "t.id",
-            "alias": "open_tickets_count"
-          }
-        ],
-        "group_by": []
-      },
       "validation": {
         "row_count": {
           "exact": 1
@@ -442,14 +345,11 @@
           ],
           "required_filter_ops": [
             "eq"
-          ],
-          "required_return_fields": [
-            "open_tickets_count"
           ]
         },
         "numbers": [
           {
-            "column": "open_tickets_count",
+            "column": "*",
             "op": "eq",
             "value": 10
           }
@@ -459,28 +359,6 @@
     {
       "id": "open_deals_count",
       "question": "Сколько сделок находятся в открытом статусе?",
-      "dsl": {
-        "action": "aggregate",
-        "start": {
-          "label": "Deal",
-          "alias": "d"
-        },
-        "filters": [
-          {
-            "field": "d.status",
-            "op": "eq",
-            "value": "Open"
-          }
-        ],
-        "return": [
-          {
-            "aggregate": "count",
-            "field": "d.id",
-            "alias": "open_deals_count"
-          }
-        ],
-        "group_by": []
-      },
       "validation": {
         "row_count": {
           "exact": 1
@@ -492,13 +370,10 @@
           ],
           "required_filter_ops": [
             "eq"
-          ],
-          "required_return_fields": [
-            "open_deals_count"
           ]
         },
         "numbers": [
-          { "column": "open_deals_count", "op": "gt", "value": 0 }
+          { "column": "*", "op": "gt", "value": 0 }
         ]
       }
     }

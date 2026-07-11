@@ -146,7 +146,10 @@ impl EmbeddingStore for QdrantClient {
         if points.is_empty() {
             return Ok(());
         }
-        let url = format!("{}/collections/{}/points?wait=true", self.base_url, collection);
+        let url = format!(
+            "{}/collections/{}/points?wait=true",
+            self.base_url, collection
+        );
         let pts: Vec<JsonValue> = points
             .iter()
             .map(|p| {
@@ -330,10 +333,7 @@ mod tests {
 
     #[test]
     fn point_id_string_accepts_uuid_and_number() {
-        assert_eq!(
-            point_id_string(&json!("6a...")).as_deref(),
-            Some("6a...")
-        );
+        assert_eq!(point_id_string(&json!("6a...")).as_deref(), Some("6a..."));
         assert_eq!(point_id_string(&json!(42)).as_deref(), Some("42"));
     }
 

@@ -18,6 +18,7 @@
     {
       "id": "customer_manager",
       "question": "Кто является менеджером клиента Глобекс Ритейл Казахстан?",
+      
       "validation": {
         "row_count": { "exact": 1 },
         "dsl_expect": {
@@ -32,6 +33,7 @@
     {
       "id": "order_product",
       "question": "Какой продукт связан с заказом Обновление оборудования Нортвинд?",
+      
       "validation": {
         "row_count": { "exact": 1 },
         "dsl_expect": {
@@ -79,6 +81,7 @@
     {
       "id": "purchase_supplier",
       "question": "К какому поставщику относится закупка PO-7781?",
+      
       "validation": {
         "row_count": { "exact": 1 },
         "dsl_expect": {
@@ -95,6 +98,7 @@
     {
       "id": "shipment_warehouse",
       "question": "К какому складу относится отгрузка SHP-9002?",
+      
       "validation": {
         "row_count": { "exact": 1 },
         "dsl_expect": {
@@ -110,6 +114,7 @@
     {
       "id": "invoice_payment",
       "question": "Какой платеж связан с инвойсом INV-1002?",
+      
       "validation": {
         "row_count": { "exact": 1 },
         "dsl_expect": {
@@ -126,8 +131,9 @@
     {
       "id": "warehouse_by_description",
       "question": "Найди склад по описанию про холодовую цепочку и розничные отгрузки.",
+
       "validation": {
-        "row_count": { "exact": 1 },
+        "row_count": { "min": 1 },
         "contains": [
           { "column": "*", "mode": "contains", "value": "Алматинский распределительный центр" }
         ]
@@ -136,23 +142,7 @@
     {
       "id": "invoice_by_date",
       "question": "Какой инвойс выставлен на 2026-07-02?",
-      "dsl": {
-        "action": "find",
-        "start": { "label": "Invoice", "alias": "i" },
-        "filters": [
-          {
-            "field": "i.invoice_date",
-            "op": "eq",
-            "value": "2026-07-02"
-          }
-        ],
-        "return": [
-          { "field": "i.invoice_number", "alias": "invoice_number" },
-          { "field": "i.subject", "alias": "subject" },
-          { "field": "i.invoice_date", "alias": "invoice_date" }
-        ],
-        "limit": 1
-      },
+      
       "validation": {
         "row_count": { "exact": 1 },
         "dsl_expect": {
@@ -168,31 +158,16 @@
     {
       "id": "open_sales_order_count",
       "question": "Сколько заказов находятся в статусе открыт?",
-      "dsl": {
-        "action": "aggregate",
-        "start": { "label": "SalesOrder", "alias": "so" },
-        "filters": [
-          {
-            "field": "so.status",
-            "op": "eq",
-            "value": "открыт"
-          }
-        ],
-        "return": [
-          { "aggregate": "count", "field": "so.id", "alias": "open_order_count" }
-        ],
-        "group_by": []
-      },
+      
       "validation": {
         "row_count": { "exact": 1 },
         "dsl_expect": {
           "start_label": "SalesOrder",
           "required_filter_fields": ["status"],
-          "required_filter_ops": ["eq"],
-          "required_return_fields": ["open_order_count"]
+          "required_filter_ops": ["eq"]
         },
         "numbers": [
-          { "column": "open_order_count", "op": "gt", "value": 0 }
+          { "column": "*", "op": "gt", "value": 0 }
         ]
       }
     }

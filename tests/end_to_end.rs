@@ -26,8 +26,10 @@ fn test_config() -> Config {
         query: QueryConfig {
             max_traversal_depth: 4,
             default_limit: 50,
+            grounding: Default::default(),
         },
         ontology_catalog: OntologyCatalogConfig::default(),
+        qdrant: Default::default(),
         prompt: Default::default(),
         ingest: Default::default(),
         types: Default::default(),
@@ -523,12 +525,10 @@ async fn entity_type_search_returns_unique_types_with_domains_and_scopes() {
                         required: false,
                         allowed_values: Vec::new(),
                     }],
-                    embedding: None,
                 },
                 EntityTypeSpec::with_description("Company", "a legal entity"),
             ],
             relation_types: vec![],
-            embedding: None,
         },
     );
 

@@ -119,7 +119,7 @@
         ]
       }
     ],
-    "relationships": [
+    "relation_types": [
       { "name": "CUSTOMER_MANAGER", "description": "Связывает клиента с ответственным сотрудником." },
       { "name": "CUSTOMER_ORDER", "description": "Связывает клиента с заказом на продажу." },
       { "name": "ORDER_OWNER", "description": "Связывает заказ на продажу с внутренним ответственным сотрудником." },

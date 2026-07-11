@@ -188,7 +188,12 @@ fn render_prompt(schema: &GraphSchema, opts: &PromptOptions) -> String {
     }
 
     let aliases = assign_node_aliases(&schema.nodes);
-    write_schema(&mut out, &schema.nodes, opts.ontology_catalog.as_ref(), &aliases);
+    write_schema(
+        &mut out,
+        &schema.nodes,
+        opts.ontology_catalog.as_ref(),
+        &aliases,
+    );
     write_paths(
         &mut out,
         &schema.relationships,
@@ -260,7 +265,9 @@ fn write_schema(
     out.push_str("Nodes retrieved for this question. Aliases are pre-assigned — use as printed.\n");
     out.push_str(
         "Flags: [enum] closed value set — use only a listed value, copied as printed\n       \
-         [free-text] not normalized — only `contains` is reliable (never eq/sort/compare)\n\n",
+         [free-text] not normalized — never sort or compare it directly. `eq`, `contains`, \
+         and `search` all retrieve by meaning, not by literal string match; see rule 8 for \
+         which one to pick and when to add `cardinality`\n\n",
     );
     if nodes.is_empty() {
         out.push_str("(no node labels declared)\n");
@@ -293,7 +300,13 @@ fn write_schema(
         let name_w = visible.iter().map(|p| p.name.len()).max().unwrap_or(0);
         let type_w = visible
             .iter()
-            .map(|p| render_type(p, property_spec(catalog, node.domain.as_deref(), &node.label, &p.name)).len())
+            .map(|p| {
+                render_type(
+                    p,
+                    property_spec(catalog, node.domain.as_deref(), &node.label, &p.name),
+                )
+                .len()
+            })
             .max()
             .unwrap_or(0);
 
@@ -493,7 +506,8 @@ const OUTPUT_SHAPE: &str = r#"{
   ],
   "filters": [
     { "field": "<alias>.<prop>", "op": "eq|neq|gt|gte|lt|lte|in|contains|starts_with|ends_with",
-      "value": <scalar or array> }
+      "value": <scalar or array>,
+      "cardinality": "one|many" }               // [free-text] fields only, see rule 8; omit elsewhere
   ],
   "return": [
     { "field": "<alias>.<prop>", "alias": "<name>" },
@@ -524,6 +538,18 @@ const RULES: &str = r#"1. Use only the labels, properties, paths, and enum value
 7. Aggregation: every non-aggregated column in `return` must also appear in
    `group_by`; sort by the projected alias. For "by year"/"monthly", use the
    date_part object form in both `return` and `group_by`, not the raw datetime.
+8. [free-text] filters retrieve by meaning regardless of `op` — `op` only picks
+   the matching style, it does NOT say how many rows you expect. State that
+   separately with `cardinality`:
+   - The question names ONE specific thing — a person, a company, an id, or a
+     whole description that identifies a single record ("which warehouse's
+     description mentions cold chain and retail shipments") -> `cardinality: "one"`.
+   - The question asks for a set — "show/find/list all/every X that mentions
+     Y", "which reviews say Z" -> `cardinality: "many"`.
+   - Genuinely unsure -> omit `cardinality`; it then falls back to `eq`/`neq` ->
+     one, anything else -> many. Prefer stating it explicitly when the
+     question's own wording (singular "which one" vs plural "all/every") makes
+     the answer obvious — don't rely on the fallback for those.
 "#;
 
 const EXAMPLES: &str = r#"User: "Show me people over 30 who know someone in Berlin."
@@ -560,6 +586,50 @@ Assistant:
   "sort": [{ "field": "total_spent", "order": "desc" }],
   "limit": 10
 }
+
+User: "Which warehouse's description mentions cold chain and retail shipments?"
+Assistant:
+{
+  "start": { "label": "Warehouse", "alias": "w" },
+  "filters": [
+    { "field": "w.description", "op": "contains",
+      "value": "cold chain and retail shipments", "cardinality": "one" }
+  ],
+  "return": [{ "field": "w.name", "alias": "name" }],
+  "limit": 1
+}
+// One specific warehouse is being identified by its description, even
+// though the match is fuzzy — `cardinality: "one"` says so explicitly.
+
+User: "Show me every review that mentions bad product quality."
+Assistant:
+{
+  "start": { "label": "Review", "alias": "r" },
+  "filters": [
+    { "field": "r.text", "op": "contains",
+      "value": "bad product quality", "cardinality": "many" }
+  ],
+  "return": [{ "field": "r.text", "alias": "text" }],
+  "limit": 50
+}
+// Same op (`contains`) as above, opposite cardinality: the question asks
+// for every matching row, not the single best match.
+
+User: "Найди клиента по описанию про складскую инфраструктуру."
+Assistant:
+{
+  "start": { "label": "Customer", "alias": "c" },
+  "filters": [
+    { "field": "c.description", "op": "contains",
+      "value": "складскую инфраструктуру", "cardinality": "one" }
+  ],
+  "return": [{ "field": "c.name", "alias": "name" }],
+  "limit": 1
+}
+// "Найди клиента" (singular "the customer") names one specific record by
+// its description — `cardinality: "one"`, not "many", even though the
+// filter op is `contains`. Contrast with "Найди всех клиентов, у которых
+// в описании..." (plural "all customers") — that would be "many".
 "#;
 
 #[cfg(test)]
@@ -666,7 +736,10 @@ mod tests {
                 ..PromptOptions::default()
             },
         );
-        assert!(prompt.contains("Camera (c) — An IP surveillance camera"), "{prompt}");
+        assert!(
+            prompt.contains("Camera (c) — An IP surveillance camera"),
+            "{prompt}"
+        );
         // Description resolved from the ontology; type rendered as `string`.
         assert!(prompt.contains("active or inactive"), "{prompt}");
         assert!(prompt.contains("string"), "{prompt}");
@@ -718,7 +791,10 @@ mod tests {
             .find(|l| l.trim_start().starts_with("status "))
             .unwrap_or("");
         assert!(status_line.contains("[enum]"), "{prompt}");
-        assert!(prompt.contains("cancelled | completed | pending"), "{prompt}");
+        assert!(
+            prompt.contains("cancelled | completed | pending"),
+            "{prompt}"
+        );
         // … while the high-cardinality field is not flagged.
         let vin_line = prompt
             .lines()
@@ -763,11 +839,20 @@ mod tests {
             },
         );
 
-        assert!(prompt.contains("id: keyword"));
-        assert!(!prompt.contains("id: keyword enum"));
+        let id_line = prompt
+            .lines()
+            .find(|l| l.trim_start().starts_with("id "))
+            .unwrap_or("");
+        assert!(id_line.contains("string"), "{prompt}");
+        assert!(!id_line.contains("[enum]"), "{prompt}");
         assert!(!prompt.contains("Category.id:"));
-        assert!(prompt.contains("status: keyword enum"));
-        assert!(prompt.contains("Category.status:"));
+        let status_line = prompt
+            .lines()
+            .find(|l| l.trim_start().starts_with("status "))
+            .unwrap_or("");
+        assert!(status_line.contains("string"), "{prompt}");
+        assert!(status_line.contains("[enum]"), "{prompt}");
+        assert!(prompt.contains("active | archived"), "{prompt}");
     }
 
     #[test]

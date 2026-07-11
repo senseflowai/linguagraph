@@ -336,10 +336,18 @@ fn default_limit() -> u32 {
 /// Qdrant that qlink writes to, [`crate::core::Pipeline::run`] resolves
 /// each consolidated SemanticText filter against the `_canonical`
 /// collection *client-side* before building Cypher. High-confidence hits
-/// (score `>= threshold`, after an optional rerank) are pinned as concrete
-/// node ids in the generated Cypher, replacing the `libqlink` hybrid
-/// search for that alias. Anything below the bar leaves the query
-/// untouched, so it falls back to the existing server-side search.
+/// (score `>= threshold`, after an optional rerank) are pinned as the
+/// single concrete node id in the generated Cypher, replacing the
+/// `libqlink` hybrid search for that alias. Anything below the bar
+/// leaves the query untouched, so it falls back to the existing
+/// server-side search.
+///
+/// Only ever applies to a filter whose resolved `cardinality` (see
+/// [`crate::resolve::ast`]) is "one" — i.e. the question names a single
+/// specific entity. A "many" filter (asking for every matching row)
+/// always skips grounding and goes through the uncapped server-side
+/// search instead, since pinning by node id would truncate a
+/// genuinely-multi-row answer.
 ///
 /// Off by default: grounding only makes sense when the direct Qdrant
 /// endpoint holds the qlink-populated `_canonical` points, which is a
@@ -355,13 +363,10 @@ pub struct GroundingConfig {
     /// the filter maps to a specific known entity.
     #[serde(default = "default_grounding_threshold")]
     pub threshold: f32,
-    /// How many surviving hits to pin per alias. Small (a couple) so a
-    /// near-tie between distinct entities doesn't over-prune the result.
-    #[serde(default = "default_grounding_top_k")]
-    pub top_k: usize,
     /// How many candidates to fetch from Qdrant before label-filtering,
-    /// thresholding and reranking. Larger than `top_k` so label-filtering
-    /// a shared collection still leaves enough right-label candidates.
+    /// thresholding and reranking. Only the single best surviving
+    /// candidate is ever pinned, but a wider fetch still leaves enough
+    /// right-label candidates after a shared collection is label-filtered.
     #[serde(default = "default_grounding_fetch_k")]
     pub fetch_k: usize,
     /// Rerank the fetched candidates with the pipeline's cross-encoder
@@ -377,7 +382,6 @@ impl Default for GroundingConfig {
         Self {
             enabled: false,
             threshold: default_grounding_threshold(),
-            top_k: default_grounding_top_k(),
             fetch_k: default_grounding_fetch_k(),
             rerank: false,
         }
@@ -386,9 +390,6 @@ impl Default for GroundingConfig {
 
 fn default_grounding_threshold() -> f32 {
     0.9
-}
-fn default_grounding_top_k() -> usize {
-    3
 }
 fn default_grounding_fetch_k() -> usize {
     20

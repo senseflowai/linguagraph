@@ -338,6 +338,10 @@ impl TypeHandler for SemanticTextHandler {
             "reranker_threshold".to_string(),
             Literal::Float(self.config.reranker_threshold),
         );
+        params.insert(
+            "search_threshold".to_string(),
+            Literal::Float(self.config.search_threshold),
+        );
 
         Ok(TypedPredicate {
             type_id: ctx.type_id.clone(),
@@ -398,37 +402,65 @@ impl TypeHandler for SemanticTextHandler {
                     .get("embedding")
                     .cloned()
                     .ok_or_else(|| TypeError::Handler("missing 'embedding' param".into()))?;
-                let query_str = pred
-                    .params
-                    .get("query_str")
-                    .cloned()
-                    .ok_or_else(|| TypeError::Handler("missing 'query_str' param".into()))?;
                 let label = pred
                     .params
                     .get("label")
                     .cloned()
                     .ok_or_else(|| TypeError::Handler("missing 'label' param".into()))?;
-                let reranker_threshold = pred
-                    .params
-                    .get("reranker_threshold")
-                    .cloned()
-                    .unwrap_or(Literal::Float(DEFAULT_RERANKER_THRESHOLD));
                 let candidate_k = pred
                     .params
                     .get("candidate_k")
                     .cloned()
                     .unwrap_or(Literal::Int(DEFAULT_CANDIDATE_K));
 
+                // `cardinality: "many"` means the question wants every
+                // matching row, not the one best match. A cross-encoder
+                // reranker is calibrated to pick *the* answer, and its
+                // BM25-fused recall stage exists to sharpen that single
+                // pick — both actively work against a broad result set,
+                // so route "many" through a plain dense-only KNN instead:
+                // no rerank, no lexical fusion, just an embedding search
+                // over `_canonical`, thresholded client-side in Cypher.
+                let many = matches!(
+                    pred.params.get("cardinality"),
+                    Some(Literal::String(s)) if s == "many"
+                );
+
                 let coll_p = ctx.bind(coll);
-                let q_p = ctx.bind(query_str);
                 let emb_p = ctx.bind(emb);
                 let label_p = ctx.bind(label);
-                let th_p = ctx.bind(reranker_threshold);
                 let k_p = ctx.bind(candidate_k);
-                ctx.push_pre_match(format!(
-                    "CALL libqlink.search_hybrid_reranked({coll_p}, {q_p}, {emb_p}, {label_p}, {th_p}, {k_p}) \
-                     YIELD id AS {qid}, score AS {score}"
-                ));
+
+                if many {
+                    let search_threshold = pred
+                        .params
+                        .get("search_threshold")
+                        .cloned()
+                        .unwrap_or(Literal::Float(DEFAULT_SEARCH_THRESHOLD));
+                    let th_p = ctx.bind(search_threshold);
+                    ctx.push_pre_match(format!(
+                        "CALL libqlink.search_labeled([{coll_p}], {emb_p}, {k_p}, {label_p}) \
+                         YIELD id AS {qid}, score AS {score}\n\
+                         WITH {qid}, {score} WHERE {score} >= {th_p}"
+                    ));
+                } else {
+                    let query_str = pred
+                        .params
+                        .get("query_str")
+                        .cloned()
+                        .ok_or_else(|| TypeError::Handler("missing 'query_str' param".into()))?;
+                    let reranker_threshold = pred
+                        .params
+                        .get("reranker_threshold")
+                        .cloned()
+                        .unwrap_or(Literal::Float(DEFAULT_RERANKER_THRESHOLD));
+                    let q_p = ctx.bind(query_str);
+                    let th_p = ctx.bind(reranker_threshold);
+                    ctx.push_pre_match(format!(
+                        "CALL libqlink.search_hybrid_reranked({coll_p}, {q_p}, {emb_p}, {label_p}, {th_p}, {k_p}) \
+                         YIELD id AS {qid}, score AS {score}"
+                    ));
+                }
 
                 let mut where_expr = format!("id({alias}) = {qid}");
                 if pred.op == TypedOp::Eq {
@@ -492,12 +524,16 @@ fn emit_grounded(ctx: &mut EmitCtx<'_>, pred: &TypedPredicate) -> Result<(), Typ
     let alias = pred.field.alias.as_str();
     let n = ctx.fresh_id();
     let pf = format!("{alias}__pf_{n}");
+    let qid = format!("{alias}__qid_{n}");
+    let score = format!("{alias}__score_{n}");
     let rows_p = ctx.bind(rows);
-    ctx.push_pre_match(format!("UNWIND {rows_p} AS {pf}"));
-    ctx.set_where(format!("id({alias}) = {pf}.nid"));
+    ctx.push_pre_match(format!(
+        "UNWIND {rows_p} AS {pf}\nWITH {pf}.nid AS {qid}, {pf}.score AS {score}"
+    ));
+    ctx.set_where(format!("id({alias}) = {qid}"));
     ctx.contribution_mut()
         .order_by
-        .push((format!("{pf}.score"), OrderDir::Desc));
+        .push((score, OrderDir::Desc));
     Ok(())
 }
 
@@ -1187,7 +1223,8 @@ mod tests {
         let mut ctx = lc(&field, TypedOp::Search, &value, "Company");
         let pred = h.lower(&mut ctx).unwrap();
 
-        // Everything the canonical hybrid search needs is in params.
+        // Everything the canonical hybrid search (or, for a `many`
+        // cardinality, the dense-only fallback) needs is in params.
         for key in [
             "embedding",
             "collection",
@@ -1195,12 +1232,12 @@ mod tests {
             "candidate_k",
             "label",
             "reranker_threshold",
+            "search_threshold",
         ] {
             assert!(pred.params.contains_key(key), "missing '{key}' in params");
         }
-        // The cosine `search_threshold`/`top_k` knobs aren't used by
-        // search_hybrid, so they're no longer carried.
-        assert!(!pred.params.contains_key("search_threshold"));
+        // `top_k` isn't a `lower()`-computed knob — it's a config-level
+        // grounding setting, not a per-predicate param.
         assert!(!pred.params.contains_key("top_k"));
         match pred.params.get("embedding").unwrap() {
             Literal::List(items) => assert_eq!(items.len(), 8),
@@ -1371,6 +1408,48 @@ mod tests {
         let pre = contrib.pre_match.join("\n");
         assert!(pre.contains("CALL libqlink.search_hybrid_reranked("));
         assert!(pre.contains("YIELD id AS c__qid_0, score AS c__score_0"));
+        assert_eq!(contrib.where_inline.as_deref(), Some("id(c) = c__qid_0"));
+        assert_eq!(contrib.order_by.len(), 1);
+        assert_eq!(contrib.order_by[0].0, "c__score_0");
+    }
+
+    #[test]
+    fn emit_many_cardinality_routes_to_dense_only_search_labeled() {
+        // "Show every review mentioning bad quality" — a `cardinality:
+        // "many"` predicate wants every matching row, so it must skip
+        // the reranked hybrid search (calibrated to pick *the* one best
+        // match) and go through a plain dense KNN instead.
+        let h = handler();
+        let field = pref("c", "name");
+        let value = serde_json::json!("apple");
+        let mut lower = lc(&field, TypedOp::Search, &value, "Company");
+        let mut pred = h.lower(&mut lower).unwrap();
+        pred.params
+            .insert("cardinality".into(), Literal::String("many".into()));
+
+        let mut contrib = CypherContribution::default();
+        let mut binder = CountingBinder {
+            next: 0,
+            next_var: 0,
+            params: Default::default(),
+        };
+        let mut emit = EmitCtx::new(&mut contrib, &mut binder);
+        h.emit(&mut emit, &pred).unwrap();
+
+        let pre = contrib.pre_match.join("\n");
+        assert!(
+            pre.contains("CALL libqlink.search_labeled("),
+            "expected dense-only search_labeled; got: {pre}"
+        );
+        assert!(
+            !pre.contains("libqlink.search_hybrid_reranked"),
+            "`many` must not run the reranked hybrid search; got: {pre}"
+        );
+        assert!(pre.contains("YIELD id AS c__qid_0, score AS c__score_0"));
+        assert!(
+            pre.contains("WHERE c__score_0 >="),
+            "expected a client-side score threshold; got: {pre}"
+        );
         assert_eq!(contrib.where_inline.as_deref(), Some("id(c) = c__qid_0"));
         assert_eq!(contrib.order_by.len(), 1);
         assert_eq!(contrib.order_by[0].0, "c__score_0");
@@ -1548,8 +1627,10 @@ mod tests {
         let value = serde_json::json!("apple");
         let mut lower = lc(&field, TypedOp::Search, &value, "Company");
         let mut pred = h.lower(&mut lower).unwrap();
-        pred.params
-            .insert("prefetch_rows".into(), prefetch_rows(&[(42, 0.97), (7, 0.91)]));
+        pred.params.insert(
+            "prefetch_rows".into(),
+            prefetch_rows(&[(42, 0.97), (7, 0.91)]),
+        );
 
         let mut contrib = CypherContribution::default();
         let mut binder = CountingBinder {
@@ -1566,12 +1647,16 @@ mod tests {
             "expected UNWIND of pinned rows; got: {pre}"
         );
         assert!(
+            pre.contains("c__pf_0.nid AS c__qid_0") && pre.contains("c__pf_0.score AS c__score_0"),
+            "expected pinned rows to be projected into plain vars; got: {pre}"
+        );
+        assert!(
             !pre.contains("libqlink.search_hybrid_reranked"),
             "grounded path must not emit the hybrid search; got: {pre}"
         );
-        assert_eq!(contrib.where_inline.as_deref(), Some("id(c) = c__pf_0.nid"));
+        assert_eq!(contrib.where_inline.as_deref(), Some("id(c) = c__qid_0"));
         assert_eq!(contrib.order_by.len(), 1);
-        assert_eq!(contrib.order_by[0].0, "c__pf_0.score");
+        assert_eq!(contrib.order_by[0].0, "c__score_0");
         // The rows land in a single bound list param (never inlined).
         assert!(
             binder

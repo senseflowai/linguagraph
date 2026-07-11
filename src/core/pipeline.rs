@@ -527,6 +527,17 @@ impl Pipeline {
         let Some(Literal::String(label)) = pred.params.get("label") else {
             return Ok(());
         };
+        // Grounding pins a filter to concrete node ids — sound only when
+        // the query names one specific entity. A `cardinality: "many"`
+        // filter (explicit, or inferred from a non-`eq` op) wants every
+        // matching row, which grounding's small `top_k` would truncate;
+        // leave it untouched so it falls through to the uncapped
+        // server-side `libqlink` hybrid search instead.
+        let cardinality_one =
+            matches!(pred.params.get("cardinality"), Some(Literal::String(s)) if s == "one");
+        if !cardinality_one {
+            return Ok(());
+        }
         let query_str = match pred.params.get("query_str") {
             Some(Literal::String(s)) => s.clone(),
             _ => String::new(),
@@ -602,7 +613,10 @@ impl Pipeline {
             return Ok(());
         }
         candidates.sort_by(|a, b| b.1.total_cmp(&a.1));
-        candidates.truncate(self.grounding.top_k.max(1));
+        // We only get here for `cardinality: "one"` (checked above), so
+        // pin just the single best match — a near-tie with an unrelated
+        // node shouldn't fan the result out to several rows.
+        candidates.truncate(1);
 
         let rows: Vec<Literal> = candidates
             .iter()
@@ -3259,6 +3273,14 @@ mod tests {
         store: crate::embeddings::SharedEmbeddingStore,
         threshold: f32,
     ) -> (Pipeline, crate::dsl::DslQuery) {
+        grounding_fixture_with_cardinality(store, threshold, "one")
+    }
+
+    fn grounding_fixture_with_cardinality(
+        store: crate::embeddings::SharedEmbeddingStore,
+        threshold: f32,
+        cardinality: &str,
+    ) -> (Pipeline, crate::dsl::DslQuery) {
         use crate::config::TypeConfig;
         use crate::embeddings::{MockEmbedder, SharedEmbedder};
         use crate::types::handlers::{self, SemanticTextConfig, SemanticTextHandler};
@@ -3287,18 +3309,18 @@ mod tests {
             .with_embedder(embedder)
             .with_prefetch_store(store);
 
-        let dsl_query = crate::dsl::parse_str(
-            r#"{
+        let dsl_query = crate::dsl::parse_str(&format!(
+            r#"{{
                 "action": "find",
-                "start": { "label": "Company", "alias": "c" },
+                "start": {{ "label": "Company", "alias": "c" }},
                 "filters": [
-                    { "field": "c.name", "type": "SemanticText",
-                      "op": "search", "value": "apple" }
+                    {{ "field": "c.name", "type": "SemanticText",
+                      "op": "search", "value": "apple", "cardinality": "{cardinality}" }}
                 ],
-                "return": [{ "field": "c.name", "alias": "name" }],
+                "return": [{{ "field": "c.name", "alias": "name" }}],
                 "limit": 5
-            }"#,
-        )
+            }}"#,
+        ))
         .unwrap();
         (pipeline, dsl_query)
     }
@@ -3385,6 +3407,31 @@ mod tests {
         assert!(
             cypher.text.contains("libqlink.search_hybrid_reranked"),
             "grounding disabled must keep the server-side search; got:\n{}",
+            cypher.text
+        );
+    }
+
+    #[tokio::test]
+    async fn grounding_skips_many_cardinality_even_with_a_confident_hit() {
+        // "Show every review mentioning bad quality" — even a slam-dunk
+        // hit must not be pinned: `cardinality: "many"` means the query
+        // wants every matching row, and grounding only ever pins one.
+        let store: crate::embeddings::SharedEmbeddingStore =
+            Arc::new(FixedRawStore(vec![crate::embeddings::RawScoredHit {
+                id: "42".into(),
+                score: 0.99,
+                payload: serde_json::json!({"label": "Company"}),
+            }]));
+        let (pipeline, dsl_query) = grounding_fixture_with_cardinality(store, 0.9, "many");
+        let cypher = pipeline.compile_grounded(dsl_query).await.unwrap();
+        assert!(
+            cypher.text.contains("libqlink.search_labeled("),
+            "`many` must route through the dense-only fallback; got:\n{}",
+            cypher.text
+        );
+        assert!(
+            !cypher.text.contains(".nid"),
+            "`many` must never be pinned by node id; got:\n{}",
             cypher.text
         );
     }

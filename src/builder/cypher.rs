@@ -117,8 +117,18 @@ pub fn build_read_with(
 
     // ── Phase 6: pre-match. Spliced at the very top so it runs
     //    before MATCH (e.g. `CALL qlink.search(...) YIELD id, score`).
+    //
+    // Each grounded filter contributes its own block (a bare
+    // `CALL ... YIELD id AS x__qid_N, score AS x__score_N`, or that same
+    // call plus a trailing `WITH x__qid_N, x__score_N WHERE ...` for the
+    // "many"-cardinality branch). Standalone `CALL ... YIELD` clauses
+    // don't automatically thread their bindings into a *following*
+    // clause the way MATCH does — concatenating two of them back to back
+    // left the second's MATCH unable to see the first's `__qid_0`
+    // ("Unbound variable"). `WITH *` between blocks carries every
+    // binding seen so far (this block's plus all prior ones) forward.
     if !cur.pre_match.is_empty() {
-        let mut pre = cur.pre_match.drain(..).collect::<Vec<_>>().join("\n");
+        let mut pre = cur.pre_match.drain(..).collect::<Vec<_>>().join("\nWITH *\n");
         pre.push('\n');
         cur.buf = format!("{pre}{}", cur.buf);
     }
@@ -214,8 +224,10 @@ fn render_aggregate_name(func: &AggregateFn, field: &PropertyRef) -> String {
 ///
 /// The stage walks both `:mention` (any user entity) and `:part_of`
 /// (chunks) edges and de-duplicates with `collect(DISTINCT ...)`.
-/// Edges in the user's traversals are intentionally excluded — we
-/// carry node aliases only because edge variables can't be sources.
+/// Edges in the user's traversals are excluded from the *source lookup*
+/// itself — edge variables can't be sources — but an edge alias still
+/// needs to survive the `WITH` if it's projected downstream; see
+/// [`carry_names_for_sources`].
 fn write_sources_stage(cur: &mut Cursor, query: &ReadQuery) {
     let aliases = collect_node_aliases(query);
     if aliases.is_empty() {
@@ -241,7 +253,50 @@ fn carry_names_for_sources(query: &ReadQuery, cur: &Cursor) -> Vec<String> {
             carry.push(key.clone());
         }
     }
+    // Edge aliases are excluded from `collect_node_aliases` (they can't be
+    // sources), but a traversal's edge alias can still be projected in
+    // RETURN/GROUP BY/ORDER BY (e.g. `r.rating`). Any such alias must
+    // survive this WITH too, or the later clause sees "Unbound variable".
+    let edge_aliases: std::collections::BTreeSet<String> = query
+        .traversals
+        .iter()
+        .map(|t| t.edge_alias.as_str().to_string())
+        .collect();
+    for alias in referenced_aliases(query) {
+        if edge_aliases.contains(&alias) && seen.insert(alias.clone()) {
+            carry.push(alias);
+        }
+    }
     carry
+}
+
+/// Every alias referenced by a `PropertyRef` in RETURN, GROUP BY, or a
+/// qualified-property ORDER BY key — i.e. everything that must still be
+/// in scope after a mid-query `WITH`.
+fn referenced_aliases(query: &ReadQuery) -> std::collections::BTreeSet<String> {
+    let mut out = std::collections::BTreeSet::new();
+    for clause in &query.returns {
+        match clause {
+            ReturnClause::Field { field, .. } => {
+                out.insert(field.alias.as_str().to_string());
+            }
+            ReturnClause::Aggregate { field, .. } => {
+                out.insert(field.alias.as_str().to_string());
+            }
+            ReturnClause::GroupKey { key, .. } => {
+                out.insert(key.field.alias.as_str().to_string());
+            }
+        }
+    }
+    for key in &query.group_by {
+        out.insert(key.field.alias.as_str().to_string());
+    }
+    for sort in &query.sort {
+        if let SortRef::Property(field) = &sort.key {
+            out.insert(field.alias.as_str().to_string());
+        }
+    }
+    out
 }
 
 /// Names of every node alias bound by the query's MATCH clauses.

@@ -527,8 +527,14 @@ fn emit_grounded(ctx: &mut EmitCtx<'_>, pred: &TypedPredicate) -> Result<(), Typ
     let qid = format!("{alias}__qid_{n}");
     let score = format!("{alias}__score_{n}");
     let rows_p = ctx.bind(rows);
+    // `WITH *, ...` (not a narrowing `WITH {pf}.nid AS {qid}, ...`): when a
+    // second SemanticText filter on a different alias is also grounded, its
+    // own pre-match block runs after this one, and a narrowing projection
+    // here would drop the earlier filter's `{qid}` binding from scope —
+    // Memgraph then rejects the final `WHERE id(alias) = {qid}` with
+    // "Unbound variable". Carrying `*` forward keeps every prior pin visible.
     ctx.push_pre_match(format!(
-        "UNWIND {rows_p} AS {pf}\nWITH {pf}.nid AS {qid}, {pf}.score AS {score}"
+        "UNWIND {rows_p} AS {pf}\nWITH *, {pf}.nid AS {qid}, {pf}.score AS {score}"
     ));
     ctx.set_where(format!("id({alias}) = {qid}"));
     ctx.contribution_mut()

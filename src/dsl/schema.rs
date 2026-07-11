@@ -29,6 +29,11 @@ pub struct DslQuery {
     pub sort: Vec<SortItem>,
     #[serde(default)]
     pub limit: Option<u32>,
+    /// Emit `RETURN DISTINCT` — deduplicate the projected rows. Useful when
+    /// a traversal fans out (e.g. one person per movie they acted in) but
+    /// the projection only keeps a column that then repeats.
+    #[serde(default)]
+    pub distinct: bool,
     /// Optional Cypher label to apply to every node in the query
     /// (start + traversal targets). When set, only entities that
     /// carry this label alongside their declared type label are

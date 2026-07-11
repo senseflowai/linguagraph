@@ -219,6 +219,7 @@ pub fn lower_full(
         group_by,
         sort,
         limit: dsl.limit,
+        distinct: dsl.distinct,
     })
 }
 

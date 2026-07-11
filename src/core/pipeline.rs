@@ -2586,6 +2586,7 @@ mod tests {
             group_by: vec![],
             sort: vec![],
             limit: None,
+            distinct: false,
         };
 
         pipeline.prepare(&mut ast).unwrap();

@@ -408,6 +408,7 @@ mod tests {
             group_by: vec![],
             sort: vec![],
             limit: Some(10),
+            distinct: false,
         };
         let q = build_read(&q).unwrap();
         assert!(q.text.starts_with("MATCH (p:Person)"));
@@ -447,6 +448,7 @@ mod tests {
             group_by: vec![],
             sort: vec![],
             limit: None,
+            distinct: false,
         };
         let out = build_read(&q).unwrap().text;
         assert!(
@@ -489,6 +491,7 @@ mod tests {
             group_by: vec![],
             sort: vec![],
             limit: None,
+            distinct: false,
         };
 
         let out = build_read(&q).unwrap().text;
@@ -540,6 +543,7 @@ mod tests {
                 order: SortOrder::Desc,
             }],
             limit: Some(5),
+            distinct: false,
         };
         let out = build_read(&q).unwrap().text;
         assert!(out.contains("RETURN c.name AS customer, sum(o.total) AS total_spent"));
@@ -564,6 +568,7 @@ mod tests {
             group_by: vec![],
             sort: vec![],
             limit: None,
+            distinct: false,
         };
         let q = build_read(&q).unwrap();
 
@@ -604,6 +609,7 @@ mod tests {
             group_by: vec![],
             sort: vec![],
             limit: None,
+            distinct: false,
         };
         let q = build_read(&q).unwrap();
 
@@ -656,6 +662,7 @@ mod tests {
             group_by: vec![],
             sort: vec![],
             limit: None,
+            distinct: false,
         };
         let q = build_read(&q).unwrap();
 
@@ -692,6 +699,7 @@ mod tests {
             group_by: vec![],
             sort: vec![],
             limit: None,
+            distinct: false,
         };
         let q = build_read(&q).unwrap();
         let col = q
@@ -731,6 +739,7 @@ mod tests {
             group_by: vec![],
             sort: vec![],
             limit: None,
+            distinct: false,
         };
         let q = build_read(&q).unwrap();
         assert!(q.text.contains("p.age > $p0"));

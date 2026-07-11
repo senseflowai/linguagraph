@@ -517,7 +517,7 @@ const OUTPUT_SHAPE: &str = r#"{
   "start":  { "label": "<Label>", "alias": "<alias>" },
   "traversals": [
     { "from":   "<alias>",
-      "edge":   { "label": "<REL>", "alias": "<alias>", "direction": "out" },
+      "edge":   { "label": "<REL>", "alias": "<alias>", "direction": "out" },  // "<REL>" or "<REL>|<REL>|…" to match any of several relationship types
       "target": { "label": "<Label>", "alias": "<alias>" },
       "depth":  { "min": <int>, "max": <int> } }        // depth optional
   ],
@@ -577,6 +577,10 @@ const RULES: &str = r#"1. Use only the labels, properties, paths, and enum value
      one, anything else -> many. Prefer stating it explicitly when the
      question's own wording (singular "which one" vs plural "all/every") makes
      the answer obvious — don't rely on the fallback for those.
+9. To match several relationship types in one hop, join them with `|` in the
+   edge label: `"edge": { "label": "ACTED_IN|DIRECTED|PRODUCED|WROTE", ... }`.
+   Use it for "involved with" / "worked on" / "connected to" questions that
+   don't name a single relationship.
 "#;
 
 const EXAMPLES: &str = r#"User: "Show me people over 30 who know someone in Berlin."

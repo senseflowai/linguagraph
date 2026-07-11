@@ -134,7 +134,8 @@ impl OntologyPropertyType {
         match self {
             Self::Text => Some(BuiltinType::SemanticText.id()),
             Self::Keyword | Self::Datetime => Some(self.handler_id()),
-            Self::Number | Self::Bool | Self::List => None,
+            Self::List => Some(BuiltinType::List.id()),
+            Self::Number | Self::Bool => None,
         }
     }
 }
@@ -203,6 +204,12 @@ pub struct RelationTypeSpec {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Typed properties carried on relationships of this type (e.g.
+    /// `ACTED_IN.roles`, `REVIEWED.rating`). Optional and empty by
+    /// default — most relation types carry no properties, and filters on
+    /// undeclared ones simply fall back to the untyped comparison path.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub properties: Vec<PropertySpec>,
 }
 
 impl RelationTypeSpec {
@@ -210,6 +217,7 @@ impl RelationTypeSpec {
         Self {
             name: name.into(),
             description: None,
+            properties: vec![],
         }
     }
 
@@ -217,7 +225,13 @@ impl RelationTypeSpec {
         Self {
             name: name.into(),
             description: Some(desc.into()),
+            properties: vec![],
         }
+    }
+
+    /// Find a property of this relation type by name.
+    pub fn property(&self, name: &str) -> Option<&PropertySpec> {
+        self.properties.iter().find(|p| p.name == name)
     }
 }
 
@@ -251,9 +265,15 @@ impl DomainOntology {
         self.entity_types.iter().find(|e| e.name == name)
     }
 
-    /// Look up an entity property by `(entity, property)` inside this domain.
+    /// Look up a property by `(type, property)` inside this domain. `type`
+    /// is checked against entity types first, then relation types — so a
+    /// traversal's edge alias (whose "label" is the relationship type
+    /// name, e.g. `ACTED_IN`) resolves `roles` via `RelationTypeSpec`.
     pub fn get_property(&self, entity: &str, property: &str) -> Option<&PropertySpec> {
-        self.get_entity(entity)?.property(property)
+        if let Some(p) = self.get_entity(entity).and_then(|e| e.property(property)) {
+            return Some(p);
+        }
+        self.get_relation(entity)?.property(property)
     }
 
     /// Look up a relation type by name inside this domain.
@@ -372,9 +392,14 @@ impl OntologyCatalog {
         self.domains.get(domain)?.get_property(entity, property)
     }
 
-    /// Look up a property by `(entity, name)` across all domains.
+    /// Look up a property by `(entity, name)` across all domains. `entity`
+    /// is checked against entity types first, then relation types (see
+    /// [`DomainOntology::get_property`]).
     pub fn get_property(&self, entity: &str, property: &str) -> Option<&PropertySpec> {
-        self.get_entity(entity)?.1.property(property)
+        if let Some(p) = self.get_entity(entity).and_then(|(_, e)| e.property(property)) {
+            return Some(p);
+        }
+        self.get_relation(entity)?.1.property(property)
     }
 
     /// Look up a relation type by name in `domain`.
@@ -595,9 +620,13 @@ impl OntologyCatalog {
                     let mut rel = source_rel.clone();
                     rel.domain = Some(domain_name.to_string());
                     rel.description = spec.description.clone();
-                    // Relation ontologies do not currently model relationship
-                    // properties, so strict projection must not leak them.
-                    rel.properties.clear();
+                    // Keep only the relationship properties the ontology
+                    // declares for this relation type (e.g. `ACTED_IN.roles`,
+                    // `REVIEWED.rating`), enriched with their descriptions —
+                    // mirroring node-property projection. Introspected
+                    // properties the ontology doesn't declare are dropped so
+                    // strict projection doesn't leak internal fields.
+                    retain_declared_rel_properties(&mut rel.properties, spec);
 
                     let key = (
                         domain_name.to_string(),
@@ -643,6 +672,17 @@ fn relationship_matches_domain(rel: &crate::prompt::RelKind, domain_name: &str) 
 }
 
 fn retain_declared_properties(props: &mut Vec<Property>, spec: &EntityTypeSpec) {
+    props.retain_mut(|prop| {
+        let Some(declared) = spec.property(&prop.name) else {
+            return false;
+        };
+        prop.description = declared.description.clone();
+        prop.allowed_values = merged_allowed_values(&prop.allowed_values, &declared.allowed_values);
+        true
+    });
+}
+
+fn retain_declared_rel_properties(props: &mut Vec<Property>, spec: &RelationTypeSpec) {
     props.retain_mut(|prop| {
         let Some(declared) = spec.property(&prop.name) else {
             return false;

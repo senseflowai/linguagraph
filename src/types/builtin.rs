@@ -50,6 +50,10 @@ pub enum BuiltinType {
     Timestamp,
     /// Embedded, vector-searchable free text.
     SemanticText,
+    /// JSON array, stored verbatim. Query-side only supports `contains`
+    /// (element membership via `ANY(... IN ...)`), since Cypher's
+    /// `CONTAINS` is a string-only substring operator.
+    List,
 }
 
 impl BuiltinType {

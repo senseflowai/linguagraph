@@ -21,6 +21,7 @@
 pub mod core;
 pub mod datetime;
 pub mod keyword;
+pub mod list;
 pub mod semantic_text;
 
 pub use core::{
@@ -29,6 +30,7 @@ pub use core::{
 };
 pub use datetime::{date_handler, timestamp_handler, DateTimeHandler};
 pub use keyword::{keyword_handler, KeywordHandler};
+pub use list::{list_handler, ListHandler};
 pub use semantic_text::{
     build_canonical_query, build_embed_insert_batch, build_embed_insert_multi_batch,
     SemanticTextConfig, SemanticTextHandler, SideEffectEmitError,
@@ -90,6 +92,7 @@ pub fn register_core(builder: RegistryBuilder) -> RegistryBuilder {
         .register(boolean_handler())
         .register(date_handler())
         .register(timestamp_handler())
+        .register(list_handler())
 }
 
 /// Convenience wrapper used by tests: build a registry from an explicit

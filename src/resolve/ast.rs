@@ -178,6 +178,21 @@ pub fn lower_full(
 
     let mut sort = lower_sort(&dsl.sort, &returns, &group_by, &bound)?;
 
+    // Drop any ORDER BY on a list-typed property. Cypher can't order or
+    // compare list values and aborts the whole query at runtime
+    // ("Comparison is not defined for values of type list"); a list has no
+    // ordering anyway, so silently dropping the key degrades to an
+    // unordered result instead of a hard failure. (Scalar comparisons on a
+    // list route through the List type handler, which rejects them cleanly
+    // at lowering — only `sort` bypasses the handlers.)
+    sort.retain(|s| match &s.key {
+        SortRef::Property(p) => {
+            infer_type(p, &alias_labels, catalog).as_deref()
+                != Some(crate::types::BuiltinType::List.id())
+        }
+        SortRef::Projected(_) => true,
+    });
+
     // Cypher has no standalone GROUP BY: the grouping keys of an
     // aggregating projection are exactly its non-aggregate RETURN
     // columns. For an `aggregate` query two things follow, and the
@@ -329,13 +344,20 @@ fn lower_filters(
         //     `{"field": "c.name", "op": "search", "value": "apple"}`
         // resolves to `SemanticText` automatically when the mapping
         // declared `Company.name` as such.
+        // Canonicalize contract / legacy spellings (`Text`, `String`,
+        // `SemanticText`, …) on an *explicit* DSL `"type"` override to the
+        // registry handler id. `infer_type` is intentionally left
+        // untouched here: it already returns a query-side id via
+        // `OntologyPropertyType::query_type_id`, which for `List` is its
+        // own dedicated handler id — re-canonicalizing through
+        // `canonical_handler_id` (which maps via the *ingest*-side
+        // `handler_id`) would collapse it back onto `Keyword` and lose
+        // list-membership `contains` semantics.
         let effective_type = f
             .field_type
             .clone()
-            .or_else(|| infer_type(&field, alias_labels, catalog))
-            // Canonicalize contract / legacy spellings (`Text`, `String`,
-            // `SemanticText`, …) to the registry handler id.
-            .map(|t| crate::graph::canonical_handler_id(&t));
+            .map(|t| crate::graph::canonical_handler_id(&t))
+            .or_else(|| infer_type(&field, alias_labels, catalog));
 
         // ── Fold SemanticText semantic filters by alias. ───────────────
         // SemanticText filters on the same alias are gathered per entity

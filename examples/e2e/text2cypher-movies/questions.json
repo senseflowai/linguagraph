@@ -1,0 +1,4718 @@
+{
+  "questions": [
+    {
+      "id": "t2c_instance_id_38239",
+      "question": "What is the average rating of movies reviewed by people born before 1970?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_33043",
+      "question": "What is the average rating of movies with the word \"Slapstick\" in their review summary?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": 45.0
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_36386",
+      "question": "Find the first 3 people born after 1960.",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_23695",
+      "question": "List all movies directed by people born before 1950 limited to top 5.",
+      "validation": {
+        "row_count": {
+          "exact": 5
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Charlie Wilson's War"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "RescueDawn"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Something's Gotta Give"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "When Harry Met Sally"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "You've Got Mail"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23666",
+      "question": "Find the first 3 people who acted in a movie released in the 1990s.",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_38165",
+      "question": "What are the movies released in 1999?",
+      "validation": {
+        "row_count": {
+          "exact": 4
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Bicentennial Man"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Snow Falling on Cedars"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Green Mile"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23755",
+      "question": "List the names of 3 people who were born after 1970.",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_24039",
+      "question": "List the top 5 movies with the most roles listed in ACTED_IN relationship.",
+      "validation": {
+        "row_count": {
+          "exact": 5
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "A Few Good Men"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jerry Maguire"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Green Mile"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Speed Racer"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Stand By Me"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_38211",
+      "question": "List the roles of any person in movies with a title containing 'Matrix'.",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "judge": {
+          "expected": "The rows should be movies/records whose text is semantically related to 'Matrix'.",
+          "require_pass": true
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_23704",
+      "question": "List the first 3 movies with a review summary of 'Fun, but a little far fetched'.",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Da Vinci Code"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23708",
+      "question": "Who are the top 5 youngest producers in the database?",
+      "validation": {
+        "row_count": {
+          "exact": 5
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Lilly Wachowski"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Lana Wachowski"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Stefan Arndt"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23366",
+      "question": "List the top 5 movies with a tagline containing 'football'.",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "judge": {
+          "expected": "The rows should be movies/records whose tagline is semantically related to 'football'.",
+          "require_pass": true
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_39811",
+      "question": "What are the first 3 movies that have a tagline containing the word 'journey'?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "judge": {
+          "expected": "The rows should be movies/records whose tagline is semantically related to 'journey'.",
+          "require_pass": true
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_40146",
+      "question": "Find the first three movies with a tagline that includes the word 'journey' and were released before the year 2000.",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "judge": {
+          "expected": "The rows should be movies/records whose tagline is semantically related to 'journey'.",
+          "require_pass": true
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_40030",
+      "question": "Who has the most productions in movies released in the 2000s?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Joel Silver"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_37611",
+      "question": "List 3 movies that have been followed by the most persons.",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Replacements"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Da Vinci Code"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Unforgiven"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_37636",
+      "question": "Which persons born in the 1960s have directed movies?",
+      "validation": {
+        "row_count": {
+          "exact": 13
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Lana Wachowski"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Tom Tykwer"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "James Marshall"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Lilly Wachowski"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23927",
+      "question": "Who are the top 5 actors by the number of movies they acted in?",
+      "validation": {
+        "row_count": {
+          "exact": 5
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Tom Hanks"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Keanu Reeves"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jack Nicholson"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Hugo Weaving"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Meg Ryan"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_24071",
+      "question": "Who are the top 3 people that follow someone born in 1961?",
+      "validation": {
+        "row_count": {
+          "exact": 0
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_36371",
+      "question": "Find all movies where Nancy Meyers was involved either by acting, directing, producing, or writing.",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Something's Gotta Give"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_39990",
+      "question": "List 3 movies with the tagline including the word 'real'.",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "judge": {
+          "expected": "The rows should be movies/records whose tagline is semantically related to 'real'.",
+          "require_pass": true
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_33060",
+      "question": "List the movies with a review summary containing the word \"redeemed\".",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Birdcage"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_38187",
+      "question": "Find the first three movies reviewed with a rating above 90.",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_39766",
+      "question": "What are the first 3 movies with a tagline containing the word 'limits'?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "judge": {
+          "expected": "The rows should be movies/records whose tagline is semantically related to 'limits'.",
+          "require_pass": true
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_23745",
+      "question": "List the top 5 actors who acted in movies reviewed with a summary 'Slapstick redeemed only by the Robin Williams and '.",
+      "validation": {
+        "row_count": {
+          "exact": 0
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_27425",
+      "question": "What is the tagline of the movie \\\"Forrest Gump\\\"?",
+      "validation": {
+        "row_count": {
+          "min": 0
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_23719",
+      "question": "Who are the first 3 people born in the 1960s that Keanu Reeves follows?",
+      "validation": {
+        "row_count": {
+          "min": 0
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_37695",
+      "question": "What are the names of 3 persons who reviewed movies with a rating lower than 60?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jessica Thompson"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_33023",
+      "question": "Which movies released between 1990 and 2000 have a rating greater than 80?",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jerry Maguire"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Replacements"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Unforgiven"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_32872",
+      "question": "Which movies have a tagline containing an exclamation mark?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "judge": {
+          "expected": "The rows should be movies/records whose tagline is semantically related to '!'.",
+          "require_pass": true
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_32628",
+      "question": "What are the taglines of movies released before 1990?",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "If he's crazy, what does that make you?"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "For some, it's the last real taste of innocence, and the first real taste of life. But for everyone, it's the time that memories are made of."
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "I feel the need, the need for speed."
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23659",
+      "question": "Show the top 5 people who have reviewed the most movies.",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jessica Thompson"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "James Thompson"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Angela Scope"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_27700",
+      "question": "How many movies did Keanu Reeves act in?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": 7
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_27403",
+      "question": "How many movies have Tom Hanks acted in from 1980 to 2000? ",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": 8
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_24055",
+      "question": "What are the top 5 movies with ratings between 70 and 85?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Unforgiven"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_32703",
+      "question": "Which movies have been reviewed as \"A solid romp\"?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Da Vinci Code"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_27359",
+      "question": "Give me the top 10 actors based on the number of movies they played in.",
+      "validation": {
+        "row_count": {
+          "exact": 10
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Tom Hanks"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Keanu Reeves"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jack Nicholson"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Hugo Weaving"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Meg Ryan"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Cuba Gooding Jr."
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Laurence Fishburne"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Tom Cruise"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_39531",
+      "question": "How many movies has Lana Wachowski directed?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": 5
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_37606",
+      "question": "Who are the 3 persons with the most PRODUCED relationships?",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Joel Silver"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Lilly Wachowski"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Lana Wachowski"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23747",
+      "question": "Which 3 people born after 1970 reviewed a movie with a summary 'An amazing journey'?",
+      "validation": {
+        "row_count": {
+          "exact": 0
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_32895",
+      "question": "List the movies with a rating above 90.",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Cloud Atlas"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jerry Maguire"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Replacements"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_38152",
+      "question": "List the movies directed by people born before 1970.",
+      "validation": {
+        "row_count": {
+          "exact": 44
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Unforgiven"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Charlie Wilson's War"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Birdcage"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "One Flew Over the Cuckoo's Nest"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "As Good as It Gets"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Sleepless in Seattle"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "You've Got Mail"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "RescueDawn"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_36323",
+      "question": "Who are the first 3 people to review a movie with a summary 'Pretty funny at times'?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Angela Scope"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_35004",
+      "question": "What are the roles of Keanu Reeves in 'The Matrix'?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Neo"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23688",
+      "question": "What are the first 3 movies reviewed by a person born in 1967?",
+      "validation": {
+        "row_count": {
+          "exact": 0
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_39804",
+      "question": "What are the first 3 movies with a released year of 2008?",
+      "validation": {
+        "row_count": {
+          "exact": 2
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Frost/Nixon"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Speed Racer"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23906",
+      "question": "List 3 movies reviewed with the summary 'An amazing journey'.",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Cloud Atlas"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_27663",
+      "question": "Which actors played in the most movies and which movies and release year?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Tom Hanks"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_40158",
+      "question": "Which people were born in the 1960s and have acted in movies?",
+      "validation": {
+        "row_count": {
+          "exact": 70
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Hugo Weaving"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "John Goodman"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Oliver Platt"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Annabella Sciorra"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Laurence Fishburne"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Meg Ryan"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Bonnie Hunt"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Aaron Sorkin"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23328",
+      "question": "What are the roles of persons acting in movies with a tagline mentioning 'end'?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "judge": {
+          "expected": "The rows should be movies/records whose tagline is semantically related to 'end'.",
+          "require_pass": true
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_23855",
+      "question": "List the movies directed by persons born after 1960.",
+      "validation": {
+        "row_count": {
+          "exact": 13
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Cloud Atlas"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Speed Racer"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix Reloaded"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix Revolutions"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Ninja Assassin"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "V for Vendetta"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23993",
+      "question": "Which movies have been produced by persons born in the 1950s?",
+      "validation": {
+        "row_count": {
+          "exact": 7
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Ninja Assassin"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Speed Racer"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix Reloaded"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix Revolutions"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "V for Vendetta"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jerry Maguire"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_36283",
+      "question": "What are the first 3 movies with a released year of 1996?",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_37534",
+      "question": "Find all persons born in 1996.",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jonathan Lipnicki"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_35000",
+      "question": "Who wrote 'Something's Gotta Give' and what is the movie's release year?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Nancy Meyers"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": 2003
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_27486",
+      "question": "list 3 movies made in 1990s",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_23658",
+      "question": "List the first 3 movies where someone named 'Carrie-Anne Moss' acted.",
+      "validation": {
+        "row_count": {
+          "min": 1
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_23939",
+      "question": "Find 3 directors who directed movies released after 2000.",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_24089",
+      "question": "Who directed the first 3 movies reviewed with a rating of 100 and what are their titles?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Howard Deutch"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23846",
+      "question": "How many movies has Keanu Reeves acted in?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": 7
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_40059",
+      "question": "Name the movies that have a review summary 'Silly, but fun'.",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Replacements"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_39758",
+      "question": "Who are the first 3 actors in the movie titled 'Speed Racer'?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_23672",
+      "question": "Who are the first 3 directors of movies released in the 2000s?",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_40087",
+      "question": "Who are the first 3 people to have directed a movie with a tagline including the word 'beginning'?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "judge": {
+          "expected": "The rows should be movies/records whose tagline is semantically related to 'beginning'.",
+          "require_pass": true
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_24108",
+      "question": "What are the first 3 movies with the highest ratings reviewed by people born after 1980?",
+      "validation": {
+        "row_count": {
+          "exact": 0
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_27738",
+      "question": "How many movies has mel gibson starred in?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": 0
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23734",
+      "question": "List the first 3 movies reviewed with a summary 'Silly, but fun' and a tagline containing 'world'.",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "judge": {
+          "expected": "The rows should be movies/records whose tagline is semantically related to 'world'.",
+          "require_pass": true
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_32623",
+      "question": "Who are the people born before 1950?",
+      "validation": {
+        "row_count": {
+          "exact": 35
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Max von Sydow"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Gene Hackman"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Richard Harris"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Clint Eastwood"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Mike Nichols"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Milos Forman"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Tom Skerritt"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jack Nicholson"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_38183",
+      "question": "Who are the first three people who wrote a movie and were born in the 1950s?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Cameron Crowe"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_35079",
+      "question": "What are the first 3 movies produced by people born in the 1950s?",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_40077",
+      "question": "Name the first 3 movies reviewed with a summary 'Fun, but a little far fetched'.",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Da Vinci Code"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_39824",
+      "question": "List the first 5 people born before 1980 who wrote a movie with a tagline mentioning 'speed'.",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "judge": {
+          "expected": "The rows should be movies/records whose tagline is semantically related to 'speed'.",
+          "require_pass": true
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_27422",
+      "question": "What are the titles of movies released between 1970 and 2012?",
+      "validation": {
+        "row_count": {
+          "exact": 38
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "A Few Good Men"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "A League of Their Own"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Apollo 13"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "As Good as It Gets"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Bicentennial Man"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Cast Away"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Charlie Wilson's War"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Cloud Atlas"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_39974",
+      "question": "What are the names of the first 3 movies directed by a person born in 1949?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Something's Gotta Give"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23892",
+      "question": "List all movies with a release year in the 1980s.",
+      "validation": {
+        "row_count": {
+          "exact": 2
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Stand By Me"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Top Gun"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23953",
+      "question": "Which movies were released between 1990 and 2000?",
+      "validation": {
+        "row_count": {
+          "exact": 23
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "A Few Good Men"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "A League of Their Own"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Apollo 13"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "As Good as It Gets"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Bicentennial Man"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Cast Away"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Hoffa"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jerry Maguire"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_35078",
+      "question": "Which movies have been reviewed with a summary 'The coolest football movie ever' and who reviewed them?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Replacements"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_35065",
+      "question": "What are the first 3 movies produced by persons born before 1960 with a rating over 90?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jerry Maguire"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_33101",
+      "question": "How many movies released after 2000 have \"coolest\" in their review summary?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": 0
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_35168",
+      "question": "What are the top 3 oldest movies in the database by release year?",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "One Flew Over the Cuckoo's Nest"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Stand By Me"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Top Gun"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_40056",
+      "question": "Who are the top 3 youngest producers in the database?",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Lilly Wachowski"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Lana Wachowski"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_39536",
+      "question": "What are the first 3 movies with a rating greater than 85?",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Replacements"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Cloud Atlas"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jerry Maguire"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_39773",
+      "question": "Which person reviewed the most movies?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jessica Thompson"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_32769",
+      "question": "List all the movies with a rating between 75 and 90.",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Unforgiven"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_24023",
+      "question": "Find the first three movies that have been reviewed with the summary 'Silly, but fun' and were released in the 1990s.",
+      "validation": {
+        "row_count": {
+          "exact": 0
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_32637",
+      "question": "What is the most recent movie Hugo Weaving acted in?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Cloud Atlas"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_27858",
+      "question": "Which actor acted in Pearl Harbour?",
+      "validation": {
+        "row_count": {
+          "min": 0
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_23711",
+      "question": "What are the names of the people who reviewed 'The Matrix' and what were their ratings?",
+      "validation": {
+        "row_count": {
+          "min": 0
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_23889",
+      "question": "Name the first 3 people who have reviewed a movie with a tagline stating 'Welcome to the Real World'.",
+      "validation": {
+        "row_count": {
+          "min": 0
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_24041",
+      "question": "List all persons who have reviewed a movie with a rating less than 50.",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jessica Thompson"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_32910",
+      "question": "What is the name of the person born in 1952?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Joel Silver"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_33094",
+      "question": "List all the movies that have the summary \"A solid romp\".",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Da Vinci Code"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_33128",
+      "question": "List the summaries of reviews for movies with a rating lower than 60.",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Slapstick redeemed only by the Robin Williams and Gene Hackman's stellar performances"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_33040",
+      "question": "What is the title of the movie with the most recent release date?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Cloud Atlas"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23998",
+      "question": "Name 3 movies that have been reviewed with a summary containing 'romp'.",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Da Vinci Code"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_24124",
+      "question": "List the top 3 highest-rated movies by reviews.",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Cloud Atlas"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jerry Maguire"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Unforgiven"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23935",
+      "question": "Which people were born between 1940 and 1960?",
+      "validation": {
+        "row_count": {
+          "exact": 60
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "John Hurt"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "James Cromwell"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "James L. Brooks"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Al Pacino"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Nora Ephron"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jim Cash"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Marshall Bell"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Werner Herzog"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23891",
+      "question": "List all movies released after 2000.",
+      "validation": {
+        "row_count": {
+          "exact": 12
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Charlie Wilson's War"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Cloud Atlas"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Frost/Nixon"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Ninja Assassin"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "RescueDawn"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Something's Gotta Give"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Speed Racer"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Da Vinci Code"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_24101",
+      "question": "Which movies have been directed by a person born in 1970 and what are their titles?",
+      "validation": {
+        "row_count": {
+          "exact": 0
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_32945",
+      "question": "What is the name of the person born in 1964 who acted in \"Something's Gotta Give\"?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Keanu Reeves"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_39983",
+      "question": "Who are the actors that acted in 'The Matrix'?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Carrie-Anne Moss"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Emil Eifrem"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Hugo Weaving"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Keanu Reeves"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Laurence Fishburne"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23896",
+      "question": "What are the top 3 movies by release year with a tagline containing 'freedom'?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "judge": {
+          "expected": "The rows should be movies/records whose tagline is semantically related to 'freedom'.",
+          "require_pass": true
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_36309",
+      "question": "Who are the first 3 actors in the movie with the tagline 'Speed has no limits'?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_32877",
+      "question": "Which movies have been reviewed as \"The coolest football movie ever\"?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Replacements"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23928",
+      "question": "List all movies directed by Lana Wachowski.",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Cloud Atlas"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Speed Racer"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix Reloaded"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix Revolutions"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_40145",
+      "question": "Who are the first three people who wrote a movie and were born in the 1950s?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Cameron Crowe"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_36373",
+      "question": "What are the roles of Carrie-Anne Moss in 'The Matrix Revolutions'?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Trinity"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_27623",
+      "question": "Did Keanu Reeves play any movies?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Johnny Mnemonic"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": 1995
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Something's Gotta Give"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": 2003
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Devil's Advocate"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": 1997
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": 1999
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_38227",
+      "question": "List the roles of Laurence Fishburne in movies with a release year after 2000.",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix Reloaded"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Morpheus"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix Revolutions"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_39984",
+      "question": "List all movies produced by Joel Silver.",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Ninja Assassin"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Speed Racer"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix Reloaded"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix Revolutions"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "V for Vendetta"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23300",
+      "question": "Who directed the movie 'The Matrix'?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Lana Wachowski"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Lilly Wachowski"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_40100",
+      "question": "Who are the top 5 youngest producers in the database?",
+      "validation": {
+        "row_count": {
+          "exact": 5
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Lilly Wachowski"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Lana Wachowski"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Stefan Arndt"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_27420",
+      "question": "list 10 movies and 10 actors",
+      "validation": {
+        "row_count": {
+          "exact": 10
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_35070",
+      "question": "Who are the top 3 actors born after 1970 who acted in movies released before 2000?",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Charlize Theron"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Emil Eifrem"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Liv Tyler"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_27436",
+      "question": "how many movies did jeremy allen white played",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": 0
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23644",
+      "question": "Who are the first 3 actors in the movie with the tagline 'Speed has no limits'?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_27485",
+      "question": "show all information on forrest gump",
+      "validation": {
+        "row_count": {
+          "min": 0
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_27478",
+      "question": "which movies have the lowest rating",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Birdcage"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_34994",
+      "question": "Which movies have been acted in by persons born before 1950?",
+      "validation": {
+        "row_count": {
+          "exact": 35
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Snow Falling on Cedars"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "What Dreams May Come"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Birdcage"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Replacements"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Unforgiven"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Top Gun"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "A Few Good Men"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "As Good as It Gets"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_37517",
+      "question": "What roles did Laurence Fishburne play in 'The Matrix Revolutions'?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Morpheus"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_32822",
+      "question": "Which movies have \"Fun\" in their review summary?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Da Vinci Code"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_40148",
+      "question": "Retrieve the top five oldest directors of movies released after 1990.",
+      "validation": {
+        "row_count": {
+          "exact": 5
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Clint Eastwood"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Mike Nichols"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "James L. Brooks"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Nora Ephron"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_27703",
+      "question": "How many movies did Leonardo DiCaprio act in?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": 0
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_24080",
+      "question": "List the first three actors who acted in a movie released after 2010 and have a born year after 1980.",
+      "validation": {
+        "row_count": {
+          "exact": 0
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_24105",
+      "question": "What are the first 3 movies where Keanu Reeves and Laurence Fishburne acted together?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_37701",
+      "question": "What are the 3 oldest movies in the database?",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "One Flew Over the Cuckoo's Nest"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Stand By Me"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Top Gun"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23752",
+      "question": "Which 3 movies with a tagline containing 'journey' were reviewed with a rating above 85?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "judge": {
+          "expected": "The rows should be movies/records whose tagline is semantically related to 'journey'.",
+          "require_pass": true
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_24053",
+      "question": "Who has acted in movies directed by Lana Wachowski?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Halle Berry"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Hugo Weaving"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jim Broadbent"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Tom Hanks"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Ben Miles"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Christina Ricci"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Emile Hirsch"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "John Goodman"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_39502",
+      "question": "Find 3 actors who have acted in movies with a tagline mentioning 'freedom'.",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "judge": {
+          "expected": "The rows should be movies/records whose tagline is semantically related to 'freedom'.",
+          "require_pass": true
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_27882",
+      "question": "Where did Keanu Reeves play?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Johnny Mnemonic"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Something's Gotta Give"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Devil's Advocate"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix Reloaded"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix Revolutions"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Replacements"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_38174",
+      "question": "Which movies have been acted in by persons born after 1980?",
+      "validation": {
+        "row_count": {
+          "exact": 5
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "V for Vendetta"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Ninja Assassin"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Speed Racer"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jerry Maguire"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_32653",
+      "question": "List the movies with the review summary containing \"amazing\" and have a rating above 90.",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Cloud Atlas"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_24082",
+      "question": "Which movies have been reviewed with a summary containing 'amazing journey' and have a rating less than 80?",
+      "validation": {
+        "row_count": {
+          "exact": 0
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_27449",
+      "question": "Which actors played in the most movies?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Tom Hanks"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_27479",
+      "question": "which actor has the highest rating movies",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jerry O'Connell"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_36292",
+      "question": "What are the first 3 movies that have a tagline containing the word 'journey'?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "judge": {
+          "expected": "The rows should be movies/records whose tagline is semantically related to 'journey'.",
+          "require_pass": true
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_23713",
+      "question": "Which movies have a tagline containing the word 'real' and were released in the 2000s?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "judge": {
+          "expected": "The rows should be movies/records whose tagline is semantically related to 'real'.",
+          "require_pass": true
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_40125",
+      "question": "List the top 3 oldest actors in the database.",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Max von Sydow"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Richard Harris"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_32714",
+      "question": "What is the oldest movie with a rating above 90?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jerry Maguire"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_27901",
+      "question": "Which movies did Keanu Reeves play in?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Johnny Mnemonic"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Something's Gotta Give"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Devil's Advocate"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix Reloaded"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix Revolutions"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Replacements"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_27607",
+      "question": "directors Tom Hanks work with",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Charlize Theron"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "That Thing You Do"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Liv Tyler"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_24014",
+      "question": "Name 3 persons who have directed a movie with a tagline containing 'limits'.",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "judge": {
+          "expected": "The rows should be movies/records whose tagline is semantically related to 'limits'.",
+          "require_pass": true
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_36369",
+      "question": "Who are the first 3 actors in the movie titled 'Speed Racer'?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_23318",
+      "question": "What is the average release year of movies reviewed with a rating above 80?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": 2001.0
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23920",
+      "question": "What are the 3 oldest movies produced by someone born after 1960?",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "V for Vendetta"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Ninja Assassin"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_32927",
+      "question": "List the movies with a rating higher than 80 and released after 2005.",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Cloud Atlas"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_36298",
+      "question": "What are the first 3 movies with a released year of 2008?",
+      "validation": {
+        "row_count": {
+          "exact": 2
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Frost/Nixon"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Speed Racer"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_40076",
+      "question": "List the movies directed by people born before 1970.",
+      "validation": {
+        "row_count": {
+          "exact": 44
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Unforgiven"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Charlie Wilson's War"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Birdcage"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "One Flew Over the Cuckoo's Nest"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "As Good as It Gets"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Sleepless in Seattle"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "You've Got Mail"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "RescueDawn"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_24005",
+      "question": "Which 3 movies have been directed by persons born in the 1960s?",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Cloud Atlas"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_32893",
+      "question": "List the actors born before 1960.",
+      "validation": {
+        "row_count": {
+          "exact": 66
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Max von Sydow"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Gene Hackman"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Richard Harris"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Clint Eastwood"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Mike Nichols"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Milos Forman"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Tom Skerritt"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jack Nicholson"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_32970",
+      "question": "What is the oldest movie in the database?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "One Flew Over the Cuckoo's Nest"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_39921",
+      "question": "Who are the top 5 oldest actors in the database?",
+      "validation": {
+        "row_count": {
+          "exact": 5
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Max von Sydow"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Richard Harris"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Clint Eastwood"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Gene Hackman"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_39553",
+      "question": "Which actors were born after 1970?",
+      "validation": {
+        "row_count": {
+          "exact": 22
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Noah Wyle"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Paul Bettany"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Regina King"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Rick Yune"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Corey Feldman"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Wil Wheaton"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Dave Chappelle"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jerry O'Connell"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23727",
+      "question": "List the first 3 directors born after 1960.",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Lana Wachowski"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23869",
+      "question": "List the first 3 movies with a tagline containing the word 'real' and released before 2000.",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "judge": {
+          "expected": "The rows should be movies/records whose tagline is semantically related to 'real'.",
+          "require_pass": true
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_36294",
+      "question": "List the top 5 movies with a released year before 1985.",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "One Flew Over the Cuckoo's Nest"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_38157",
+      "question": "List the movies where Joel Silver has a production role.",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Ninja Assassin"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Speed Racer"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix Reloaded"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix Revolutions"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "V for Vendetta"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_27418",
+      "question": "what the range of movie released year",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": 1975
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_37637",
+      "question": "What are the first 3 movies with a rating greater than 85?",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Replacements"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Cloud Atlas"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jerry Maguire"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_33082",
+      "question": "List the summaries of reviews for movies with a rating higher than 85 and released after 1990.",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The coolest football movie ever"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "An amazing journey"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "You had me at Jerry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_40027",
+      "question": "Who has reviewed the most movies with a rating above 90?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jessica Thompson"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_24072",
+      "question": "What are the first 3 movies produced by someone born before 1960?",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "When Harry Met Sally"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_39756",
+      "question": "Who are the top 3 producers of movies with a tagline including 'Speed'?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "judge": {
+          "expected": "The rows should be movies/records whose tagline is semantically related to 'Speed'.",
+          "require_pass": true
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_27401",
+      "question": "how many movies have Brad Pitt acted in?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": 0
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23369",
+      "question": "Which movies have been produced by persons born before 1960?",
+      "validation": {
+        "row_count": {
+          "exact": 10
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "When Harry Met Sally"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Something's Gotta Give"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Ninja Assassin"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Speed Racer"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix Reloaded"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix Revolutions"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "V for Vendetta"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_36307",
+      "question": "Find all movies that have been produced by persons born after 1960 limited to top 5.",
+      "validation": {
+        "row_count": {
+          "exact": 5
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_39802",
+      "question": "Who reviewed movies with a rating higher than 90?",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "James Thompson"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jessica Thompson"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23311",
+      "question": "Who are the top 3 oldest persons who have reviewed a movie?",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Angela Scope"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "James Thompson"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_27462",
+      "question": "Which actors played in the most movies?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Tom Hanks"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_33013",
+      "question": "What is the title of the movie with the oldest director?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Unforgiven"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_35074",
+      "question": "List the top 5 movies with the highest number of different actors involved.",
+      "validation": {
+        "row_count": {
+          "exact": 5
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "A Few Good Men"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jerry Maguire"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Green Mile"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Stand By Me"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Speed Racer"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_24077",
+      "question": "Who are the first three people who wrote a movie and were born in the 1950s?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Cameron Crowe"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_39915",
+      "question": "Which movies released between 2005 and 2010 have the tagline 'Speed has no limits'?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Speed Racer"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_39814",
+      "question": "Find all people born in 1949 who have directed a movie.",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Nancy Meyers"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_32718",
+      "question": "What is the average rating of movies with the summary \"Silly, but fun\"?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_37513",
+      "question": "What are the roles of Keanu Reeves in 'The Matrix'?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Neo"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_27699",
+      "question": "List all the actors including movie titles whom Keanu Reeves acted with ",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Dina Meyer"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Johnny Mnemonic"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Ice-T"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Laurence Fishburne"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix Reloaded"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix Revolutions"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Takeshi Kitano"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23716",
+      "question": "What are the names of the movies that received a review summary 'Dark, but compelling'?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Unforgiven"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_37503",
+      "question": "List all movies with a release year in the 1980s.",
+      "validation": {
+        "row_count": {
+          "exact": 2
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Stand By Me"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Top Gun"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_27598",
+      "question": "who worked in Top Gun?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Anthony Edwards"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Kelly McGillis"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Meg Ryan"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Tom Cruise"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Tom Skerritt"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Val Kilmer"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Tony Scott"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jim Cash"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_32840",
+      "question": "List all the movies where the director's name starts with the same letter as the movie title.",
+      "validation": {
+        "row_count": {
+          "exact": 5
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Joe Versus the Volcano"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Snow Falling on Cedars"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "That Thing You Do"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Devil's Advocate"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Top Gun"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_36305",
+      "question": "List all movies with a tagline that includes the phrase 'Real World'.",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "judge": {
+          "expected": "The rows should be movies/records whose tagline is semantically related to 'Real World'.",
+          "require_pass": true
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_36331",
+      "question": "Who are the top 5 producers of the movie with the title 'Speed Racer'?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Joel Silver"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_40037",
+      "question": "What are the top 5 movies directed by people born in the 1960s and their release years?",
+      "validation": {
+        "row_count": {
+          "exact": 5
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Cloud Atlas"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Ninja Assassin"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Speed Racer"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23669",
+      "question": "What are the first 3 movies that have a tagline containing the word 'journey'?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "judge": {
+          "expected": "The rows should be movies/records whose tagline is semantically related to 'journey'.",
+          "require_pass": true
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_24000",
+      "question": "Which 3 directors have directed the most movies released after 2005?",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Ron Howard"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Lilly Wachowski"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Lana Wachowski"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_39564",
+      "question": "Which person has reviewed the most movies?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jessica Thompson"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_38218",
+      "question": "Who has the most directed movies in the database?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Lana Wachowski"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_39927",
+      "question": "Who reviewed the most movies?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jessica Thompson"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_39528",
+      "question": "Which persons have reviewed movies with a rating of 100?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "James Thompson"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_36377",
+      "question": "Find all movies with a released year in the 1990s.",
+      "validation": {
+        "row_count": {
+          "exact": 20
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "A Few Good Men"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "A League of Their Own"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Apollo 13"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "As Good as It Gets"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Bicentennial Man"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Hoffa"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Joe Versus the Volcano"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Johnny Mnemonic"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_24097",
+      "question": "List three movies reviewed with a rating above 90.",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_32724",
+      "question": "What is the highest rating given to a movie released before 1990?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_23853",
+      "question": "List the movies where the actors were born before 1950.",
+      "validation": {
+        "row_count": {
+          "exact": 35
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Snow Falling on Cedars"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "What Dreams May Come"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Birdcage"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Replacements"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Unforgiven"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Top Gun"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "A Few Good Men"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "As Good as It Gets"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_39774",
+      "question": "Find all movies that have been produced by persons born after 1960 limited to top 5.",
+      "validation": {
+        "row_count": {
+          "exact": 5
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Cloud Atlas"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Ninja Assassin"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "V for Vendetta"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_39846",
+      "question": "List the first 5 movies produced by a person born in 1967.",
+      "validation": {
+        "row_count": {
+          "exact": 2
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "V for Vendetta"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Ninja Assassin"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_37675",
+      "question": "Who are the top 5 actors with the most reviews for movies they acted in?",
+      "validation": {
+        "row_count": {
+          "exact": 5
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Gene Hackman"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Orlando Jones"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Keanu Reeves"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Brooke Langton"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Tom Hanks"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_24123",
+      "question": "Who reviewed the movie with the highest rating and what was the summary?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "James Thompson"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_40139",
+      "question": "Name the top 5 actors who acted in a movie released in 1999.",
+      "validation": {
+        "row_count": {
+          "exact": 5
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "James Cromwell"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Michael Clarke Duncan"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Laurence Fishburne"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "David Morse"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Hugo Weaving"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_27596",
+      "question": "영화 'matrix'에 출연한 배우는 누구야?",
+      "validation": {
+        "row_count": {
+          "min": 0
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_23325",
+      "question": "List the roles of any person in movies released after 2010.",
+      "validation": {
+        "row_count": {
+          "exact": 4
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Halle Berry"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Hugo Weaving"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jim Broadbent"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Tom Hanks"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_24083",
+      "question": "What roles are available in the ACTED_IN relationship for movies released before 2000?",
+      "validation": {
+        "row_count": {
+          "exact": 109
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "A Few Good Men"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Devil's Advocate"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "What Dreams May Come"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Top Gun"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "A League of Their Own"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Apollo 13"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Twister"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Sleepless in Seattle"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_34971",
+      "question": "Who are the top 5 persons with the most reviews written?",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jessica Thompson"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "James Thompson"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Angela Scope"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_39958",
+      "question": "List the first 3 movies with a tagline containing 'limits' and released after 2005.",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "judge": {
+          "expected": "The rows should be movies/records whose tagline is semantically related to 'limits'.",
+          "require_pass": true
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_24052",
+      "question": "Retrieve the first three movies that were reviewed with the summary 'Dark, but compelling'.",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Unforgiven"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_24100",
+      "question": "What are the first 3 movies produced by people born in the 1950s?",
+      "validation": {
+        "row_count": {
+          "exact": 3
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jerry Maguire"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix Reloaded"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_38213",
+      "question": "Who reviewed movies with a summary mentioning 'funny'?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Angela Scope"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_35024",
+      "question": "List all movies produced by Joel Silver.",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Ninja Assassin"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Speed Racer"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix Reloaded"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix Revolutions"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "V for Vendetta"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_40137",
+      "question": "What are the roles played by Laurence Fishburne in 'The Matrix Revolutions'?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Morpheus"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23870",
+      "question": "What are the highest-rated reviews and which movies do they belong to?",
+      "validation": {
+        "row_count": {
+          "exact": 9
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Replacements"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Cloud Atlas"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jerry Maguire"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Unforgiven"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Da Vinci Code"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Birdcage"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_39535",
+      "question": "Which persons born in the 1960s have directed movies?",
+      "validation": {
+        "row_count": {
+          "exact": 4
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Lilly Wachowski"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "James Marshall"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Tom Tykwer"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Lana Wachowski"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_34973",
+      "question": "Which movies have been reviewed with a rating of 100?",
+      "validation": {
+        "row_count": {
+          "exact": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Replacements"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_37616",
+      "question": "List 3 actors who have acted in movies with a tagline containing 'beginning'.",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "judge": {
+          "expected": "The rows should be movies/records whose tagline is semantically related to 'beginning'.",
+          "require_pass": true
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_23761",
+      "question": "Who are the first 3 people to have directed a movie with a tagline including the word 'beginning'?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "judge": {
+          "expected": "The rows should be movies/records whose tagline is semantically related to 'beginning'.",
+          "require_pass": true
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_32761",
+      "question": "List the movies directed by Nancy Meyers in order of release date.",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Something's Gotta Give"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": 2003
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23712",
+      "question": "How many people have acted in 'Something's Gotta Give'?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": 3
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23936",
+      "question": "List all movies reviewed by people born after 1960.",
+      "validation": {
+        "row_count": {
+          "exact": 0
+        }
+      }
+    },
+    {
+      "id": "t2c_instance_id_37531",
+      "question": "List all movies released after 2000.",
+      "validation": {
+        "row_count": {
+          "exact": 12
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Charlie Wilson's War"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Cloud Atlas"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Frost/Nixon"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Ninja Assassin"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "RescueDawn"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Something's Gotta Give"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Speed Racer"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Da Vinci Code"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_35035",
+      "question": "Which movies have the tagline 'Speed has no limits' and who are the producers?",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Speed Racer"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Joel Silver"
+          }
+        ]
+      }
+    },
+    {
+      "id": "t2c_instance_id_23742",
+      "question": "Name the top 5 directors of movies that have a tagline mentioning 'Real World'.",
+      "validation": {
+        "row_count": {
+          "min": 1
+        },
+        "judge": {
+          "expected": "The rows should be movies/records whose tagline is semantically related to 'Real World'.",
+          "require_pass": true
+        }
+      }
+    }
+  ]
+}

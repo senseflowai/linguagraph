@@ -951,7 +951,10 @@ api_key_env = "OPENAI_API_KEY"
 
 [query]
 max_traversal_depth = 6
-default_limit = 100
+default_limit = 100          # traversal (RAG chunk) retrieval default
+max_limit = 5000             # read-path safety ceiling: a query that omits
+                             # `limit` returns all matching rows up to this cap,
+                             # and an explicit `limit` is capped here too
 
 [ingest]
 # Rows per embedding-insert query when draining side effects. Each row runs a
@@ -1118,7 +1121,10 @@ It loads a graph JSON fixture, an ontology catalog and natural-language
 questions, then validates generated DSL results and optional final answers.
 See [docs/e2e.md](docs/e2e.md) for the fixture format and validation rules.
 For the product-level view of CRM, ERP and semantic sandboxes, see
-[docs/e2e-whitepaper.md](docs/e2e-whitepaper.md).
+[docs/e2e-whitepaper.md](docs/e2e-whitepaper.md). For a recall benchmark of the
+NL→DSL→Cypher path on the public `neo4j/text2cypher-2024v1` movies slice —
+dataset, methodology, results (≈87%) and how it compares to public text-to-Cypher
+solutions — see [docs/text2cypher-benchmark.md](docs/text2cypher-benchmark.md).
 
 ## Extending linguagraph
 

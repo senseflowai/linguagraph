@@ -213,6 +213,53 @@ pub trait EmbeddingStore: Send + Sync + std::fmt::Debug {
         let _ = (collection, vector, limit, score_threshold);
         Ok(Vec::new())
     }
+
+    /// Hybrid (dense ⊕ BM25) nearest-neighbour search over a qlink
+    /// `_canonical` collection, fusing a dense branch (the default vector)
+    /// and a lexical branch (the `text_bm25` sparse vector built from
+    /// `query_text`) with Reciprocal Rank Fusion server-side. When `label`
+    /// is set, both branches are filtered to points carrying that `label`
+    /// payload. Returns up to `limit` hits, highest fused score first; the
+    /// returned `score` is the RRF score (rank-based, not a cosine).
+    ///
+    /// The lexical branch is what recovers a *literal* term buried in a
+    /// long text field — a pure dense KNN ([`Self::search_raw`]) on a short
+    /// query against long `_canonical` docs ranks by overall semantic
+    /// proximity and misses it. The default implementation has no sparse
+    /// index, so it falls back to the dense-only path; backends that store
+    /// the BM25 sparse vector — [`crate::db::QdrantClient`] — override this.
+    async fn search_hybrid(
+        &self,
+        collection: &str,
+        query_text: &str,
+        vector: &[f32],
+        label: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<RawScoredHit>, StoreError> {
+        let _ = (query_text, label);
+        self.search_raw(collection, vector, limit, None).await
+    }
+
+    /// Lexical (BM25) search over the `text_bm25` sparse vector built from
+    /// `query_text`. Because a sparse query only returns points sharing at
+    /// least one query term, a bare-value query (e.g. `"freedom"`) returns
+    /// exactly the docs that contain that token — literal `contains` via
+    /// the index. When `label` is set, results are filtered to that label.
+    /// Returns up to `limit` hits, highest BM25 score first.
+    ///
+    /// The default implementation has no sparse index and returns nothing,
+    /// so a store that can't serve BM25 opts out (the query then falls back
+    /// to the server-side path); [`crate::db::QdrantClient`] overrides it.
+    async fn search_bm25(
+        &self,
+        collection: &str,
+        query_text: &str,
+        label: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<RawScoredHit>, StoreError> {
+        let _ = (collection, query_text, label, limit);
+        Ok(Vec::new())
+    }
 }
 
 /// A shared embedding store plus the collection/model it is addressed with.

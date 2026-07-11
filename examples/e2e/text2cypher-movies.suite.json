@@ -1,0 +1,22 @@
+{
+  "name": "text2cypher-movies",
+  "graph": "text2cypher-movies/graph.json",
+  "ontology": "text2cypher-movies/ontology.json",
+  "questions": "text2cypher-movies/questions.json",
+  "settings": {
+    "prefix": "E2E_TEXT2CYPHER_MOVIES",
+    "cleanup_before": true,
+    "cleanup_after": false,
+    "cleanup_vectors": true,
+    "answer_with_llm": false,
+    "judge_with_llm": false,
+    "max_repairs": 1,
+    "indexes": [
+      { "label": "Movie", "property": "id" },
+      { "label": "Movie", "property": "title" },
+      { "label": "Person", "property": "id" },
+      { "label": "Person", "property": "name" },
+      { "label": "Person", "property": "born" }
+    ]
+  }
+}

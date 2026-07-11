@@ -138,7 +138,7 @@ fn validate(q: &DslQuery) -> Result<(), DslError> {
         if let Some(from) = &t.from {
             check_identifier(from)?;
         }
-        check_identifier(&t.edge.label)?;
+        check_edge_label(&t.edge.label)?;
         check_identifier(&t.edge.alias)?;
         insert_alias(&mut aliases, &t.edge.alias)?;
 
@@ -227,6 +227,22 @@ fn check_identifier(s: &str) -> Result<(), DslError> {
     let ok = matches!(first, Some(c) if c.is_ascii_alphabetic() || c == '_')
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
     if !ok {
+        return Err(DslError::InvalidIdentifier(s.to_string()));
+    }
+    Ok(())
+}
+
+/// A traversal edge label is one relationship type, or a `|`-separated
+/// union of types (Cypher `-[:A|B|C]->`), e.g. matching a person linked to
+/// a movie by acting, directing, producing *or* writing. Each alternative
+/// must be a valid identifier.
+fn check_edge_label(s: &str) -> Result<(), DslError> {
+    let mut any = false;
+    for part in s.split('|') {
+        any = true;
+        check_identifier(part)?;
+    }
+    if !any {
         return Err(DslError::InvalidIdentifier(s.to_string()));
     }
     Ok(())

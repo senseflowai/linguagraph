@@ -230,6 +230,125 @@ impl EmbeddingStore for QdrantClient {
         }
         Ok(hits)
     }
+
+    async fn search_hybrid(
+        &self,
+        collection: &str,
+        query_text: &str,
+        vector: &[f32],
+        label: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<RawScoredHit>, StoreError> {
+        // Build the BM25 sparse query the same way qlink built the stored
+        // sparse vectors (see `embeddings::bm25`); Qdrant applies the IDF
+        // itself (`modifier: idf`), so we only send term ids + frequencies.
+        let (sparse_idx, sparse_val) = crate::embeddings::bm25::to_sparse_parts(query_text);
+
+        // Fan each branch out wider than the final cut so fusion has a real
+        // pool to work with. Mirrors qlink's `candidate_k * 4`.
+        let prefetch_k = limit.max(1) * 4;
+        let label_filter = label.map(|l| json!({ "must": [{ "key": "label", "match": { "value": l } }] }));
+
+        let mut dense_prefetch = json!({
+            "query": vector,
+            "using": "",
+            "limit": prefetch_k,
+        });
+        let mut sparse_prefetch = json!({
+            "query": { "indices": sparse_idx, "values": sparse_val },
+            "using": crate::embeddings::bm25::SPARSE_VECTOR,
+            "limit": prefetch_k,
+        });
+        if let Some(f) = &label_filter {
+            dense_prefetch["filter"] = f.clone();
+            sparse_prefetch["filter"] = f.clone();
+        }
+
+        // No lexical branch when the query has no content tokens (all
+        // stopwords / punctuation): a sparse query with empty indices is
+        // meaningless, so fall back to a dense-only prefetch.
+        let prefetch = if sparse_idx_is_empty(&sparse_prefetch) {
+            json!([dense_prefetch])
+        } else {
+            json!([dense_prefetch, sparse_prefetch])
+        };
+
+        let url = format!("{}/collections/{}/points/query", self.base_url, collection);
+        let body = json!({
+            "prefetch": prefetch,
+            "query": { "fusion": "rrf" },
+            "limit": limit,
+            "with_payload": true,
+        });
+        let resp = self.send(self.http.post(&url).json(&body)).await?;
+        let mut hits = Vec::new();
+        if let Some(arr) = resp
+            .get("result")
+            .and_then(|r| r.get("points"))
+            .and_then(JsonValue::as_array)
+        {
+            for item in arr {
+                let Some(id) = point_id_string(&item["id"]) else {
+                    continue;
+                };
+                let score = item["score"].as_f64().unwrap_or(0.0) as f32;
+                let payload = item.get("payload").cloned().unwrap_or(JsonValue::Null);
+                hits.push(RawScoredHit { id, score, payload });
+            }
+        }
+        Ok(hits)
+    }
+
+    async fn search_bm25(
+        &self,
+        collection: &str,
+        query_text: &str,
+        label: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<RawScoredHit>, StoreError> {
+        let (sparse_idx, sparse_val) = crate::embeddings::bm25::to_sparse_parts(query_text);
+        // No content tokens (all stopwords / punctuation) → nothing to match.
+        if sparse_idx.is_empty() {
+            return Ok(Vec::new());
+        }
+        let url = format!("{}/collections/{}/points/query", self.base_url, collection);
+        let mut body = json!({
+            "query": { "indices": sparse_idx, "values": sparse_val },
+            "using": crate::embeddings::bm25::SPARSE_VECTOR,
+            "limit": limit,
+            "with_payload": true,
+        });
+        if let Some(l) = label {
+            body["filter"] = json!({ "must": [{ "key": "label", "match": { "value": l } }] });
+        }
+        let resp = self.send(self.http.post(&url).json(&body)).await?;
+        let mut hits = Vec::new();
+        if let Some(arr) = resp
+            .get("result")
+            .and_then(|r| r.get("points"))
+            .and_then(JsonValue::as_array)
+        {
+            for item in arr {
+                let Some(id) = point_id_string(&item["id"]) else {
+                    continue;
+                };
+                let score = item["score"].as_f64().unwrap_or(0.0) as f32;
+                let payload = item.get("payload").cloned().unwrap_or(JsonValue::Null);
+                hits.push(RawScoredHit { id, score, payload });
+            }
+        }
+        Ok(hits)
+    }
+}
+
+/// True when a prefetch branch's sparse `query.indices` array is empty.
+fn sparse_idx_is_empty(prefetch: &JsonValue) -> bool {
+    prefetch
+        .get("query")
+        .and_then(|q| q.get("indices"))
+        .and_then(JsonValue::as_array)
+        .map(|a| a.is_empty())
+        .unwrap_or(true)
 }
 
 impl QdrantClient {

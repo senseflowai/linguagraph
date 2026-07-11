@@ -178,6 +178,21 @@ pub fn lower_full(
 
     let mut sort = lower_sort(&dsl.sort, &returns, &group_by, &bound)?;
 
+    // Drop any ORDER BY on a list-typed property. Cypher can't order or
+    // compare list values and aborts the whole query at runtime
+    // ("Comparison is not defined for values of type list"); a list has no
+    // ordering anyway, so silently dropping the key degrades to an
+    // unordered result instead of a hard failure. (Scalar comparisons on a
+    // list route through the List type handler, which rejects them cleanly
+    // at lowering — only `sort` bypasses the handlers.)
+    sort.retain(|s| match &s.key {
+        SortRef::Property(p) => {
+            infer_type(p, &alias_labels, catalog).as_deref()
+                != Some(crate::types::BuiltinType::List.id())
+        }
+        SortRef::Projected(_) => true,
+    });
+
     // Cypher has no standalone GROUP BY: the grouping keys of an
     // aggregating projection are exactly its non-aggregate RETURN
     // columns. For an `aggregate` query two things follow, and the
@@ -204,6 +219,7 @@ pub fn lower_full(
         group_by,
         sort,
         limit: dsl.limit,
+        distinct: dsl.distinct,
     })
 }
 
@@ -277,10 +293,17 @@ struct SemGroup {
     /// for a fuzzy/broader match. Fallback signal when no term states
     /// `cardinality` explicitly.
     all_singular_op: bool,
+    /// True while every folded op is a *lexical* matcher (`eq` / `neq` /
+    /// `contains` / …) rather than a semantic one (`search` /
+    /// `hybrid_search`). Lexical groups retrieve through the BM25 sparse
+    /// branch only — a bare-value sparse query returns exactly the docs
+    /// that contain the term(s), i.e. literal `contains` via the index —
+    /// while a semantic group runs the dense ⊕ BM25 hybrid.
+    lexical: bool,
 }
 
-/// SemanticText ops that fold into one consolidated per-entity hybrid
-/// search over `_canonical`.
+/// SemanticText ops that fold into one consolidated per-entity search
+/// over `_canonical`.
 fn is_foldable_entity_op(op: TypedOp) -> bool {
     matches!(
         op,
@@ -291,6 +314,16 @@ fn is_foldable_entity_op(op: TypedOp) -> bool {
             | TypedOp::Search
             | TypedOp::SearchReranked
             | TypedOp::HybridSearch
+    )
+}
+
+/// SemanticText ops that ask for *semantic* (fuzzy/meaning) retrieval and
+/// so want the dense ⊕ BM25 hybrid. Everything else foldable (`eq`,
+/// `contains`, …) is lexical and uses the BM25 branch alone.
+fn is_semantic_op(op: TypedOp) -> bool {
+    matches!(
+        op,
+        TypedOp::Search | TypedOp::SearchReranked | TypedOp::HybridSearch
     )
 }
 
@@ -329,13 +362,20 @@ fn lower_filters(
         //     `{"field": "c.name", "op": "search", "value": "apple"}`
         // resolves to `SemanticText` automatically when the mapping
         // declared `Company.name` as such.
+        // Canonicalize contract / legacy spellings (`Text`, `String`,
+        // `SemanticText`, …) on an *explicit* DSL `"type"` override to the
+        // registry handler id. `infer_type` is intentionally left
+        // untouched here: it already returns a query-side id via
+        // `OntologyPropertyType::query_type_id`, which for `List` is its
+        // own dedicated handler id — re-canonicalizing through
+        // `canonical_handler_id` (which maps via the *ingest*-side
+        // `handler_id`) would collapse it back onto `Keyword` and lose
+        // list-membership `contains` semantics.
         let effective_type = f
             .field_type
             .clone()
-            .or_else(|| infer_type(&field, alias_labels, catalog))
-            // Canonicalize contract / legacy spellings (`Text`, `String`,
-            // `SemanticText`, …) to the registry handler id.
-            .map(|t| crate::graph::canonical_handler_id(&t));
+            .map(|t| crate::graph::canonical_handler_id(&t))
+            .or_else(|| infer_type(&field, alias_labels, catalog));
 
         // ── Fold SemanticText semantic filters by alias. ───────────────
         // SemanticText filters on the same alias are gathered per entity
@@ -353,6 +393,7 @@ fn lower_filters(
                     let term = semantic_text_term_value(op, &f.value)?;
                     let alias = field.alias.as_str();
                     let is_eq = op == TypedOp::Eq;
+                    let is_semantic = is_semantic_op(op);
                     let explicit_cardinality = f
                         .cardinality
                         .as_deref()
@@ -365,6 +406,7 @@ fn lower_filters(
                         Some(g) => {
                             g.terms.push((field.property.clone(), term));
                             g.all_singular_op = g.all_singular_op && is_eq;
+                            g.lexical = g.lexical && !is_semantic;
                             g.cardinality_hint =
                                 merge_cardinality_hint(g.cardinality_hint, explicit_cardinality);
                         }
@@ -373,6 +415,7 @@ fn lower_filters(
                             label: label.clone(),
                             terms: vec![(field.property.clone(), term)],
                             all_singular_op: is_eq,
+                            lexical: !is_semantic,
                             cardinality_hint: explicit_cardinality,
                         }),
                     }
@@ -433,7 +476,21 @@ fn lower_filters(
     // registry already holds for `SemanticText`; an inferred type means it
     // is registered, so `get` cannot miss here.
     for group in semantic_groups {
-        let query_text = build_canonical_query(&group.label, &group.terms, true);
+        // Lexical groups (`contains` / `eq` / …) query BM25 with the bare
+        // term values, so the sparse index returns exactly the docs that
+        // contain those tokens. Semantic groups (`search`) mirror the
+        // `_canonical` document format so the dense branch matches its
+        // embedding distribution.
+        let query_text = if group.lexical {
+            group
+                .terms
+                .iter()
+                .map(|(_, v)| v.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+        } else {
+            build_canonical_query(&group.label, &group.terms, true)
+        };
         let value = serde_json::Value::String(query_text);
         let field = PropertyRef {
             alias: Alias::new(group.alias.as_str()),
@@ -460,6 +517,10 @@ fn lower_filters(
         typed.params.insert(
             "cardinality".to_string(),
             Literal::String(cardinality.as_str().to_string()),
+        );
+        typed.params.insert(
+            "mode".to_string(),
+            Literal::String(if group.lexical { "lexical" } else { "hybrid" }.to_string()),
         );
         preds.push(FilterExpression::Typed(typed));
     }
@@ -632,6 +693,7 @@ fn lower_agg(a: d::AggregateFn) -> AggregateFn {
         d::AggregateFn::Avg => AggregateFn::Avg,
         d::AggregateFn::Min => AggregateFn::Min,
         d::AggregateFn::Max => AggregateFn::Max,
+        d::AggregateFn::Collect => AggregateFn::Collect,
     }
 }
 

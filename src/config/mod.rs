@@ -303,8 +303,20 @@ fn default_llm_api_key_env() -> String {
 pub struct QueryConfig {
     #[serde(default = "default_max_depth")]
     pub max_traversal_depth: u32,
+    /// Default row limit for the *traversal* (RAG chunk) retrieval path
+    /// when a traversal query omits its own limit. Does **not** govern the
+    /// DSL read path — see [`Self::max_limit`] for that.
     #[serde(default = "default_limit")]
     pub default_limit: u32,
+    /// Hard ceiling on the number of rows a compiled DSL read query may
+    /// return. Applied by [`crate::core::Pipeline::lower`] both as a cap on
+    /// an explicit `limit` and as the effective limit when the query omits
+    /// `limit` entirely — so an unbounded "list everything" question can
+    /// return all matching rows without streaming an arbitrarily large
+    /// result set. Overridable per pipeline via
+    /// [`crate::core::Pipeline::with_max_limit`].
+    #[serde(default = "default_max_limit")]
+    pub max_limit: u32,
     /// Query-time *grounding* (entity linking): before compiling a
     /// SemanticText filter to the server-side `libqlink` hybrid search,
     /// try to resolve the filter to concrete node ids by searching the
@@ -318,6 +330,7 @@ impl Default for QueryConfig {
         Self {
             max_traversal_depth: default_max_depth(),
             default_limit: default_limit(),
+            max_limit: default_max_limit(),
             grounding: GroundingConfig::default(),
         }
     }
@@ -328,6 +341,9 @@ fn default_max_depth() -> u32 {
 }
 fn default_limit() -> u32 {
     100
+}
+fn default_max_limit() -> u32 {
+    5000
 }
 
 /// Query-time grounding (`[query.grounding]` in TOML).

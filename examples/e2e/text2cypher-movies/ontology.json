@@ -1,0 +1,58 @@
+{
+  "movies_domain": {
+    "entity_types": [
+      {
+        "name": "Movie",
+        "description": "A feature film.",
+        "properties": [
+          { "name": "id", "property_type": "keyword", "required": true },
+          { "name": "title", "property_type": "text", "required": true },
+          { "name": "released", "property_type": "int", "required": false },
+          { "name": "tagline", "property_type": "text", "required": false }
+        ]
+      },
+      {
+        "name": "Person",
+        "description": "An actor, director, producer, writer or reviewer in the movie graph.",
+        "properties": [
+          { "name": "id", "property_type": "keyword", "required": true },
+          { "name": "name", "property_type": "text", "required": true },
+          { "name": "born", "property_type": "int", "required": false }
+        ]
+      }
+    ],
+    "relation_types": [
+      {
+        "name": "ACTED_IN",
+        "description": "Connects a Person to a Movie they acted in. Carries a `roles` list property.",
+        "properties": [
+          { "name": "roles", "property_type": "list", "required": false }
+        ]
+      },
+      {
+        "name": "DIRECTED",
+        "description": "Connects a Person to a Movie they directed."
+      },
+      {
+        "name": "PRODUCED",
+        "description": "Connects a Person to a Movie they produced."
+      },
+      {
+        "name": "WROTE",
+        "description": "Connects a Person to a Movie they wrote."
+      },
+      {
+        "name": "REVIEWED",
+        "description": "Connects a Person to a Movie they reviewed. Carries `summary` and `rating` properties.",
+        "properties": [
+          { "name": "summary", "property_type": "keyword", "required": false },
+          { "name": "rating", "property_type": "int", "required": false }
+        ]
+      },
+      {
+        "name": "FOLLOWS",
+        "description": "Connects a Person to another Person they follow."
+      }
+    ]
+  }
+}

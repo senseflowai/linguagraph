@@ -360,10 +360,13 @@ impl TypeHandler for SemanticTextHandler {
         // skip the server-side `libqlink` hybrid search entirely. When
         // the param is absent (grounding off, or no confident hit) we
         // fall through to the unchanged fallback below.
-        if let Some(Literal::List(rows)) = pred.params.get("prefetch_rows") {
-            if !rows.is_empty() {
-                return emit_grounded(ctx, pred);
-            }
+        // The grounding pass writes `prefetch_rows` whenever it resolved the
+        // filter client-side — including an *empty* list for a lexical filter
+        // that matched nothing (a true "no rows", not a reason to fall back
+        // to the server-side semantic search). So pin on the param's
+        // presence, and let an empty `UNWIND` yield zero rows.
+        if pred.params.contains_key("prefetch_rows") {
+            return emit_grounded(ctx, pred);
         }
 
         match pred.op {
@@ -527,8 +530,14 @@ fn emit_grounded(ctx: &mut EmitCtx<'_>, pred: &TypedPredicate) -> Result<(), Typ
     let qid = format!("{alias}__qid_{n}");
     let score = format!("{alias}__score_{n}");
     let rows_p = ctx.bind(rows);
+    // `WITH *, ...` (not a narrowing `WITH {pf}.nid AS {qid}, ...`): when a
+    // second SemanticText filter on a different alias is also grounded, its
+    // own pre-match block runs after this one, and a narrowing projection
+    // here would drop the earlier filter's `{qid}` binding from scope —
+    // Memgraph then rejects the final `WHERE id(alias) = {qid}` with
+    // "Unbound variable". Carrying `*` forward keeps every prior pin visible.
     ctx.push_pre_match(format!(
-        "UNWIND {rows_p} AS {pf}\nWITH {pf}.nid AS {qid}, {pf}.score AS {score}"
+        "UNWIND {rows_p} AS {pf}\nWITH *, {pf}.nid AS {qid}, {pf}.score AS {score}"
     ));
     ctx.set_where(format!("id({alias}) = {qid}"));
     ctx.contribution_mut()
@@ -1668,8 +1677,12 @@ mod tests {
     }
 
     #[test]
-    fn emit_empty_prefetch_rows_falls_back_to_libqlink() {
-        // An empty prefetch list must not hijack the fallback path.
+    fn emit_empty_prefetch_rows_pins_zero_rows() {
+        // The grounding pass sets `prefetch_rows` (even empty) only when it
+        // resolved the filter client-side — an empty list is a lexical
+        // "no match", i.e. zero rows, not a reason to fall back to the
+        // server-side semantic search. Emit must UNWIND the (empty) pins,
+        // not the `libqlink` CALL.
         let h = handler();
         let field = pref("c", "name");
         let value = serde_json::json!("apple");
@@ -1689,8 +1702,8 @@ mod tests {
 
         let pre = contrib.pre_match.join("\n");
         assert!(
-            pre.contains("libqlink.search_hybrid_reranked"),
-            "empty prefetch must fall back to the hybrid search; got: {pre}"
+            pre.contains("UNWIND") && !pre.contains("libqlink"),
+            "present prefetch (even empty) must pin via UNWIND, not fall back; got: {pre}"
         );
     }
 }

@@ -65,6 +65,11 @@ fn apply_env_overrides(cfg: &mut Config) {
             cfg.query.default_limit = n;
         }
     }
+    if let Ok(v) = std::env::var("LINGUAGRAPH__QUERY__MAX_LIMIT") {
+        if let Ok(n) = v.parse() {
+            cfg.query.max_limit = n;
+        }
+    }
     if let Ok(v) = std::env::var("LINGUAGRAPH__PROMPT__ONTOLOGIES_PATH") {
         cfg.prompt.ontologies_path = Some(v);
     }

@@ -26,6 +26,7 @@ fn test_config() -> Config {
         query: QueryConfig {
             max_traversal_depth: 4,
             default_limit: 50,
+            max_limit: 5000,
             grounding: Default::default(),
         },
         ontology_catalog: OntologyCatalogConfig::default(),
@@ -481,9 +482,9 @@ async fn soft_merge_without_embedder_errors_loudly() {
 }
 
 #[tokio::test]
-async fn default_limit_is_applied_when_omitted() {
+async fn safety_cap_is_applied_when_limit_omitted() {
     let mock = Arc::new(MockClient::new());
-    let cfg = test_config();
+    let cfg = test_config(); // max_limit = 5000
     let pipeline = Pipeline::new(mock.clone(), &cfg);
 
     let dsl = dsl::parse_str(
@@ -496,7 +497,30 @@ async fn default_limit_is_applied_when_omitted() {
     .unwrap();
     let _ = pipeline.run(dsl).await.unwrap();
     let captured = mock.captured.lock().unwrap();
-    assert!(captured[0].text.contains("LIMIT 50"));
+    // A query that omits `limit` returns every matching row up to the
+    // configured safety ceiling, not a small arbitrary default.
+    assert!(captured[0].text.contains("LIMIT 5000"));
+}
+
+#[tokio::test]
+async fn explicit_limit_is_capped_at_max_limit() {
+    let mock = Arc::new(MockClient::new());
+    let mut cfg = test_config();
+    cfg.query.max_limit = 100;
+    let pipeline = Pipeline::new(mock.clone(), &cfg);
+
+    let dsl = dsl::parse_str(
+        r#"{
+            "action": "find",
+            "start": { "label": "Person", "alias": "p" },
+            "return": [{ "field": "p.name" }],
+            "limit": 100000
+        }"#,
+    )
+    .unwrap();
+    let _ = pipeline.run(dsl).await.unwrap();
+    let captured = mock.captured.lock().unwrap();
+    assert!(captured[0].text.contains("LIMIT 100"));
 }
 
 #[tokio::test]

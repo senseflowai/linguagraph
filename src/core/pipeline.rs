@@ -36,6 +36,7 @@ pub struct Pipeline {
     client: Arc<dyn GraphClient>,
     max_depth: u32,
     default_limit: u32,
+    max_limit: u32,
     ingest_batch_size: usize,
     embedding_insert_batch_size: usize,
     ontology_catalog_storage: Option<Arc<dyn OntologyCatalogStorage>>,
@@ -71,6 +72,13 @@ pub struct Pipeline {
     /// `"type"`, and by [`Self::live_schema`] to enrich introspection
     /// results with descriptions.
     ontology_catalog: Arc<RwLock<Option<Arc<OntologyCatalog>>>>,
+    /// Cached raw introspected schema (the un-filtered, un-projected
+    /// result of [`GraphClient::schema`]). Introspection scans the whole
+    /// database, so it is done once and reused by [`Self::live_schema`]
+    /// and the per-query direction check in [`Self::run`]; without this,
+    /// every `run` re-introspected the entire (possibly multi-tenant)
+    /// graph. Invalidated by [`Self::ingest`], which mutates the graph.
+    schema_cache: Arc<RwLock<Option<crate::prompt::GraphSchema>>>,
     /// Optional Cypher label stamped onto every ingested entity and
     /// onto every node in lowered queries. Lets a caller scope inserts
     /// and reads to a tenant, dataset or document without having to
@@ -100,6 +108,7 @@ impl std::fmt::Debug for Pipeline {
         f.debug_struct("Pipeline")
             .field("max_depth", &self.max_depth)
             .field("default_limit", &self.default_limit)
+            .field("max_limit", &self.max_limit)
             .field("ingest_batch_size", &self.ingest_batch_size)
             .field(
                 "ontology_catalog_storage",
@@ -168,6 +177,7 @@ impl Pipeline {
             client,
             max_depth: config.query.max_traversal_depth,
             default_limit: config.query.default_limit,
+            max_limit: config.query.max_limit,
             ingest_batch_size: 1000,
             embedding_insert_batch_size: config.ingest.embedding_insert_batch_size,
             ontology_catalog_storage: None,
@@ -186,6 +196,7 @@ impl Pipeline {
             prefetch_store: None,
             grounding: config.query.grounding.clone(),
             ontology_catalog: Arc::new(RwLock::new(None)),
+            schema_cache: Arc::new(RwLock::new(None)),
             prefix_label: None,
             prefix_index: None,
             semantic_collection,
@@ -230,6 +241,15 @@ impl Pipeline {
     /// who know their downstream system has stricter parameter limits.
     pub fn with_ingest_batch_size(mut self, n: usize) -> Self {
         self.ingest_batch_size = n;
+        self
+    }
+
+    /// Override the DSL read-path safety ceiling ([`crate::config::QueryConfig::max_limit`]):
+    /// the maximum number of rows a compiled query may return, applied both
+    /// as a cap on an explicit `limit` and as the effective limit when the
+    /// query omits one.
+    pub fn with_max_limit(mut self, n: u32) -> Self {
+        self.max_limit = n;
         self
     }
 
@@ -367,14 +387,47 @@ impl Pipeline {
         filter: &[S],
     ) -> Result<crate::prompt::GraphSchema> {
         let mut schema = self
-            .client
-            .schema()
+            .client_schema_cached()
             .await?
             .filter_node_labels_containing(filter);
         if let Some(catalog) = self.ontology_catalog() {
             OntologyCatalog::project_schema(&mut schema, catalog.all_domains());
         }
         Ok(schema)
+    }
+
+    /// Return the raw introspected schema, introspecting once and caching
+    /// the result. Schema introspection scans the whole database, so
+    /// callers that consult it on a hot path — notably the per-query
+    /// relationship-direction check in [`Self::run`] and every
+    /// [`Self::live_schema`] call — must not trigger a fresh scan each
+    /// time. The cache is cleared by [`Self::ingest`], the only pipeline
+    /// operation that mutates the graph; a caller mutating the graph
+    /// out-of-band should build a fresh pipeline (or introspect directly).
+    async fn client_schema_cached(&self) -> Result<crate::prompt::GraphSchema> {
+        if let Some(schema) = self
+            .schema_cache
+            .read()
+            .expect("schema cache lock poisoned")
+            .clone()
+        {
+            return Ok(schema);
+        }
+        let schema = self.client.schema().await?;
+        *self
+            .schema_cache
+            .write()
+            .expect("schema cache lock poisoned") = Some(schema.clone());
+        Ok(schema)
+    }
+
+    /// Drop the cached introspection so the next [`Self::live_schema`] /
+    /// direction check re-scans. Called after an ingest changes the graph.
+    fn invalidate_schema_cache(&self) {
+        *self
+            .schema_cache
+            .write()
+            .expect("schema cache lock poisoned") = None;
     }
 
     // ── Read path ───────────────────────────────────────────────────────────
@@ -403,9 +456,15 @@ impl Pipeline {
             }
         }
         let mut q = resolve::lower_full(dsl, self.max_depth, &self.registry, catalog.as_deref())?;
-        if q.limit.is_none() {
-            q.limit = Some(self.default_limit);
-        }
+        // Apply the safety ceiling: an explicit limit is capped at
+        // `max_limit`, and a query that omits `limit` returns every matching
+        // row up to that ceiling (rather than being truncated to a small
+        // arbitrary default). Keeps unbounded "list everything" questions
+        // correct while still bounding the result set.
+        q.limit = Some(match q.limit {
+            Some(l) => l.min(self.max_limit),
+            None => self.max_limit,
+        });
         Ok(q)
     }
 
@@ -527,17 +586,13 @@ impl Pipeline {
         let Some(Literal::String(label)) = pred.params.get("label") else {
             return Ok(());
         };
-        // Grounding pins a filter to concrete node ids — sound only when
-        // the query names one specific entity. A `cardinality: "many"`
-        // filter (explicit, or inferred from a non-`eq` op) wants every
-        // matching row, which grounding's small `top_k` would truncate;
-        // leave it untouched so it falls through to the uncapped
-        // server-side `libqlink` hybrid search instead.
-        let cardinality_one =
-            matches!(pred.params.get("cardinality"), Some(Literal::String(s)) if s == "one");
-        if !cardinality_one {
-            return Ok(());
-        }
+        // `cardinality: "one"` pins the single best match (a specific named
+        // entity); `"many"` pins the whole candidate pool (the question
+        // wants every match — the DSL's own LIMIT / `max_limit` caps the
+        // rows). Both are resolved the same way: a client-side hybrid
+        // search, so the query never needs the server-side `libqlink` CALL.
+        let many =
+            matches!(pred.params.get("cardinality"), Some(Literal::String(s)) if s == "many");
         let query_str = match pred.params.get("query_str") {
             Some(Literal::String(s)) => s.clone(),
             _ => String::new(),
@@ -556,19 +611,27 @@ impl Pipeline {
         let collection = collection.clone();
         let label = label.clone();
 
-        // Dense search over `_canonical`. Fetch a wider `fetch_k`, then
-        // label-filter client-side (the collection is shared across
-        // labels) and threshold below.
-        let hits = store
-            .search_raw(&collection, &vector, self.grounding.fetch_k.max(1), None)
-            .await?;
-        if hits.is_empty() {
-            return Ok(());
-        }
-
-        // Keep same-label, node-id-keyed hits. A point id that doesn't
-        // parse as an integer isn't from the qlink `_canonical` collection
-        // (e.g. an ontology UUID) — skip it.
+        // Retrieval mode set by the resolver from the folded ops:
+        //  * `lexical` (`contains` / `eq` / …) → BM25-only over the
+        //    `text_bm25` sparse index. A bare-value query returns exactly
+        //    the docs that contain the term(s) — literal `contains` via the
+        //    index — with no dense neighbours polluting the pool.
+        //  * `hybrid` (`search`) → dense ⊕ BM25 fused with RRF, for
+        //    semantic/fuzzy retrieval.
+        // Label-filtering runs server-side; the per-hit check below is a
+        // defensive re-filter that also drops any non-node-id point.
+        let lexical =
+            matches!(pred.params.get("mode"), Some(Literal::String(s)) if s == "lexical");
+        let fetch_k = self.grounding.fetch_k.max(1);
+        let hits = if lexical {
+            store
+                .search_bm25(&collection, &query_str, Some(&label), fetch_k)
+                .await?
+        } else {
+            store
+                .search_hybrid(&collection, &query_str, &vector, Some(&label), fetch_k)
+                .await?
+        };
         let mut candidates: Vec<(i64, f32, Option<String>)> = Vec::new();
         for h in hits {
             let Ok(nid) = h.id.parse::<i64>() else {
@@ -577,46 +640,52 @@ impl Pipeline {
             if !payload_label_matches(&h.payload, &label) {
                 continue;
             }
-            let text = payload_text(&h.payload);
+            let text = payload_canonical_text(&h.payload);
             candidates.push((nid, h.score, text));
         }
         if candidates.is_empty() {
+            // A lexical (`contains` / `eq`) filter that matched nothing means
+            // the literal answer is *no rows* — pin an empty set so the query
+            // returns zero rows rather than falling back to a semantic guess
+            // (BM25 over `_canonical` returns only docs sharing a term, so an
+            // empty result is a true "not found"). Semantic filters instead
+            // leave the pin unset and fall through to the server-side search.
+            if lexical {
+                pred.params
+                    .insert("prefetch_rows".to_string(), Literal::List(Vec::new()));
+            }
             return Ok(());
         }
 
-        // Optional cross-encoder rerank — only when a reranker is attached
-        // and every candidate carries payload text to score.
-        if self.grounding.rerank && !query_str.is_empty() {
+        // Qdrant returns fused hits already in descending RRF-score order.
+        // `cardinality: "one"` names a single entity: when a cross-encoder
+        // reranker is attached and every candidate carries its `_canonical`
+        // text, rerank the hybrid recall pool and keep the single best pick
+        // — recall (dense ⊕ BM25) widens the net, the reranker sharpens the
+        // choice. `many` keeps the RRF order and pins the whole pool.
+        if !many {
             if let Some(reranker) = self.reranker.as_ref() {
                 let texts: Option<Vec<String>> =
                     candidates.iter().map(|(_, _, t)| t.clone()).collect();
-                if let Some(texts) = texts {
+                if let Some(texts) = texts.filter(|t| !t.is_empty()) {
                     match reranker.rerank(&query_str, &texts) {
                         Ok(scores) if scores.len() == candidates.len() => {
                             for (c, s) in candidates.iter_mut().zip(scores) {
                                 c.1 = s as f32;
                             }
+                            candidates.sort_by(|a, b| b.1.total_cmp(&a.1));
                         }
                         Ok(_) => {}
                         Err(e) => tracing::debug!(
                             target: "linguagraph::grounding",
                             error = %e,
-                            "rerank failed; keeping dense scores"
+                            "rerank failed; keeping RRF order"
                         ),
                     }
                 }
             }
+            candidates.truncate(1);
         }
-
-        candidates.retain(|(_, s, _)| *s >= self.grounding.threshold);
-        if candidates.is_empty() {
-            return Ok(());
-        }
-        candidates.sort_by(|a, b| b.1.total_cmp(&a.1));
-        // We only get here for `cardinality: "one"` (checked above), so
-        // pin just the single best match — a near-tie with an unrelated
-        // node shouldn't fan the result out to several rows.
-        candidates.truncate(1);
 
         let rows: Vec<Literal> = candidates
             .iter()
@@ -632,8 +701,9 @@ impl Pipeline {
             target: "linguagraph::grounding",
             alias = pred.field.alias.as_str(),
             label = %label,
+            cardinality = if many { "many" } else { "one" },
             pinned = rows.len(),
-            "grounded SemanticText filter to node ids"
+            "grounded SemanticText filter to node ids (hybrid)"
         );
         pred.params
             .insert("prefetch_rows".to_string(), Literal::List(rows));
@@ -656,10 +726,26 @@ impl Pipeline {
 
     /// Compile and execute against the configured graph client.
     pub async fn run(&self, dsl: DslQuery) -> Result<QueryResult> {
+        let cypher = self.compile_for_run(dsl).await?;
+        self.execute(&cypher).await
+    }
+
+    /// Full read-path compilation as [`Self::run`] performs it: correct
+    /// LLM-emitted relationship directions against the live schema, then
+    /// lower → prepare → ground → build. Exposed so callers that need the
+    /// *exact* Cypher that will execute (e.g. to report or log it) don't
+    /// have to re-derive it with a separate grounding-free [`Self::compile`],
+    /// which would show the server-side `libqlink` fallback instead of the
+    /// grounded query that actually runs.
+    pub async fn compile_for_run(&self, dsl: DslQuery) -> Result<CypherQuery> {
         let mut dsl = dsl;
         self.validate_dsl_relationship_directions(&mut dsl).await?;
-        let cypher = self.compile_grounded(dsl).await?;
-        Ok(self.client.execute(&cypher).await?)
+        self.compile_grounded(dsl).await
+    }
+
+    /// Execute an already-compiled query against the configured client.
+    pub async fn execute(&self, cypher: &CypherQuery) -> Result<QueryResult> {
+        Ok(self.client.execute(cypher).await?)
     }
 
     /// Correct LLM-emitted relationship directions against the live schema.
@@ -1250,6 +1336,10 @@ impl Pipeline {
         // texts in one call, then issue *one* `qlink.insert_batch` per
         // (collection, label) group — never per-row.
         let (se_batches, se_rows) = self.drain_side_effects(effects).await?;
+
+        // The graph changed: drop the cached introspection so the next
+        // schema-dependent call re-scans.
+        self.invalidate_schema_cache();
 
         Ok(IngestSummary {
             batches_executed: total,
@@ -2095,9 +2185,22 @@ fn db_value_to_json(value: &DbValue) -> serde_json::Value {
 /// possibly-correct hit on a schema guess.
 const PAYLOAD_LABEL_KEYS: &[&str] = &["label", "labels", "payload_label", "_label"];
 
-/// Candidate payload keys that may carry the point's source text, used
-/// only for the optional grounding rerank.
-const PAYLOAD_TEXT_KEYS: &[&str] = &["text", "document", "content", "payload_text", "_text"];
+/// Candidate payload keys carrying a point's source text, used to rerank
+/// grounding candidates. qlink writes the canonical document under
+/// `_canonical`; the others are accepted for points from other producers.
+const PAYLOAD_TEXT_KEYS: &[&str] = &["_canonical", "text", "document", "content", "_text"];
+
+/// Best-effort extraction of a grounding candidate's source text from its
+/// payload, for the cross-encoder rerank. `None` when no recognised text
+/// key is present (the caller then skips reranking that pool).
+fn payload_canonical_text(payload: &serde_json::Value) -> Option<String> {
+    for key in PAYLOAD_TEXT_KEYS {
+        if let Some(serde_json::Value::String(s)) = payload.get(key) {
+            return Some(s.clone());
+        }
+    }
+    None
+}
 
 /// True when the payload's label field (whichever recognised key holds
 /// it) equals — or, for a list-valued field, contains — `label`. Returns
@@ -2115,17 +2218,6 @@ fn payload_label_matches(payload: &serde_json::Value, label: &str) -> bool {
         }
     }
     true
-}
-
-/// Best-effort extraction of a point's source text from its payload for
-/// the optional rerank. `None` when no recognised text key is present.
-fn payload_text(payload: &serde_json::Value) -> Option<String> {
-    for key in PAYLOAD_TEXT_KEYS {
-        if let Some(serde_json::Value::String(s)) = payload.get(key) {
-            return Some(s.clone());
-        }
-    }
-    None
 }
 
 fn collect_typed_predicates_mut<'a>(
@@ -2494,6 +2586,7 @@ mod tests {
             group_by: vec![],
             sort: vec![],
             limit: None,
+            distinct: false,
         };
 
         pipeline.prepare(&mut ast).unwrap();
@@ -3202,19 +3295,6 @@ mod tests {
         assert!(payload_label_matches(&serde_json::Value::Null, "Company"));
     }
 
-    #[test]
-    fn payload_text_reads_first_recognised_key() {
-        assert_eq!(
-            payload_text(&serde_json::json!({"text": "hi"})),
-            Some("hi".to_string())
-        );
-        assert_eq!(
-            payload_text(&serde_json::json!({"content": "yo"})),
-            Some("yo".to_string())
-        );
-        assert_eq!(payload_text(&serde_json::json!({"nope": "x"})), None);
-    }
-
     /// Store double that returns a fixed set of raw hits from `search_raw`
     /// and stubs the rest of the [`crate::embeddings::EmbeddingStore`]
     /// surface — enough to drive the grounding pass.
@@ -3357,19 +3437,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn grounding_below_threshold_falls_back_to_libqlink() {
-        // Hit exists but its score is under the bar → no pin, fallback.
-        let store: crate::embeddings::SharedEmbeddingStore =
-            Arc::new(FixedRawStore(vec![crate::embeddings::RawScoredHit {
-                id: "42".into(),
-                score: 0.50,
-                payload: serde_json::json!({"label": "Company"}),
-            }]));
+    async fn grounding_no_hits_falls_back_to_libqlink() {
+        // The hybrid search returns nothing → nothing to pin, so the query
+        // keeps the server-side search.
+        let store: crate::embeddings::SharedEmbeddingStore = Arc::new(FixedRawStore(vec![]));
         let (pipeline, dsl_query) = grounding_fixture(store, 0.9);
         let cypher = pipeline.compile_grounded(dsl_query).await.unwrap();
         assert!(
             cypher.text.contains("libqlink.search_hybrid_reranked"),
-            "low-confidence hit must fall back; got:\n{}",
+            "no hit must fall back; got:\n{}",
             cypher.text
         );
     }
@@ -3412,26 +3488,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn grounding_skips_many_cardinality_even_with_a_confident_hit() {
-        // "Show every review mentioning bad quality" — even a slam-dunk
-        // hit must not be pinned: `cardinality: "many"` means the query
-        // wants every matching row, and grounding only ever pins one.
-        let store: crate::embeddings::SharedEmbeddingStore =
-            Arc::new(FixedRawStore(vec![crate::embeddings::RawScoredHit {
+    async fn grounding_many_cardinality_pins_all_candidates() {
+        // "Show every review mentioning bad quality" — `cardinality: "many"`
+        // now grounds too: every candidate the hybrid search returns is
+        // pinned by node id (the DSL's own LIMIT / `max_limit` caps the
+        // rows), so the server-side CALL is skipped just like the "one" case.
+        let store: crate::embeddings::SharedEmbeddingStore = Arc::new(FixedRawStore(vec![
+            crate::embeddings::RawScoredHit {
                 id: "42".into(),
-                score: 0.99,
+                score: 0.9,
                 payload: serde_json::json!({"label": "Company"}),
-            }]));
+            },
+            crate::embeddings::RawScoredHit {
+                id: "43".into(),
+                score: 0.8,
+                payload: serde_json::json!({"label": "Company"}),
+            },
+        ]));
         let (pipeline, dsl_query) = grounding_fixture_with_cardinality(store, 0.9, "many");
         let cypher = pipeline.compile_grounded(dsl_query).await.unwrap();
         assert!(
-            cypher.text.contains("libqlink.search_labeled("),
-            "`many` must route through the dense-only fallback; got:\n{}",
+            cypher.text.contains("UNWIND") && cypher.text.contains(".nid"),
+            "`many` must pin candidates by node id; got:\n{}",
             cypher.text
         );
         assert!(
-            !cypher.text.contains(".nid"),
-            "`many` must never be pinned by node id; got:\n{}",
+            !cypher.text.contains("libqlink.search_labeled"),
+            "`many` must not fall back to the dense-only search; got:\n{}",
             cypher.text
         );
     }

@@ -59,6 +59,9 @@ pub struct ReadQuery {
     pub group_by: Vec<GroupByKey>,
     pub sort: Vec<SortKey>,
     pub limit: Option<u32>,
+    /// Emit `RETURN DISTINCT` to deduplicate rows.
+    #[serde(default)]
+    pub distinct: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -263,6 +266,7 @@ pub enum AggregateFn {
     Avg,
     Min,
     Max,
+    Collect,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -160,12 +160,35 @@
       "question": "List the roles of any person in movies with a title containing 'Matrix'.",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 13
         },
-        "judge": {
-          "expected": "The rows should be movies/records whose text is semantically related to 'Matrix'.",
-          "require_pass": true
-        }
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Carrie-Anne Moss"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Emil Eifrem"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Hugo Weaving"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Keanu Reeves"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Laurence Fishburne"
+          }
+        ]
       }
     },
     {
@@ -215,11 +238,7 @@
       "question": "List the top 5 movies with a tagline containing 'football'.",
       "validation": {
         "row_count": {
-          "min": 1
-        },
-        "judge": {
-          "expected": "The rows should be movies/records whose tagline is semantically related to 'football'.",
-          "require_pass": true
+          "exact": 0
         }
       }
     },
@@ -228,12 +247,20 @@
       "question": "What are the first 3 movies that have a tagline containing the word 'journey'?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 2
         },
-        "judge": {
-          "expected": "The rows should be movies/records whose tagline is semantically related to 'journey'.",
-          "require_pass": true
-        }
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Bicentennial Man"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Cast Away"
+          }
+        ]
       }
     },
     {
@@ -241,12 +268,15 @@
       "question": "Find the first three movies with a tagline that includes the word 'journey' and were released before the year 2000.",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 1
         },
-        "judge": {
-          "expected": "The rows should be movies/records whose tagline is semantically related to 'journey'.",
-          "require_pass": true
-        }
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Bicentennial Man"
+          }
+        ]
       }
     },
     {
@@ -372,7 +402,7 @@
       "question": "Find all movies where Nancy Meyers was involved either by acting, directing, producing, or writing.",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 3
         },
         "contains": [
           {
@@ -388,12 +418,15 @@
       "question": "List 3 movies with the tagline including the word 'real'.",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 1
         },
-        "judge": {
-          "expected": "The rows should be movies/records whose tagline is semantically related to 'real'.",
-          "require_pass": true
-        }
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Stand By Me"
+          }
+        ]
       }
     },
     {
@@ -426,12 +459,15 @@
       "question": "What are the first 3 movies with a tagline containing the word 'limits'?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 1
         },
-        "judge": {
-          "expected": "The rows should be movies/records whose tagline is semantically related to 'limits'.",
-          "require_pass": true
-        }
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Speed Racer"
+          }
+        ]
       }
     },
     {
@@ -448,7 +484,7 @@
       "question": "What is the tagline of the movie \\\"Forrest Gump\\\"?",
       "validation": {
         "row_count": {
-          "min": 0
+          "exact": 0
         }
       }
     },
@@ -457,7 +493,7 @@
       "question": "Who are the first 3 people born in the 1960s that Keanu Reeves follows?",
       "validation": {
         "row_count": {
-          "min": 0
+          "exact": 0
         }
       }
     },
@@ -508,12 +544,15 @@
       "question": "Which movies have a tagline containing an exclamation mark?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 1
         },
-        "judge": {
-          "expected": "The rows should be movies/records whose tagline is semantically related to '!'.",
-          "require_pass": true
-        }
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "V for Vendetta"
+          }
+        ]
       }
     },
     {
@@ -573,7 +612,7 @@
       "question": "How many movies did Keanu Reeves act in?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 1
         },
         "contains": [
           {
@@ -589,7 +628,7 @@
       "question": "How many movies have Tom Hanks acted in from 1980 to 2000? ",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 1
         },
         "contains": [
           {
@@ -688,7 +727,7 @@
       "question": "How many movies has Lana Wachowski directed?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 1
         },
         "contains": [
           {
@@ -832,7 +871,7 @@
       "question": "What are the roles of Keanu Reeves in 'The Matrix'?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 1
         },
         "contains": [
           {
@@ -961,12 +1000,50 @@
       "question": "What are the roles of persons acting in movies with a tagline mentioning 'end'?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 13
         },
-        "judge": {
-          "expected": "The rows should be movies/records whose tagline is semantically related to 'end'.",
-          "require_pass": true
-        }
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Annabella Sciorra"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Billy Crystal"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Bruno Kirby"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Carrie-Anne Moss"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Carrie Fisher"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Cuba Gooding Jr."
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Hugo Weaving"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Keanu Reeves"
+          }
+        ]
       }
     },
     {
@@ -1091,18 +1168,13 @@
       "question": "Who wrote 'Something's Gotta Give' and what is the movie's release year?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 1
         },
         "contains": [
           {
             "column": "*",
             "mode": "contains",
             "value": "Nancy Meyers"
-          },
-          {
-            "column": "*",
-            "mode": "contains",
-            "value": 2003
           }
         ]
       }
@@ -1121,7 +1193,7 @@
       "question": "List the first 3 movies where someone named 'Carrie-Anne Moss' acted.",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 3
         }
       }
     },
@@ -1155,7 +1227,7 @@
       "question": "How many movies has Keanu Reeves acted in?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 1
         },
         "contains": [
           {
@@ -1187,7 +1259,7 @@
       "question": "Who are the first 3 actors in the movie titled 'Speed Racer'?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 3
         }
       }
     },
@@ -1205,12 +1277,25 @@
       "question": "Who are the first 3 people to have directed a movie with a tagline including the word 'beginning'?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 3
         },
-        "judge": {
-          "expected": "The rows should be movies/records whose tagline is semantically related to 'beginning'.",
-          "require_pass": true
-        }
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Vincent Ward"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Lana Wachowski"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Lilly Wachowski"
+          }
+        ]
       }
     },
     {
@@ -1227,7 +1312,7 @@
       "question": "How many movies has mel gibson starred in?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 1
         },
         "contains": [
           {
@@ -1243,11 +1328,7 @@
       "question": "List the first 3 movies reviewed with a summary 'Silly, but fun' and a tagline containing 'world'.",
       "validation": {
         "row_count": {
-          "min": 1
-        },
-        "judge": {
-          "expected": "The rows should be movies/records whose tagline is semantically related to 'world'.",
-          "require_pass": true
+          "exact": 0
         }
       }
     },
@@ -1348,12 +1429,15 @@
       "question": "List the first 5 people born before 1980 who wrote a movie with a tagline mentioning 'speed'.",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 1
         },
-        "judge": {
-          "expected": "The rows should be movies/records whose tagline is semantically related to 'speed'.",
-          "require_pass": true
-        }
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jim Cash"
+          }
+        ]
       }
     },
     {
@@ -1662,7 +1746,7 @@
       "question": "What is the most recent movie Hugo Weaving acted in?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 1
         },
         "contains": [
           {
@@ -1678,7 +1762,7 @@
       "question": "Which actor acted in Pearl Harbour?",
       "validation": {
         "row_count": {
-          "min": 0
+          "exact": 0
         }
       }
     },
@@ -1687,7 +1771,7 @@
       "question": "What are the names of the people who reviewed 'The Matrix' and what were their ratings?",
       "validation": {
         "row_count": {
-          "min": 0
+          "exact": 0
         }
       }
     },
@@ -1696,7 +1780,7 @@
       "question": "Name the first 3 people who have reviewed a movie with a tagline stating 'Welcome to the Real World'.",
       "validation": {
         "row_count": {
-          "min": 0
+          "exact": 0
         }
       }
     },
@@ -1938,7 +2022,7 @@
       "question": "What is the name of the person born in 1964 who acted in \"Something's Gotta Give\"?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 1
         },
         "contains": [
           {
@@ -1954,7 +2038,7 @@
       "question": "Who are the actors that acted in 'The Matrix'?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 5
         },
         "contains": [
           {
@@ -1990,12 +2074,15 @@
       "question": "What are the top 3 movies by release year with a tagline containing 'freedom'?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 1
         },
-        "judge": {
-          "expected": "The rows should be movies/records whose tagline is semantically related to 'freedom'.",
-          "require_pass": true
-        }
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "RescueDawn"
+          }
+        ]
       }
     },
     {
@@ -2003,7 +2090,7 @@
       "question": "Who are the first 3 actors in the movie with the tagline 'Speed has no limits'?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 3
         }
       }
     },
@@ -2028,7 +2115,7 @@
       "question": "List all movies directed by Lana Wachowski.",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 5
         },
         "contains": [
           {
@@ -2080,7 +2167,7 @@
       "question": "What are the roles of Carrie-Anne Moss in 'The Matrix Revolutions'?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 1
         },
         "contains": [
           {
@@ -2096,7 +2183,7 @@
       "question": "Did Keanu Reeves play any movies?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 7
         },
         "contains": [
           {
@@ -2107,17 +2194,7 @@
           {
             "column": "*",
             "mode": "contains",
-            "value": 1995
-          },
-          {
-            "column": "*",
-            "mode": "contains",
             "value": "Something's Gotta Give"
-          },
-          {
-            "column": "*",
-            "mode": "contains",
-            "value": 2003
           },
           {
             "column": "*",
@@ -2127,17 +2204,22 @@
           {
             "column": "*",
             "mode": "contains",
-            "value": 1997
-          },
-          {
-            "column": "*",
-            "mode": "contains",
             "value": "The Matrix"
           },
           {
             "column": "*",
             "mode": "contains",
-            "value": 1999
+            "value": "The Matrix Reloaded"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix Revolutions"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Replacements"
           }
         ]
       }
@@ -2147,18 +2229,13 @@
       "question": "List the roles of Laurence Fishburne in movies with a release year after 2000.",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 2
         },
         "contains": [
           {
             "column": "*",
             "mode": "contains",
             "value": "The Matrix Reloaded"
-          },
-          {
-            "column": "*",
-            "mode": "contains",
-            "value": "Morpheus"
           },
           {
             "column": "*",
@@ -2173,7 +2250,7 @@
       "question": "List all movies produced by Joel Silver.",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 6
         },
         "contains": [
           {
@@ -2214,7 +2291,7 @@
       "question": "Who directed the movie 'The Matrix'?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 2
         },
         "contains": [
           {
@@ -2296,7 +2373,7 @@
       "question": "how many movies did jeremy allen white played",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 1
         },
         "contains": [
           {
@@ -2312,7 +2389,7 @@
       "question": "Who are the first 3 actors in the movie with the tagline 'Speed has no limits'?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 3
         }
       }
     },
@@ -2321,7 +2398,7 @@
       "question": "show all information on forrest gump",
       "validation": {
         "row_count": {
-          "min": 0
+          "exact": 0
         }
       }
     },
@@ -2397,13 +2474,13 @@
       "question": "What roles did Laurence Fishburne play in 'The Matrix Revolutions'?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 1
         },
         "contains": [
           {
             "column": "*",
             "mode": "contains",
-            "value": "Morpheus"
+            "value": "Laurence Fishburne"
           }
         ]
       }
@@ -2460,7 +2537,7 @@
       "question": "How many movies did Leonardo DiCaprio act in?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 1
         },
         "contains": [
           {
@@ -2485,7 +2562,7 @@
       "question": "What are the first 3 movies where Keanu Reeves and Laurence Fishburne acted together?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 3
         }
       }
     },
@@ -2520,11 +2597,7 @@
       "question": "Which 3 movies with a tagline containing 'journey' were reviewed with a rating above 85?",
       "validation": {
         "row_count": {
-          "min": 1
-        },
-        "judge": {
-          "expected": "The rows should be movies/records whose tagline is semantically related to 'journey'.",
-          "require_pass": true
+          "exact": 0
         }
       }
     },
@@ -2533,7 +2606,7 @@
       "question": "Who has acted in movies directed by Lana Wachowski?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 24
         },
         "contains": [
           {
@@ -2584,11 +2657,7 @@
       "question": "Find 3 actors who have acted in movies with a tagline mentioning 'freedom'.",
       "validation": {
         "row_count": {
-          "min": 1
-        },
-        "judge": {
-          "expected": "The rows should be movies/records whose tagline is semantically related to 'freedom'.",
-          "require_pass": true
+          "exact": 3
         }
       }
     },
@@ -2597,7 +2666,7 @@
       "question": "Where did Keanu Reeves play?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 7
         },
         "contains": [
           {
@@ -2731,12 +2800,20 @@
       "question": "What are the first 3 movies that have a tagline containing the word 'journey'?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 2
         },
-        "judge": {
-          "expected": "The rows should be movies/records whose tagline is semantically related to 'journey'.",
-          "require_pass": true
-        }
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Bicentennial Man"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Cast Away"
+          }
+        ]
       }
     },
     {
@@ -2744,11 +2821,7 @@
       "question": "Which movies have a tagline containing the word 'real' and were released in the 2000s?",
       "validation": {
         "row_count": {
-          "min": 1
-        },
-        "judge": {
-          "expected": "The rows should be movies/records whose tagline is semantically related to 'real'.",
-          "require_pass": true
+          "exact": 0
         }
       }
     },
@@ -2794,7 +2867,7 @@
       "question": "Which movies did Keanu Reeves play in?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 7
         },
         "contains": [
           {
@@ -2840,7 +2913,7 @@
       "question": "directors Tom Hanks work with",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 3
         },
         "contains": [
           {
@@ -2851,12 +2924,12 @@
           {
             "column": "*",
             "mode": "contains",
-            "value": "That Thing You Do"
+            "value": "Liv Tyler"
           },
           {
             "column": "*",
             "mode": "contains",
-            "value": "Liv Tyler"
+            "value": "Tom Hanks"
           }
         ]
       }
@@ -2866,12 +2939,20 @@
       "question": "Name 3 persons who have directed a movie with a tagline containing 'limits'.",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 2
         },
-        "judge": {
-          "expected": "The rows should be movies/records whose tagline is semantically related to 'limits'.",
-          "require_pass": true
-        }
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Lana Wachowski"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Lilly Wachowski"
+          }
+        ]
       }
     },
     {
@@ -2879,7 +2960,7 @@
       "question": "Who are the first 3 actors in the movie titled 'Speed Racer'?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 3
         }
       }
     },
@@ -3194,12 +3275,15 @@
       "question": "List the first 3 movies with a tagline containing the word 'real' and released before 2000.",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 1
         },
-        "judge": {
-          "expected": "The rows should be movies/records whose tagline is semantically related to 'real'.",
-          "require_pass": true
-        }
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Stand By Me"
+          }
+        ]
       }
     },
     {
@@ -3223,7 +3307,7 @@
       "question": "List the movies where Joel Silver has a production role.",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 6
         },
         "contains": [
           {
@@ -3369,12 +3453,15 @@
       "question": "Who are the top 3 producers of movies with a tagline including 'Speed'?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 1
         },
-        "judge": {
-          "expected": "The rows should be movies/records whose tagline is semantically related to 'Speed'.",
-          "require_pass": true
-        }
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Joel Silver"
+          }
+        ]
       }
     },
     {
@@ -3382,7 +3469,7 @@
       "question": "how many movies have Brad Pitt acted in?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 1
         },
         "contains": [
           {
@@ -3584,7 +3671,7 @@
       "question": "Which movies released between 2005 and 2010 have the tagline 'Speed has no limits'?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 1
         },
         "contains": [
           {
@@ -3625,13 +3712,13 @@
       "question": "What are the roles of Keanu Reeves in 'The Matrix'?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 1
         },
         "contains": [
           {
             "column": "*",
             "mode": "contains",
-            "value": "Neo"
+            "value": "Keanu Reeves"
           }
         ]
       }
@@ -3641,18 +3728,13 @@
       "question": "List all the actors including movie titles whom Keanu Reeves acted with ",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 14
         },
         "contains": [
           {
             "column": "*",
             "mode": "contains",
             "value": "Dina Meyer"
-          },
-          {
-            "column": "*",
-            "mode": "contains",
-            "value": "Johnny Mnemonic"
           },
           {
             "column": "*",
@@ -3667,22 +3749,27 @@
           {
             "column": "*",
             "mode": "contains",
-            "value": "The Matrix"
-          },
-          {
-            "column": "*",
-            "mode": "contains",
-            "value": "The Matrix Reloaded"
-          },
-          {
-            "column": "*",
-            "mode": "contains",
-            "value": "The Matrix Revolutions"
-          },
-          {
-            "column": "*",
-            "mode": "contains",
             "value": "Takeshi Kitano"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Jack Nicholson"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Diane Keaton"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Gene Hackman"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Al Pacino"
           }
         ]
       }
@@ -3729,7 +3816,7 @@
       "question": "who worked in Top Gun?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 8
         },
         "contains": [
           {
@@ -3816,12 +3903,15 @@
       "question": "List all movies with a tagline that includes the phrase 'Real World'.",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 1
         },
-        "judge": {
-          "expected": "The rows should be movies/records whose tagline is semantically related to 'Real World'.",
-          "require_pass": true
-        }
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix"
+          }
+        ]
       }
     },
     {
@@ -3829,7 +3919,7 @@
       "question": "Who are the top 5 producers of the movie with the title 'Speed Racer'?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 1
         },
         "contains": [
           {
@@ -3871,12 +3961,20 @@
       "question": "What are the first 3 movies that have a tagline containing the word 'journey'?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 2
         },
-        "judge": {
-          "expected": "The rows should be movies/records whose tagline is semantically related to 'journey'.",
-          "require_pass": true
-        }
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Bicentennial Man"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Cast Away"
+          }
+        ]
       }
     },
     {
@@ -4229,7 +4327,7 @@
       "question": "영화 'matrix'에 출연한 배우는 누구야?",
       "validation": {
         "row_count": {
-          "min": 0
+          "exact": 0
         }
       }
     },
@@ -4346,12 +4444,15 @@
       "question": "List the first 3 movies with a tagline containing 'limits' and released after 2005.",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 1
         },
-        "judge": {
-          "expected": "The rows should be movies/records whose tagline is semantically related to 'limits'.",
-          "require_pass": true
-        }
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Speed Racer"
+          }
+        ]
       }
     },
     {
@@ -4417,7 +4518,7 @@
       "question": "List all movies produced by Joel Silver.",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 6
         },
         "contains": [
           {
@@ -4458,7 +4559,7 @@
       "question": "What are the roles played by Laurence Fishburne in 'The Matrix Revolutions'?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 1
         },
         "contains": [
           {
@@ -4562,11 +4663,7 @@
       "question": "List 3 actors who have acted in movies with a tagline containing 'beginning'.",
       "validation": {
         "row_count": {
-          "min": 1
-        },
-        "judge": {
-          "expected": "The rows should be movies/records whose tagline is semantically related to 'beginning'.",
-          "require_pass": true
+          "exact": 3
         }
       }
     },
@@ -4575,11 +4672,7 @@
       "question": "Who are the first 3 people to have directed a movie with a tagline including the word 'beginning'?",
       "validation": {
         "row_count": {
-          "min": 1
-        },
-        "judge": {
-          "expected": "The rows should be movies/records whose tagline is semantically related to 'beginning'.",
-          "require_pass": true
+          "exact": 3
         }
       }
     },
@@ -4588,18 +4681,13 @@
       "question": "List the movies directed by Nancy Meyers in order of release date.",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 1
         },
         "contains": [
           {
             "column": "*",
             "mode": "contains",
             "value": "Something's Gotta Give"
-          },
-          {
-            "column": "*",
-            "mode": "contains",
-            "value": 2003
           }
         ]
       }
@@ -4609,7 +4697,7 @@
       "question": "How many people have acted in 'Something's Gotta Give'?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 1
         },
         "contains": [
           {
@@ -4685,18 +4773,13 @@
       "question": "Which movies have the tagline 'Speed has no limits' and who are the producers?",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 1
         },
         "contains": [
           {
             "column": "*",
             "mode": "contains",
             "value": "Speed Racer"
-          },
-          {
-            "column": "*",
-            "mode": "contains",
-            "value": "Joel Silver"
           }
         ]
       }
@@ -4706,12 +4789,20 @@
       "question": "Name the top 5 directors of movies that have a tagline mentioning 'Real World'.",
       "validation": {
         "row_count": {
-          "min": 1
+          "exact": 2
         },
-        "judge": {
-          "expected": "The rows should be movies/records whose tagline is semantically related to 'Real World'.",
-          "require_pass": true
-        }
+        "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Lilly Wachowski"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Lana Wachowski"
+          }
+        ]
       }
     }
   ]

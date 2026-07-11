@@ -35,6 +35,10 @@ reranking_threshold = 0.3
 
 [types.SemanticText]
 embedding_model = "/home/df/.cache/huggingface/hub/models--gpustack--bge-m3-GGUF/snapshots/2d48f1737679ad900d5c26c5aad5410e9c70fdca/bge-m3-Q4_K_M.gguf"
+# Cross-encoder used to rerank grounding candidates for `cardinality: "one"`
+# (a single named entity). Without this the reranker is not attached and the
+# "one" pin falls back to the RRF fusion order.
+reranking_model = "/home/df/.cache/huggingface/hub/models--gpustack--bge-reranker-v2-m3-GGUF/snapshots/3093af03b1a635e67b084b1d8c03c5f5e020fd05/bge-reranker-v2-m3-Q4_K_M.gguf"
 collection = "linguagraph_e2e"
 top_k = 20
 threshold = 0.35

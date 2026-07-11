@@ -377,6 +377,23 @@ fn write_paths(
             })
         });
         let mut line = format!("  ({fa})-[{edge}:{}]->({ta})", rel.label);
+        // Advertise the relationship's own properties (e.g. `ACTED_IN` has
+        // `roles`, `REVIEWED` has `rating`/`summary`) so the model filters /
+        // projects them on the edge alias instead of guessing they live on
+        // an endpoint node.
+        let edge_props: Vec<String> = rel
+            .properties
+            .iter()
+            .filter(|p| !SCHEMA_HIDDEN_PROPS.contains(&p.name.as_str()))
+            .map(|p| {
+                let spec =
+                    property_spec(catalog, rel.domain.as_deref(), &rel.label, &p.name);
+                format!("{}: {}", p.name, render_type(p, spec))
+            })
+            .collect();
+        if !edge_props.is_empty() {
+            line.push_str(&format!("  {{{}}}", edge_props.join(", ")));
+        }
         if let Some(d) = desc.filter(|d| !d.is_empty()) {
             line.push_str(&format!("  — {d}"));
         }
@@ -531,10 +548,20 @@ const RULES: &str = r#"1. Use only the labels, properties, paths, and enum value
    nearest value — omit that filter.
 3. User-supplied values go only into filters[*].value, never into a field name.
 4. Prefer a direct property over a traversal when both express the same thing.
-5. Never sort, filter, or compare a [free-text] field. Use `contains` only.
-6. Superlatives -> sort. "top", "highest", "best", "largest", "most" -> desc;
-   "cheapest", "lowest", "smallest", "fewest" -> asc.
-   "top N" -> limit N; otherwise limit 20.
+5. Never sort or range-compare a [free-text] field or a `list` field. For a
+   [free-text] field use `contains` (semantic match); for a `list` field use
+   `contains` (element membership). A `list` value has no order, so it must
+   never appear in `sort` or in `eq`/`gt`/`lt`-style comparisons.
+6. Superlatives -> sort, never a fabricated filter. "top", "highest", "best",
+   "largest", "most", "newest", "latest", "youngest" -> desc; "cheapest",
+   "lowest", "smallest", "fewest", "oldest", "earliest" -> asc. For a person's
+   birth year, "youngest" = largest year -> desc, "oldest" = smallest -> asc.
+   Never invent a filter to express a superlative (e.g. do NOT write
+   `born = 0` for "oldest") — sort alone.
+   Set `limit` only when the question names a count: "top N" / "first N" /
+   "N X" -> limit N; a lone superlative ("the most", "which X has the highest")
+   -> limit 1. Otherwise OMIT `limit` — every matching row is returned (a
+   server-side safety cap bounds the result). Never add a default limit.
 7. Aggregation: every non-aggregated column in `return` must also appear in
    `group_by`; sort by the projected alias. For "by year"/"monthly", use the
    date_part object form in both `return` and `group_by`, not the raw datetime.
@@ -564,9 +591,9 @@ Assistant:
     { "field": "p.age", "op": "gt", "value": 30 },
     { "field": "friend.city", "op": "eq", "value": "Berlin" }
   ],
-  "return": [{ "field": "p.name", "alias": "name" }],
-  "limit": 25
+  "return": [{ "field": "p.name", "alias": "name" }]
 }
+// No count named -> no `limit`; all matching people are returned.
 
 User: "Total spend per customer for completed orders, top 10."
 Assistant:
@@ -609,11 +636,11 @@ Assistant:
     { "field": "r.text", "op": "contains",
       "value": "bad product quality", "cardinality": "many" }
   ],
-  "return": [{ "field": "r.text", "alias": "text" }],
-  "limit": 50
+  "return": [{ "field": "r.text", "alias": "text" }]
 }
 // Same op (`contains`) as above, opposite cardinality: the question asks
-// for every matching row, not the single best match.
+// for every matching row, not the single best match — and "every" names no
+// count, so no `limit`.
 
 User: "Найди клиента по описанию про складскую инфраструктуру."
 Assistant:

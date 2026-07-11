@@ -124,6 +124,28 @@ pub struct ScoredHit {
     pub payload: EmbeddingPayload,
 }
 
+/// A scored search result carrying the backend point id and its *raw*
+/// payload, without imposing the [`EmbeddingPayload`] shape.
+///
+/// [`ScoredHit`] assumes the ontology/entity payload schema this crate
+/// writes through [`EmbeddingStore::upsert`]. That doesn't fit points
+/// written by an *external* producer — in particular the qlink
+/// `_canonical` collection, whose points are keyed by the Memgraph node
+/// id and carry a qlink-defined `{text, label}` payload. `RawScoredHit`
+/// hands those back verbatim so the caller (the grounding pass) can do
+/// its own defensive extraction.
+#[derive(Debug, Clone)]
+pub struct RawScoredHit {
+    /// Point id exactly as the backend returned it. For the qlink
+    /// `_canonical` collection this is the stringified Memgraph node id
+    /// (an integer); for this crate's ontology points it is a UUID.
+    pub id: String,
+    pub score: f32,
+    /// Raw, backend-defined point payload. [`serde_json::Value::Null`]
+    /// when the backend returned no payload.
+    pub payload: serde_json::Value,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
     #[error("embedding store backend error: {0}")]
@@ -167,6 +189,30 @@ pub trait EmbeddingStore: Send + Sync + std::fmt::Debug {
         score_threshold: Option<f32>,
         filter: &EmbeddingFilter,
     ) -> Result<Vec<ScoredHit>, StoreError>;
+
+    /// Nearest-neighbour search that returns the raw point id + payload
+    /// (see [`RawScoredHit`]) rather than a typed [`EmbeddingPayload`].
+    ///
+    /// Used by the query-time *grounding* pass to search collections this
+    /// crate does **not** own the payload schema of — notably the qlink
+    /// `_canonical` collection, whose point ids are Memgraph node ids.
+    /// Unlike [`Self::search`] it applies no [`EmbeddingFilter`]: the
+    /// caller filters on the raw payload itself.
+    ///
+    /// The default implementation returns no hits, so a store that can't
+    /// serve raw points simply opts out of grounding (the query then
+    /// falls back to the server-side `libqlink` search). Backends that
+    /// can serve it — [`crate::db::QdrantClient`] — override this.
+    async fn search_raw(
+        &self,
+        collection: &str,
+        vector: &[f32],
+        limit: usize,
+        score_threshold: Option<f32>,
+    ) -> Result<Vec<RawScoredHit>, StoreError> {
+        let _ = (collection, vector, limit, score_threshold);
+        Ok(Vec::new())
+    }
 }
 
 /// A shared embedding store plus the collection/model it is addressed with.
@@ -367,7 +413,13 @@ mod tests {
         );
 
         let hits = store
-            .search("c", &vec3(1.0, 0.0, 0.0), 10, None, &EmbeddingFilter::default())
+            .search(
+                "c",
+                &vec3(1.0, 0.0, 0.0),
+                10,
+                None,
+                &EmbeddingFilter::default(),
+            )
             .await
             .unwrap();
         assert_eq!(hits.len(), 1);
@@ -413,7 +465,13 @@ mod tests {
 
         // Threshold drops the orthogonal vector.
         let hits = store
-            .search("c", &vec3(1.0, 0.0, 0.0), 10, Some(0.5), &EmbeddingFilter::default())
+            .search(
+                "c",
+                &vec3(1.0, 0.0, 0.0),
+                10,
+                Some(0.5),
+                &EmbeddingFilter::default(),
+            )
             .await
             .unwrap();
         assert_eq!(hits.len(), 1);

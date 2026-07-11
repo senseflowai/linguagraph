@@ -418,7 +418,7 @@ mod tests {
         let p = prop("id", PT::String, &["cat-1", "cat-2"]);
         let text = property_embedding_text("catalog", "Category", &p);
         assert!(text.contains("property: Category.id"));
-        assert!(text.contains("type: keyword"));
+        assert!(text.contains("type: string"));
         assert!(!text.contains("type: enum"));
         assert!(!text.contains("values:"));
     }

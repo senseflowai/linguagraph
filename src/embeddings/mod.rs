@@ -26,7 +26,7 @@ use thiserror::Error;
 pub use mock::MockEmbedder;
 pub use store::{
     ensure_indexed, point_id, EmbeddingFilter, EmbeddingIndex, EmbeddingKind, EmbeddingPayload,
-    EmbeddingStore, InMemoryEmbeddingStore, ScoredHit, StoreError, StoredEmbedding,
+    EmbeddingStore, InMemoryEmbeddingStore, RawScoredHit, ScoredHit, StoreError, StoredEmbedding,
 };
 
 #[cfg(feature = "llama")]

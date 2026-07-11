@@ -201,6 +201,26 @@
     {
       "id": "managed_editors_choice_price_drop",
       "question": "Какие Managed by Flippa и Editor's Choice листинги сильнее всего упали в цене?",
+      "dsl": {
+        "action": "find",
+        "start": { "label": "Listing", "alias": "l" },
+        "filters": [
+          { "field": "l.managed_by_flippa", "op": "eq", "value": true },
+          { "field": "l.editors_choice", "op": "eq", "value": true },
+          { "field": "l.price_dropped", "op": "eq", "value": true }
+        ],
+        "return": [
+          { "field": "l.id", "alias": "listing_id" },
+          { "field": "l.title", "alias": "title" },
+          { "field": "l.price", "alias": "price" },
+          { "field": "l.original_price", "alias": "original_price" },
+          { "field": "l.price_dropped_percent", "alias": "price_dropped_percent" }
+        ],
+        "sort": [
+          { "field": "l.price_dropped_percent", "order": "desc" }
+        ],
+        "limit": 10
+      },
       "validation": {
         "row_count": {
           "min": 5,
@@ -265,6 +285,36 @@
     {
       "id": "high_profit_under_offer",
       "question": "Какие 5 листингов с самой высокой profit_average одновременно имеют opportunity signal \"High monthly profit\" и risk flag \"Under offer\"? Покажи id, title, profit_average и price.",
+      "dsl": {
+        "action": "find",
+        "start": { "label": "Listing", "alias": "l" },
+        "traversals": [
+          {
+            "from": "l",
+            "edge": { "label": "HAS_OPPORTUNITY_SIGNAL", "alias": "e_os", "direction": "out" },
+            "target": { "label": "OpportunitySignal", "alias": "os" }
+          },
+          {
+            "from": "l",
+            "edge": { "label": "HAS_RISK_FLAG", "alias": "e_rf", "direction": "out" },
+            "target": { "label": "RiskFlag", "alias": "rf" }
+          }
+        ],
+        "filters": [
+          { "field": "os.name", "type": "Keyword", "op": "eq", "value": "High monthly profit" },
+          { "field": "rf.name", "type": "Keyword", "op": "eq", "value": "Under offer" }
+        ],
+        "return": [
+          { "field": "l.id", "alias": "listing_id" },
+          { "field": "l.title", "alias": "title" },
+          { "field": "l.profit_average", "alias": "profit_average" },
+          { "field": "l.price", "alias": "price" }
+        ],
+        "sort": [
+          { "field": "l.profit_average", "order": "desc" }
+        ],
+        "limit": 5
+      },
       "validation": {
         "row_count": {
           "exact": 5

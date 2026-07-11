@@ -264,6 +264,15 @@ pub struct Filter {
     /// how to validate the op + value and how to compile the predicate.
     #[serde(default, rename = "type", skip_serializing_if = "Option::is_none")]
     pub field_type: Option<String>,
+    /// Optional cardinality hint (`"one"` | `"many"`) for `SemanticText`
+    /// filters. Disambiguates what the `op` alone cannot: whether the
+    /// question names one specific entity (even via a fuzzy text/
+    /// description match) or asks for every matching item. Ignored by
+    /// filters that aren't folded into a `SemanticText` search; absent
+    /// means "infer from `op`" (`eq`/`neq` → one, everything else →
+    /// many) for backward compatibility.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cardinality: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -514,6 +523,7 @@ mod describe_tests {
             op: "eq".into(),
             value: json!("active"),
             field_type: None,
+            cardinality: None,
         }
     }
 
@@ -563,12 +573,14 @@ mod describe_tests {
                     op: "eq".into(),
                     value: json!("completed"),
                     field_type: None,
+                    cardinality: None,
                 },
                 Filter {
                     field: "o.total".into(),
                     op: "gte".into(),
                     value: json!(100),
                     field_type: None,
+                    cardinality: None,
                 },
             ],
             return_: vec![field_return("o.id")],
@@ -595,6 +607,7 @@ mod describe_tests {
                 op: "search".into(),
                 value: json!("invoice"),
                 field_type: Some("SemanticText".into()),
+                cardinality: None,
             }],
             return_: vec![field_return("d.title")],
             group_by: vec![],

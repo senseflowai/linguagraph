@@ -17,7 +17,8 @@ use uuid::Uuid;
 
 use crate::config::QdrantConfig;
 use crate::embeddings::{
-    EmbeddingFilter, EmbeddingPayload, EmbeddingStore, ScoredHit, StoreError, StoredEmbedding,
+    EmbeddingFilter, EmbeddingPayload, EmbeddingStore, RawScoredHit, ScoredHit, StoreError,
+    StoredEmbedding,
 };
 
 /// REST client for a Qdrant instance.
@@ -145,7 +146,10 @@ impl EmbeddingStore for QdrantClient {
         if points.is_empty() {
             return Ok(());
         }
-        let url = format!("{}/collections/{}/points?wait=true", self.base_url, collection);
+        let url = format!(
+            "{}/collections/{}/points?wait=true",
+            self.base_url, collection
+        );
         let pts: Vec<JsonValue> = points
             .iter()
             .map(|p| {
@@ -188,6 +192,40 @@ impl EmbeddingStore for QdrantClient {
                 let score = item["score"].as_f64().unwrap_or(0.0) as f32;
                 let payload = payload_from_json(&item["payload"])?;
                 hits.push(ScoredHit { score, payload });
+            }
+        }
+        Ok(hits)
+    }
+
+    async fn search_raw(
+        &self,
+        collection: &str,
+        vector: &[f32],
+        limit: usize,
+        score_threshold: Option<f32>,
+    ) -> Result<Vec<RawScoredHit>, StoreError> {
+        let url = format!("{}/collections/{}/points/search", self.base_url, collection);
+        // Ask for the payload but not the vector — the grounding pass only
+        // needs the point id (a Memgraph node id for the `_canonical`
+        // collection) plus whatever label/text the payload carries.
+        let mut body = json!({
+            "vector": vector,
+            "limit": limit,
+            "with_payload": true,
+        });
+        if let Some(t) = score_threshold {
+            body["score_threshold"] = json!(t);
+        }
+        let resp = self.send(self.http.post(&url).json(&body)).await?;
+        let mut hits = Vec::new();
+        if let Some(arr) = resp.get("result").and_then(JsonValue::as_array) {
+            for item in arr {
+                let Some(id) = point_id_string(&item["id"]) else {
+                    continue;
+                };
+                let score = item["score"].as_f64().unwrap_or(0.0) as f32;
+                let payload = item.get("payload").cloned().unwrap_or(JsonValue::Null);
+                hits.push(RawScoredHit { id, score, payload });
             }
         }
         Ok(hits)
@@ -295,10 +333,7 @@ mod tests {
 
     #[test]
     fn point_id_string_accepts_uuid_and_number() {
-        assert_eq!(
-            point_id_string(&json!("6a...")).as_deref(),
-            Some("6a...")
-        );
+        assert_eq!(point_id_string(&json!("6a...")).as_deref(), Some("6a..."));
         assert_eq!(point_id_string(&json!(42)).as_deref(), Some("42"));
     }
 

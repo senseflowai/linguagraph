@@ -23,7 +23,7 @@ max_tokens = 2048
 # similarity search used by query-driven prompt generation. Leave `url` empty
 # to fall back to an in-process embedding store.
 url = "http://127.0.0.1:6333"
-api_key_env = "QDRANT_API_KEY"
+#api_key_env = "QDRANT_API_KEY"
 timeout_secs = 30
 collection = "linguagraph_ontology"
 
@@ -44,3 +44,17 @@ embedding_dim = 1024
 [query]
 max_traversal_depth = 6
 default_limit = 50
+
+# Query-time grounding (entity linking). When enabled, a SemanticText
+# filter whose cardinality resolves to "one" is first resolved directly
+# against the `_canonical` collection in Qdrant (reusing the query
+# embedding); a high-confidence, same-label hit is pinned by node id in
+# the generated Cypher instead of running the server-side
+# `libqlink.search_hybrid_reranked`. Anything below the bar, or a "many"
+# filter, falls back to that search unchanged. Requires the [qdrant]
+# endpoint to hold the qlink-populated `_canonical` points. Off by default.
+[query.grounding]
+enabled = true
+threshold = 0.65   # min score to pin (rerank score when rerank = true, else cosine)
+fetch_k = 20      # candidates fetched from Qdrant before label-filter + threshold
+rerank = true    # rerank candidates with the SemanticText cross-encoder first

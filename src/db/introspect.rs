@@ -92,9 +92,7 @@ pub async fn introspect_schema(
         // that exceed the cardinality cap are left without a dictionary.
         if opts.enum_cardinality_cap > 0 {
             for prop in &mut properties {
-                if prop.ty != PropertyType::String
-                    || !is_enum_candidate_property_name(&prop.name)
-                {
+                if prop.ty != PropertyType::String || !is_enum_candidate_property_name(&prop.name) {
                     continue;
                 }
                 if let Some(values) = fetch_enum_values(

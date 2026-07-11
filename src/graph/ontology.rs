@@ -541,6 +541,10 @@ impl OntologyCatalog {
     pub fn project_schema(schema: &mut GraphSchema, domains: Vec<&DomainOntology>) {
         let source_nodes = schema.nodes.clone();
         let source_relationships = schema.relationships.clone();
+        let domain_names: BTreeSet<String> = domains
+            .iter()
+            .filter_map(|domain| domain.name().map(str::to_string))
+            .collect();
         let mut projected_nodes = Vec::new();
         let mut kept_node_keys = BTreeSet::new();
 
@@ -549,10 +553,9 @@ impl OntologyCatalog {
                 continue;
             };
             for spec in &domain.entity_types {
-                let Some(source_node) = source_nodes
-                    .iter()
-                    .find(|node| node.label == spec.name && node_matches_domain(node, domain_name))
-                else {
+                let Some(source_node) = source_nodes.iter().find(|node| {
+                    node.label == spec.name && node_matches_domain(node, domain_name, &domain_names)
+                }) else {
                     continue;
                 };
 
@@ -614,10 +617,22 @@ impl OntologyCatalog {
     }
 }
 
-fn node_matches_domain(node: &crate::prompt::NodeKind, domain_name: &str) -> bool {
+fn node_matches_domain(
+    node: &crate::prompt::NodeKind,
+    domain_name: &str,
+    known_domains: &BTreeSet<String>,
+) -> bool {
     match node.domain.as_deref() {
         Some(domain) => domain == domain_name,
-        None => node.extra_labels.iter().any(|label| label == domain_name),
+        None => {
+            if node.extra_labels.iter().any(|label| label == domain_name) {
+                return true;
+            }
+            !node
+                .extra_labels
+                .iter()
+                .any(|label| known_domains.contains(label))
+        }
     }
 }
 
@@ -1085,6 +1100,65 @@ mod tests {
         assert_eq!(rel.label, "LOCATED_AT");
         assert_eq!(rel.domain.as_deref(), Some("camera"));
         assert_eq!(rel.description, None);
+    }
+
+    #[test]
+    fn project_schema_keeps_unscoped_nodes_for_e2e_prefix_labels() {
+        use crate::prompt::{NodeKind, RelKind};
+
+        let mut cat = OntologyCatalog::default();
+        cat.insert(
+            "camera_domain",
+            DomainOntology {
+                name: None,
+                description: None,
+                entity_types: vec![EntityTypeSpec::new("Camera"), EntityTypeSpec::new("Place")],
+                relation_types: vec![RelationTypeSpec::with_description(
+                    "LOCATED_AT",
+                    "Camera to place",
+                )],
+            },
+        );
+
+        let mut schema = GraphSchema {
+            nodes: vec![
+                NodeKind {
+                    label: "Camera".into(),
+                    domain: None,
+                    extra_labels: vec!["E2E_CAMERAS_BASIC".into()],
+                    scopes: Vec::new(),
+                    description: None,
+                    properties: Vec::new(),
+                },
+                NodeKind {
+                    label: "Place".into(),
+                    domain: None,
+                    extra_labels: vec!["E2E_CAMERAS_BASIC".into()],
+                    scopes: Vec::new(),
+                    description: None,
+                    properties: Vec::new(),
+                },
+            ],
+            relationships: vec![RelKind {
+                label: "LOCATED_AT".into(),
+                domain: None,
+                description: None,
+                from: Some("Camera".into()),
+                to: Some("Place".into()),
+                properties: Vec::new(),
+            }],
+        };
+
+        OntologyCatalog::project_schema(&mut schema, cat.all_domains());
+
+        let labels: Vec<&str> = schema
+            .nodes
+            .iter()
+            .map(|node| node.label.as_str())
+            .collect();
+        assert_eq!(labels, vec!["Camera", "Place"]);
+        assert_eq!(schema.relationships.len(), 1);
+        assert_eq!(schema.relationships[0].label, "LOCATED_AT");
     }
 
     #[test]

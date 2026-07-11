@@ -43,6 +43,9 @@ pub enum AstError {
     #[error("typed op '{op}' is not supported by type '{ty}'")]
     UnsupportedTypedOp { ty: String, op: String },
 
+    #[error("filter cardinality '{0}' must be 'one' or 'many'")]
+    BadCardinality(String),
+
     #[error("type system error: {0}")]
     Type(#[from] TypeError),
 }
@@ -212,12 +215,68 @@ fn lower_direction(d: d::Direction) -> Direction {
     }
 }
 
+/// Whether a folded `SemanticText` group names one specific entity or
+/// asks for every matching item. `op` alone can't tell these apart — a
+/// free-text `contains` can mean either "the one row whose description
+/// says this" or "every row that mentions this" — so this is threaded
+/// through as its own axis, sourced from an explicit DSL `cardinality`
+/// hint when the model gives one, or inferred from `op` otherwise.
+/// Consumed by query-time grounding (skip pinning / rerank for `Many`)
+/// and by `SemanticTextHandler::emit` (dense-only recall for `Many`,
+/// full hybrid+rerank for `One`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Cardinality {
+    One,
+    Many,
+}
+
+impl Cardinality {
+    fn as_str(self) -> &'static str {
+        match self {
+            Cardinality::One => "one",
+            Cardinality::Many => "many",
+        }
+    }
+
+    fn parse(s: &str) -> Option<Self> {
+        match s {
+            "one" => Some(Cardinality::One),
+            "many" => Some(Cardinality::Many),
+            _ => None,
+        }
+    }
+}
+
+/// Merge a second `cardinality` hint into the group's running value.
+/// Absent hints defer to whatever is already known; two conflicting
+/// explicit hints resolve to `Many` — the safe direction, since an
+/// extra row is recoverable but one dropped by an over-eager pin isn't.
+fn merge_cardinality_hint(
+    existing: Option<Cardinality>,
+    incoming: Option<Cardinality>,
+) -> Option<Cardinality> {
+    match (existing, incoming) {
+        (None, x) => x,
+        (x, None) => x,
+        (Some(a), Some(b)) if a == b => Some(a),
+        _ => Some(Cardinality::Many),
+    }
+}
+
 /// One entity alias's accumulated SemanticText filter terms, awaiting
 /// consolidation into a single [`TypedOp::EntitySearch`] predicate.
 struct SemGroup {
     alias: String,
     label: String,
     terms: Vec<(Option<String>, String)>,
+    /// Explicit `cardinality` hint carried by any folded term so far.
+    /// Wins over `all_singular_op` below when present.
+    cardinality_hint: Option<Cardinality>,
+    /// True as long as every folded term came from an `eq` filter — i.e.
+    /// the query names one specific entity by value rather than asking
+    /// for a fuzzy/broader match. Fallback signal when no term states
+    /// `cardinality` explicitly.
+    all_singular_op: bool,
 }
 
 /// SemanticText ops that fold into one consolidated per-entity hybrid
@@ -293,12 +352,28 @@ fn lower_filters(
                 if is_foldable_entity_op(op) {
                     let term = semantic_text_term_value(op, &f.value)?;
                     let alias = field.alias.as_str();
+                    let is_eq = op == TypedOp::Eq;
+                    let explicit_cardinality = f
+                        .cardinality
+                        .as_deref()
+                        .map(|s| {
+                            Cardinality::parse(s)
+                                .ok_or_else(|| AstError::BadCardinality(s.to_string()))
+                        })
+                        .transpose()?;
                     match semantic_groups.iter_mut().find(|g| g.alias == alias) {
-                        Some(g) => g.terms.push((field.property.clone(), term)),
+                        Some(g) => {
+                            g.terms.push((field.property.clone(), term));
+                            g.all_singular_op = g.all_singular_op && is_eq;
+                            g.cardinality_hint =
+                                merge_cardinality_hint(g.cardinality_hint, explicit_cardinality);
+                        }
                         None => semantic_groups.push(SemGroup {
                             alias: alias.to_string(),
                             label: label.clone(),
                             terms: vec![(field.property.clone(), term)],
+                            all_singular_op: is_eq,
+                            cardinality_hint: explicit_cardinality,
                         }),
                     }
                     continue;
@@ -376,7 +451,16 @@ fn lower_filters(
             field_label: Some(group.label.as_str()),
             prefix_index,
         };
-        let typed = handler.lower(&mut ctx)?;
+        let mut typed = handler.lower(&mut ctx)?;
+        let cardinality = group.cardinality_hint.unwrap_or(if group.all_singular_op {
+            Cardinality::One
+        } else {
+            Cardinality::Many
+        });
+        typed.params.insert(
+            "cardinality".to_string(),
+            Literal::String(cardinality.as_str().to_string()),
+        );
         preds.push(FilterExpression::Typed(typed));
     }
 
@@ -765,4 +849,58 @@ fn enforce_aggregation_rules(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod cardinality_tests {
+    use super::*;
+
+    #[test]
+    fn parse_accepts_only_one_and_many() {
+        assert_eq!(Cardinality::parse("one"), Some(Cardinality::One));
+        assert_eq!(Cardinality::parse("many"), Some(Cardinality::Many));
+        assert_eq!(Cardinality::parse("ONE"), None);
+        assert_eq!(Cardinality::parse("single"), None);
+        assert_eq!(Cardinality::parse(""), None);
+    }
+
+    #[test]
+    fn merge_hint_defers_to_whichever_side_is_set() {
+        assert_eq!(merge_cardinality_hint(None, None), None);
+        assert_eq!(
+            merge_cardinality_hint(None, Some(Cardinality::One)),
+            Some(Cardinality::One)
+        );
+        assert_eq!(
+            merge_cardinality_hint(Some(Cardinality::Many), None),
+            Some(Cardinality::Many)
+        );
+    }
+
+    #[test]
+    fn merge_hint_agreeing_explicit_hints_stay_put() {
+        assert_eq!(
+            merge_cardinality_hint(Some(Cardinality::One), Some(Cardinality::One)),
+            Some(Cardinality::One)
+        );
+        assert_eq!(
+            merge_cardinality_hint(Some(Cardinality::Many), Some(Cardinality::Many)),
+            Some(Cardinality::Many)
+        );
+    }
+
+    #[test]
+    fn merge_hint_conflict_resolves_to_the_safe_many_direction() {
+        // An extra row is recoverable; a row dropped by an over-eager
+        // pin isn't — so a genuine disagreement between two terms in
+        // the same folded group must not silently commit to `One`.
+        assert_eq!(
+            merge_cardinality_hint(Some(Cardinality::One), Some(Cardinality::Many)),
+            Some(Cardinality::Many)
+        );
+        assert_eq!(
+            merge_cardinality_hint(Some(Cardinality::Many), Some(Cardinality::One)),
+            Some(Cardinality::Many)
+        );
+    }
 }

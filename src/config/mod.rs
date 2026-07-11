@@ -305,6 +305,12 @@ pub struct QueryConfig {
     pub max_traversal_depth: u32,
     #[serde(default = "default_limit")]
     pub default_limit: u32,
+    /// Query-time *grounding* (entity linking): before compiling a
+    /// SemanticText filter to the server-side `libqlink` hybrid search,
+    /// try to resolve the filter to concrete node ids by searching the
+    /// `_canonical` collection directly. See [`GroundingConfig`].
+    #[serde(default)]
+    pub grounding: GroundingConfig,
 }
 
 impl Default for QueryConfig {
@@ -312,6 +318,7 @@ impl Default for QueryConfig {
         Self {
             max_traversal_depth: default_max_depth(),
             default_limit: default_limit(),
+            grounding: GroundingConfig::default(),
         }
     }
 }
@@ -321,6 +328,71 @@ fn default_max_depth() -> u32 {
 }
 fn default_limit() -> u32 {
     100
+}
+
+/// Query-time grounding (`[query.grounding]` in TOML).
+///
+/// When enabled and the pipeline has a prefetch store pointed at the same
+/// Qdrant that qlink writes to, [`crate::core::Pipeline::run`] resolves
+/// each consolidated SemanticText filter against the `_canonical`
+/// collection *client-side* before building Cypher. High-confidence hits
+/// (score `>= threshold`, after an optional rerank) are pinned as the
+/// single concrete node id in the generated Cypher, replacing the
+/// `libqlink` hybrid search for that alias. Anything below the bar
+/// leaves the query untouched, so it falls back to the existing
+/// server-side search.
+///
+/// Only ever applies to a filter whose resolved `cardinality` (see
+/// [`crate::resolve::ast`]) is "one" — i.e. the question names a single
+/// specific entity. A "many" filter (asking for every matching row)
+/// always skips grounding and goes through the uncapped server-side
+/// search instead, since pinning by node id would truncate a
+/// genuinely-multi-row answer.
+///
+/// Off by default: grounding only makes sense when the direct Qdrant
+/// endpoint holds the qlink-populated `_canonical` points, which is a
+/// deployment property this crate can't assume.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GroundingConfig {
+    /// Master switch. Off by default.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Minimum score a hit must clear to be pinned. Compared against the
+    /// rerank score when reranking is on, otherwise the cosine score.
+    /// High by design — grounding should only fire when we're confident
+    /// the filter maps to a specific known entity.
+    #[serde(default = "default_grounding_threshold")]
+    pub threshold: f32,
+    /// How many candidates to fetch from Qdrant before label-filtering,
+    /// thresholding and reranking. Only the single best surviving
+    /// candidate is ever pinned, but a wider fetch still leaves enough
+    /// right-label candidates after a shared collection is label-filtered.
+    #[serde(default = "default_grounding_fetch_k")]
+    pub fetch_k: usize,
+    /// Rerank the fetched candidates with the pipeline's cross-encoder
+    /// (when one is attached and every candidate carries payload text)
+    /// before thresholding. Off by default — the dense score already
+    /// gates on `threshold`.
+    #[serde(default)]
+    pub rerank: bool,
+}
+
+impl Default for GroundingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            threshold: default_grounding_threshold(),
+            fetch_k: default_grounding_fetch_k(),
+            rerank: false,
+        }
+    }
+}
+
+fn default_grounding_threshold() -> f32 {
+    0.9
+}
+fn default_grounding_fetch_k() -> usize {
+    20
 }
 
 /// Ontology catalog settings. The catalog is used to annotate prompts,

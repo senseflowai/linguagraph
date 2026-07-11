@@ -13,6 +13,7 @@
 //! * [`llama::LlamaEmbedder`] — feature-gated wrapper around
 //!   `llama-cpp-2`. Loads a GGUF embedding model once and reuses it.
 
+pub mod bm25;
 pub mod mock;
 pub mod store;
 

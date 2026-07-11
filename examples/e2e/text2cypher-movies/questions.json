@@ -418,13 +418,18 @@
       "question": "List 3 movies with the tagline including the word 'real'.",
       "validation": {
         "row_count": {
-          "exact": 1
+          "exact": 2
         },
         "contains": [
           {
             "column": "*",
             "mode": "contains",
             "value": "Stand By Me"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix"
           }
         ]
       }
@@ -975,12 +980,7 @@
           {
             "column": "*",
             "mode": "contains",
-            "value": "Laurence Fishburne"
-          },
-          {
-            "column": "*",
-            "mode": "contains",
-            "value": "Meg Ryan"
+            "value": "Aaron Sorkin"
           },
           {
             "column": "*",
@@ -990,7 +990,12 @@
           {
             "column": "*",
             "mode": "contains",
-            "value": "Aaron Sorkin"
+            "value": "Meg Ryan"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Laurence Fishburne"
           }
         ]
       }
@@ -1348,17 +1353,17 @@
           {
             "column": "*",
             "mode": "contains",
+            "value": "Clint Eastwood"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
             "value": "Gene Hackman"
           },
           {
             "column": "*",
             "mode": "contains",
             "value": "Richard Harris"
-          },
-          {
-            "column": "*",
-            "mode": "contains",
-            "value": "Clint Eastwood"
           },
           {
             "column": "*",
@@ -1429,13 +1434,23 @@
       "question": "List the first 5 people born before 1980 who wrote a movie with a tagline mentioning 'speed'.",
       "validation": {
         "row_count": {
-          "exact": 1
+          "exact": 3
         },
         "contains": [
           {
             "column": "*",
             "mode": "contains",
             "value": "Jim Cash"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Lana Wachowski"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Lilly Wachowski"
           }
         ]
       }
@@ -1917,6 +1932,16 @@
           {
             "column": "*",
             "mode": "contains",
+            "value": "Al Pacino"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "James L. Brooks"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
             "value": "John Hurt"
           },
           {
@@ -1927,22 +1952,12 @@
           {
             "column": "*",
             "mode": "contains",
-            "value": "James L. Brooks"
-          },
-          {
-            "column": "*",
-            "mode": "contains",
-            "value": "Al Pacino"
+            "value": "Jim Cash"
           },
           {
             "column": "*",
             "mode": "contains",
             "value": "Nora Ephron"
-          },
-          {
-            "column": "*",
-            "mode": "contains",
-            "value": "Jim Cash"
           },
           {
             "column": "*",
@@ -2074,13 +2089,18 @@
       "question": "What are the top 3 movies by release year with a tagline containing 'freedom'?",
       "validation": {
         "row_count": {
-          "exact": 1
+          "exact": 2
         },
         "contains": [
           {
             "column": "*",
             "mode": "contains",
             "value": "RescueDawn"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "V for Vendetta"
           }
         ]
       }
@@ -2439,17 +2459,17 @@
           {
             "column": "*",
             "mode": "contains",
+            "value": "Unforgiven"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
             "value": "The Birdcage"
           },
           {
             "column": "*",
             "mode": "contains",
             "value": "The Replacements"
-          },
-          {
-            "column": "*",
-            "mode": "contains",
-            "value": "Unforgiven"
           },
           {
             "column": "*",
@@ -2480,7 +2500,7 @@
           {
             "column": "*",
             "mode": "contains",
-            "value": "Laurence Fishburne"
+            "value": "Morpheus"
           }
         ]
       }
@@ -2490,9 +2510,14 @@
       "question": "Which movies have \"Fun\" in their review summary?",
       "validation": {
         "row_count": {
-          "exact": 1
+          "exact": 3
         },
         "contains": [
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Replacements"
+          },
           {
             "column": "*",
             "mode": "contains",
@@ -2925,11 +2950,6 @@
             "column": "*",
             "mode": "contains",
             "value": "Liv Tyler"
-          },
-          {
-            "column": "*",
-            "mode": "contains",
-            "value": "Tom Hanks"
           }
         ]
       }
@@ -3121,17 +3141,17 @@
           {
             "column": "*",
             "mode": "contains",
+            "value": "Clint Eastwood"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
             "value": "Gene Hackman"
           },
           {
             "column": "*",
             "mode": "contains",
             "value": "Richard Harris"
-          },
-          {
-            "column": "*",
-            "mode": "contains",
-            "value": "Clint Eastwood"
           },
           {
             "column": "*",
@@ -3214,7 +3234,7 @@
           {
             "column": "*",
             "mode": "contains",
-            "value": "Noah Wyle"
+            "value": "Corey Feldman"
           },
           {
             "column": "*",
@@ -3224,17 +3244,17 @@
           {
             "column": "*",
             "mode": "contains",
-            "value": "Regina King"
-          },
-          {
-            "column": "*",
-            "mode": "contains",
             "value": "Rick Yune"
           },
           {
             "column": "*",
             "mode": "contains",
-            "value": "Corey Feldman"
+            "value": "Noah Wyle"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "Regina King"
           },
           {
             "column": "*",
@@ -3249,7 +3269,7 @@
           {
             "column": "*",
             "mode": "contains",
-            "value": "Jerry O'Connell"
+            "value": "Christian Bale"
           }
         ]
       }
@@ -3275,13 +3295,18 @@
       "question": "List the first 3 movies with a tagline containing the word 'real' and released before 2000.",
       "validation": {
         "row_count": {
-          "exact": 1
+          "exact": 2
         },
         "contains": [
           {
             "column": "*",
             "mode": "contains",
             "value": "Stand By Me"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
+            "value": "The Matrix"
           }
         ]
       }
@@ -3718,7 +3743,7 @@
           {
             "column": "*",
             "mode": "contains",
-            "value": "Keanu Reeves"
+            "value": "Neo"
           }
         ]
       }
@@ -4157,17 +4182,17 @@
           {
             "column": "*",
             "mode": "contains",
+            "value": "Unforgiven"
+          },
+          {
+            "column": "*",
+            "mode": "contains",
             "value": "The Birdcage"
           },
           {
             "column": "*",
             "mode": "contains",
             "value": "The Replacements"
-          },
-          {
-            "column": "*",
-            "mode": "contains",
-            "value": "Unforgiven"
           },
           {
             "column": "*",

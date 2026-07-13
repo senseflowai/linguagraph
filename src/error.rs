@@ -41,6 +41,12 @@ pub enum Error {
     #[error("LLM error: {0}")]
     Llm(#[from] crate::llm::LlmError),
 
+    #[error("NL translation error: {0}")]
+    Nl(#[from] crate::nl::NlError),
+
+    #[error("Explorer error: {0}")]
+    Explore(#[from] crate::explore::ExploreError),
+
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 

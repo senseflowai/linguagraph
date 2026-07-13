@@ -560,6 +560,7 @@ mod describe_tests {
             group_by: vec![],
             sort: vec![],
             limit: None,
+            distinct: false,
             prefix_label: None,
             prefix_index: None,
         };
@@ -595,6 +596,7 @@ mod describe_tests {
             group_by: vec![],
             sort: vec![],
             limit: None,
+            distinct: false,
             prefix_label: None,
             prefix_index: None,
         };
@@ -621,6 +623,7 @@ mod describe_tests {
             group_by: vec![],
             sort: vec![],
             limit: None,
+            distinct: false,
             prefix_label: None,
             prefix_index: None,
         };
@@ -645,6 +648,7 @@ mod describe_tests {
             group_by: vec![],
             sort: vec![],
             limit: None,
+            distinct: false,
             prefix_label: None,
             prefix_index: None,
         };
@@ -665,6 +669,7 @@ mod describe_tests {
             group_by: vec![],
             sort: vec![],
             limit: Some(10),
+            distinct: false,
             prefix_label: None,
             prefix_index: None,
         };

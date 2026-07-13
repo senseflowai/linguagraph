@@ -244,6 +244,8 @@ pub enum Command {
         #[arg(long)]
         prefix_index: Option<String>,
     },
+    /// Browse the knowledge graph: entities, relations, NL questions.
+    Explore(super::explore::ExploreArgs),
 }
 
 pub async fn run(cli: Cli) -> Result<()> {
@@ -320,12 +322,13 @@ pub async fn run(cli: Cli) -> Result<()> {
         } => {
             cmd_delete_by_source(&cli.config, source, prefix_label, prefix_index, spec_cache).await
         }
+        Command::Explore(args) => super::explore::cmd_explore(&cli.config, args).await,
     }
 }
 
 /// Build a [`SharedRegistry`] from `cfg`. Always returns a registry
 /// (possibly empty) so callers can pass it through unconditionally.
-fn build_registry(cfg: &Config) -> Result<(SharedRegistry, Option<SharedEmbedder>)> {
+pub(crate) fn build_registry(cfg: &Config) -> Result<(SharedRegistry, Option<SharedEmbedder>)> {
     let dim = cfg
         .types
         .get("SemanticText")
@@ -351,7 +354,7 @@ fn build_registry(cfg: &Config) -> Result<(SharedRegistry, Option<SharedEmbedder
 /// Build the embedding store for ontology/entity vectors. Returns a Qdrant
 /// client when the `qdrant` feature is on and `[qdrant].url` is set,
 /// otherwise an in-process store (tests, or deployments without Qdrant).
-fn build_embedding_store(cfg: &Config) -> Result<SharedEmbeddingStore> {
+pub(crate) fn build_embedding_store(cfg: &Config) -> Result<SharedEmbeddingStore> {
     #[cfg(feature = "qdrant")]
     if !cfg.qdrant.url.trim().is_empty() {
         let client = crate::db::QdrantClient::connect(&cfg.qdrant).map_err(|e| {
@@ -366,7 +369,7 @@ fn build_embedding_store(cfg: &Config) -> Result<SharedEmbeddingStore> {
     Ok(Arc::new(InMemoryEmbeddingStore::new()))
 }
 
-fn build_ontology_catalog_embedder(cfg: &Config) -> Result<SharedEmbedder> {
+pub(crate) fn build_ontology_catalog_embedder(cfg: &Config) -> Result<SharedEmbedder> {
     embeddings::default_embedder(
         cfg.ontology_catalog.embedding_model.as_deref(),
         cfg.ontology_catalog.embedding_dim,
@@ -430,19 +433,21 @@ async fn cmd_cypher(
     Ok(())
 }
 
-async fn cmd_run(
-    config_path: &std::path::Path,
-    path: PathBuf,
+/// Assemble the full production query pipeline the way `run` does:
+/// Memgraph client, type registry, ontology-catalog cache, optional
+/// SemanticText reranker and grounding store, catalog loaded. Shared by
+/// the query-executing subcommands (`run`, `explore`, …).
+pub(crate) async fn build_query_pipeline(
+    cfg: &Config,
     prefix_label: Option<String>,
     prefix_index: Option<String>,
-) -> Result<()> {
-    let cfg = config::load(config_path).await?;
+) -> Result<Pipeline> {
     let client = MemgraphClient::connect(&cfg.database).await?;
-    let (registry, embedder) = build_registry(&cfg)?;
+    let (registry, embedder) = build_registry(cfg)?;
     let spec_storage: Arc<dyn OntologyCatalogStorage> = Arc::new(
         JsonFileOntologyCatalogStorage::new(&cfg.ontology_catalog.cache_path),
     );
-    let mut pipeline = Pipeline::new(Arc::new(client), &cfg)
+    let mut pipeline = Pipeline::new(Arc::new(client), cfg)
         .with_registry(registry)
         .with_ontology_catalog_storage(spec_storage)
         .with_prefix_label(prefix_label)
@@ -453,7 +458,7 @@ async fn cmd_run(
     // When a cross-encoder reranker model is configured for SemanticText,
     // attach it so semantic search reranks candidates in-process instead
     // of inside Memgraph (`libqlink.search_hybrid_reranked`).
-    if let Some(reranker) = build_semantic_text_reranker(&cfg)? {
+    if let Some(reranker) = build_semantic_text_reranker(cfg)? {
         pipeline = pipeline.with_reranker(reranker);
     }
     // Query-time grounding: attach the direct Qdrant store so SemanticText
@@ -461,9 +466,20 @@ async fn cmd_run(
     // Gated on the config flag so a disabled deployment never opens the
     // extra connection.
     if cfg.query.grounding.enabled {
-        pipeline = pipeline.with_prefetch_store(build_embedding_store(&cfg)?);
+        pipeline = pipeline.with_prefetch_store(build_embedding_store(cfg)?);
     }
     pipeline.load_ontology_catalog().await?;
+    Ok(pipeline)
+}
+
+async fn cmd_run(
+    config_path: &std::path::Path,
+    path: PathBuf,
+    prefix_label: Option<String>,
+    prefix_index: Option<String>,
+) -> Result<()> {
+    let cfg = config::load(config_path).await?;
+    let pipeline = build_query_pipeline(&cfg, prefix_label, prefix_index).await?;
     let dsl_query = dsl::parse(&path).await?;
     let result = pipeline.run(dsl_query).await?;
     print_query_result_table(&result);
@@ -614,7 +630,7 @@ fn print_query_result_table(result: &QueryResult) {
     println!("{}", query_result_table(result));
 }
 
-fn query_result_table(result: &QueryResult) -> String {
+pub(crate) fn query_result_table(result: &QueryResult) -> String {
     let columns = query_result_columns(result);
     if columns.is_empty() {
         return "(no rows)".into();

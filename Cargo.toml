@@ -62,6 +62,10 @@ uuid = { version = "1", features = ["v4", "v5"] }
 # HTTP-free; the CLI enables it by default.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
 
+# Line editing + history for the interactive `explore repl` shell. Gated
+# behind the `repl` feature so library consumers stay dependency-free.
+rustyline = { version = "14", optional = true }
+
 [dev-dependencies]
 pretty_assertions = "1.4"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
@@ -75,7 +79,9 @@ openai = ["dep:reqwest"]
 qdrant = ["dep:reqwest"]
 # Derive `utoipa::ToSchema` on public ontology types for OpenAPI consumers.
 utoipa = ["dep:utoipa"]
-default = ["llama", "openai", "qdrant"]
+# Interactive `explore repl` shell (rustyline line editing + history).
+repl = ["dep:rustyline"]
+default = ["llama", "openai", "qdrant", "repl"]
 
 [profile.release]
 lto = "thin"

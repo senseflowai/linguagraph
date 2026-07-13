@@ -1,7 +1,9 @@
 //! In-memory test double for [`GraphClient`].
 //!
-//! Stores a queue of canned responses; each call to [`execute`] pops the
-//! next one. Anything beyond the queued responses returns an empty result.
+//! Stores a stack of canned responses; each call to [`execute`] pops the
+//! most recently enqueued one (LIFO), so multi-query tests enqueue in
+//! **reverse call order**. Anything beyond the queued responses returns
+//! an empty result.
 
 use std::sync::Mutex;
 

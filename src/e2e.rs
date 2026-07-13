@@ -19,12 +19,11 @@ use crate::config::{self, Config};
 use crate::core::Pipeline;
 use crate::db::{GraphClient, MemgraphClient, QueryResult, Value as DbValue};
 use crate::dsl::{self, DslQuery, TraversalQuery};
-use crate::embeddings::{
-    self, EmbeddingIndex, InMemoryEmbeddingStore, SharedEmbedder, SharedEmbeddingStore,
-};
+use crate::embeddings::{self, InMemoryEmbeddingStore, SharedEmbedder, SharedEmbeddingStore};
 use crate::graph::{Graph, GraphBuilder, OntologyCatalog, OntologyCatalogStorage, PrimaryKey};
 use crate::llm::LlmClient;
-use crate::prompt::{self, PromptOptions};
+use crate::nl::{self, NlTranslator};
+use crate::prompt;
 use crate::types::{self, SharedRegistry};
 
 /// Runtime options supplied by the `linguagraph-e2e` binary.
@@ -440,14 +439,14 @@ pub async fn run_suite(opts: E2eRunOptions) -> anyhow::Result<E2eReport> {
     );
 
     let llm = build_llm_client(&cfg)?;
-    let prompt_reranker = pipeline.reranker();
     let schema = pipeline.live_schema(&[prefix.as_str()]).await?;
-    let prompt_opts = PromptOptions {
-        include_examples: true,
-        reranking_model: prompt_reranker,
-        type_registry: Some((*registry).clone()),
-        ..PromptOptions::default()
-    };
+    let translator = NlTranslator::from_config(
+        &cfg,
+        llm.clone(),
+        prompt_embedder.clone(),
+        embedding_store.clone(),
+    )
+    .with_max_repairs(settings.max_repairs);
 
     let mut case_reports = Vec::with_capacity(questions.len());
     for case in questions {
@@ -455,18 +454,9 @@ pub async fn run_suite(opts: E2eRunOptions) -> anyhow::Result<E2eReport> {
         let report = run_case(
             &case,
             &pipeline,
-            llm.clone(),
+            &translator,
             &schema,
-            &prompt_opts,
             catalog.as_ref(),
-            prompt_embedder.as_ref(),
-            embedding_store.as_ref(),
-            &cfg.qdrant.collection,
-            cfg.ontology_catalog
-                .embedding_model
-                .as_deref()
-                .unwrap_or("mock"),
-            &cfg.ontology_catalog,
             &prefix,
             &settings,
         )
@@ -510,18 +500,13 @@ pub async fn run_suite(opts: E2eRunOptions) -> anyhow::Result<E2eReport> {
 async fn run_case(
     case: &QuestionCase,
     pipeline: &Pipeline,
-    llm: Arc<dyn LlmClient>,
+    translator: &NlTranslator,
     schema: &prompt::GraphSchema,
-    prompt_opts: &PromptOptions,
     catalog: &OntologyCatalog,
-    prompt_embedder: &dyn embeddings::Embedder,
-    embedding_store: &dyn embeddings::EmbeddingStore,
-    prompt_collection: &str,
-    prompt_model: &str,
-    ontology_cfg: &config::OntologyCatalogConfig,
     prefix: &str,
     settings: &SuiteSettings,
 ) -> E2eCaseReport {
+    let llm = translator.llm();
     let mut errors = Vec::new();
     let mut dsl_json = None;
     let mut traversal_json = None;
@@ -593,7 +578,7 @@ async fn run_case(
         ));
 
         if settings.answer_with_llm || !case.validation.answer_contains.is_empty() {
-            match synthesize_traversal_answer(llm.clone(), &case.question, &traversal, &rows).await
+            match synthesize_traversal_answer(translator, &case.question, &traversal, &rows).await
             {
                 Ok(text) => {
                     errors.extend(validate_answer_contains(
@@ -642,23 +627,11 @@ async fn run_case(
 
     let dsl_result = match &case.dsl {
         Some(static_dsl) => parse_case_dsl(static_dsl.clone(), prefix),
-        None => {
-            generate_case_dsl(
-                llm.clone(),
-                &case.question,
-                schema,
-                prompt_opts,
-                catalog,
-                prompt_embedder,
-                embedding_store,
-                prompt_collection,
-                prompt_model,
-                ontology_cfg,
-                prefix,
-                settings.max_repairs,
-            )
+        None => translator
+            .question_to_dsl(&case.question, schema, catalog, Some(prefix), Some(prefix))
             .await
-        }
+            .map(|generation| generation.dsl)
+            .map_err(anyhow::Error::from),
     };
 
     let dsl = match dsl_result {
@@ -700,7 +673,7 @@ async fn run_case(
     let compiled = match pipeline.compile_for_run(dsl.clone()).await {
         Ok(query) => {
             cypher = Some(query.text.clone());
-            cypher_params = Some(mask_cypher_params(
+            cypher_params = Some(nl::mask_cypher_params(
                 &query.params,
                 settings.include_embeddings_in_report,
             ));
@@ -754,7 +727,7 @@ async fn run_case(
     ));
 
     if settings.answer_with_llm || !case.validation.answer_contains.is_empty() {
-        match synthesize_answer(llm.clone(), &case.question, &dsl, &rows).await {
+        match synthesize_answer(translator, &case.question, &dsl, &rows).await {
             Ok(text) => {
                 errors.extend(validate_answer_contains(
                     &case.validation.answer_contains,
@@ -826,103 +799,6 @@ async fn load_questions(path: &Path) -> anyhow::Result<Vec<QuestionCase>> {
     let questions: Vec<QuestionCase> = serde_json::from_str(&raw)
         .with_context(|| format!("parse questions {}", path.display()))?;
     Ok(questions)
-}
-
-fn mask_cypher_params(
-    params: &BTreeMap<String, crate::ast::query::Literal>,
-    include_embeddings: bool,
-) -> BTreeMap<String, JsonValue> {
-    params
-        .iter()
-        .map(|(name, value)| {
-            let json = literal_to_json(value);
-            let masked = if include_embeddings {
-                json
-            } else if is_masked_embedding_name(name) {
-                masked_embedding_value(&json)
-            } else {
-                sanitize_report_json(json, true)
-            };
-            (name.clone(), masked)
-        })
-        .collect()
-}
-
-fn is_masked_embedding_name(name: &str) -> bool {
-    let name = name.to_ascii_lowercase();
-    name.contains("embedding")
-        || name == "emb"
-        || name == "vec"
-        || name == "vecs"
-        || name.ends_with("_emb")
-        || name.ends_with("_vec")
-        || name.ends_with("_embedding")
-}
-
-fn masked_embedding_value(value: &JsonValue) -> JsonValue {
-    match value {
-        JsonValue::Array(items) if items.iter().all(JsonValue::is_number) => {
-            JsonValue::String(format!("<masked embedding len={}>", items.len()))
-        }
-        JsonValue::Array(items) if items.iter().all(JsonValue::is_array) => {
-            JsonValue::String(format!("<masked embedding matrix rows={}>", items.len()))
-        }
-        JsonValue::Array(items) => {
-            JsonValue::String(format!("<masked embedding array len={}>", items.len()))
-        }
-        _ => JsonValue::String("<masked embedding>".to_string()),
-    }
-}
-
-fn sanitize_report_json(value: JsonValue, mask_positional_numeric_vectors: bool) -> JsonValue {
-    match value {
-        JsonValue::Array(items) if mask_positional_numeric_vectors && is_numeric_vector(&items) => {
-            masked_embedding_value(&JsonValue::Array(items))
-        }
-        JsonValue::Array(items) => JsonValue::Array(
-            items
-                .into_iter()
-                .map(|value| sanitize_report_json(value, mask_positional_numeric_vectors))
-                .collect(),
-        ),
-        JsonValue::Object(map) => JsonValue::Object(
-            map.into_iter()
-                .map(|(key, value)| {
-                    let value = if is_masked_embedding_name(&key) {
-                        masked_embedding_value(&value)
-                    } else {
-                        sanitize_report_json(value, mask_positional_numeric_vectors)
-                    };
-                    (key, value)
-                })
-                .collect(),
-        ),
-        other => other,
-    }
-}
-
-fn is_numeric_vector(items: &[JsonValue]) -> bool {
-    items.len() >= 16 && items.iter().all(JsonValue::is_number)
-}
-
-fn literal_to_json(literal: &crate::ast::query::Literal) -> JsonValue {
-    match literal {
-        crate::ast::query::Literal::String(s) => JsonValue::String(s.clone()),
-        crate::ast::query::Literal::Bool(b) => JsonValue::Bool(*b),
-        crate::ast::query::Literal::Int(i) => JsonValue::Number((*i).into()),
-        crate::ast::query::Literal::Float(f) => serde_json::Number::from_f64(*f)
-            .map(JsonValue::Number)
-            .unwrap_or(JsonValue::Null),
-        crate::ast::query::Literal::List(items) => {
-            JsonValue::Array(items.iter().map(literal_to_json).collect())
-        }
-        crate::ast::query::Literal::Object(map) => JsonValue::Object(
-            map.iter()
-                .map(|(key, value)| (key.clone(), literal_to_json(value)))
-                .collect(),
-        ),
-        crate::ast::query::Literal::Null => JsonValue::Null,
-    }
 }
 
 fn resolve_suite_path(suite_dir: &Path, path: PathBuf) -> PathBuf {
@@ -1146,142 +1022,14 @@ fn first_usize(result: &QueryResult, column: &str) -> usize {
 
 fn parse_case_dsl(value: JsonValue, prefix: &str) -> anyhow::Result<DslQuery> {
     let mut dsl: DslQuery = serde_json::from_value(value).context("parse static DSL")?;
-    force_prefix(&mut dsl, prefix);
-    dsl::parse_str(&serde_json::to_string(&dsl)?).context("validate static DSL")
-}
-
-async fn generate_case_dsl(
-    llm: Arc<dyn LlmClient>,
-    question: &str,
-    schema: &prompt::GraphSchema,
-    prompt_opts: &PromptOptions,
-    catalog: &OntologyCatalog,
-    prompt_embedder: &dyn embeddings::Embedder,
-    embedding_store: &dyn embeddings::EmbeddingStore,
-    prompt_collection: &str,
-    prompt_model: &str,
-    ontology_cfg: &config::OntologyCatalogConfig,
-    prefix: &str,
-    max_repairs: usize,
-) -> anyhow::Result<DslQuery> {
-    embedding_store
-        .ensure(prompt_collection, prompt_embedder.dim())
-        .await
-        .map_err(|e| anyhow!("embedding store: {e}"))?;
-    let index = EmbeddingIndex {
-        store: embedding_store,
-        collection: prompt_collection,
-        model: prompt_model,
-    };
-    let params = prompt::QueryPromptParams {
-        domain_threshold: ontology_cfg.domain_selection_threshold,
-        domain_top_k: ontology_cfg.domain_selection_top_k,
-        selection: prompt::QuerySelectionParams {
-            entity_threshold: ontology_cfg.entity_selection_threshold,
-            property_threshold: ontology_cfg.property_selection_threshold,
-            neighbor_hops: ontology_cfg.selection_neighbor_hops,
-            ..prompt::QuerySelectionParams::default()
-        },
-        include_examples: prompt_opts.include_examples,
-    };
-    let mut schema = schema.clone();
-    let system = prompt::generate_query_prompt(
-        question,
-        &mut schema,
-        catalog,
-        prompt_embedder,
-        &index,
-        &params,
-    )
-    .await
-    .map_err(|e| anyhow!("query prompt generation failed: {e}"))?;
-    let mut user = format!(
-        "Question:\n{question}\n\nReturn only one JSON DSL object. Do not wrap it in Markdown."
-    );
-    let mut last_output = String::new();
-    let mut last_error = String::new();
-
-    for attempt in 0..=max_repairs {
-        let raw = llm
-            .complete(&system, &user)
-            .await
-            .map_err(|e| anyhow!("LLM DSL generation failed: {e}"))?;
-        last_output = raw.clone();
-        match extract_json_object(&raw)
-            .and_then(|json| serde_json::from_str::<DslQuery>(&json).map_err(|e| e.into()))
-            .and_then(|mut dsl| {
-                force_prefix(&mut dsl, prefix);
-                dsl::parse_str(&serde_json::to_string(&dsl)?).map_err(|e| e.into())
-            }) {
-            Ok(dsl) => return Ok(dsl),
-            Err(err) => {
-                last_error = err.to_string();
-                if attempt < max_repairs {
-                    user = format!(
-                        "Repair the JSON DSL for this question.\n\nQuestion:\n{question}\n\n\
-                         Previous output:\n{last_output}\n\nValidation error:\n{last_error}\n\n\
-                         Return only the corrected JSON object."
-                    );
-                }
-            }
-        }
-    }
-
-    bail!("could not produce valid DSL: {last_error}; last output: {last_output}")
-}
-
-fn force_prefix(dsl: &mut DslQuery, prefix: &str) {
     dsl.prefix_label = Some(prefix.to_string());
     dsl.prefix_index = Some(prefix.to_string());
+    dsl::parse_str(&serde_json::to_string(&dsl)?).context("validate static DSL")
 }
 
 fn force_traversal_prefix(traversal: &mut TraversalQuery, prefix: &str) {
     traversal.prefix_label = Some(prefix.to_string());
     traversal.prefix_index = Some(prefix.to_string());
-}
-
-fn extract_json_object(raw: &str) -> anyhow::Result<String> {
-    if serde_json::from_str::<JsonValue>(raw).is_ok() {
-        return Ok(raw.trim().to_string());
-    }
-
-    let mut start = None;
-    let mut depth = 0_i32;
-    let mut in_string = false;
-    let mut escape = false;
-    for (idx, ch) in raw.char_indices() {
-        if in_string {
-            if escape {
-                escape = false;
-            } else if ch == '\\' {
-                escape = true;
-            } else if ch == '"' {
-                in_string = false;
-            }
-            continue;
-        }
-
-        match ch {
-            '"' => in_string = true,
-            '{' => {
-                if start.is_none() {
-                    start = Some(idx);
-                }
-                depth += 1;
-            }
-            '}' if start.is_some() => {
-                depth -= 1;
-                if depth == 0 {
-                    let s = &raw[start.unwrap()..=idx];
-                    serde_json::from_str::<JsonValue>(s)
-                        .with_context(|| format!("invalid extracted JSON: {s}"))?;
-                    return Ok(s.to_string());
-                }
-            }
-            _ => {}
-        }
-    }
-    bail!("LLM output did not contain a JSON object")
 }
 
 fn validate_result(
@@ -1606,16 +1354,18 @@ fn compare_number(actual: f64, op: NumericOp, expected: f64) -> bool {
 }
 
 async fn synthesize_answer(
-    llm: Arc<dyn LlmClient>,
+    translator: &NlTranslator,
     question: &str,
     dsl: &DslQuery,
     rows: &[BTreeMap<String, JsonValue>],
 ) -> anyhow::Result<String> {
-    synthesize_answer_with_summary(llm, question, dsl.describe(), rows).await
+    Ok(translator
+        .synthesize_answer(question, &dsl.describe(), rows)
+        .await?)
 }
 
 async fn synthesize_traversal_answer(
-    llm: Arc<dyn LlmClient>,
+    translator: &NlTranslator,
     question: &str,
     traversal: &TraversalQuery,
     rows: &[BTreeMap<String, JsonValue>],
@@ -1632,26 +1382,7 @@ async fn synthesize_traversal_answer(
         entities,
         traversal.limit
     );
-    synthesize_answer_with_summary(llm, question, summary, rows).await
-}
-
-async fn synthesize_answer_with_summary(
-    llm: Arc<dyn LlmClient>,
-    question: &str,
-    query_summary: String,
-    rows: &[BTreeMap<String, JsonValue>],
-) -> anyhow::Result<String> {
-    let system = "Answer the user's question using only the supplied graph query rows. \
-                  Be concise. If the rows are empty, say that the data does not contain the answer.";
-    let user = json!({
-        "question": question,
-        "query_summary": query_summary,
-        "rows": rows,
-    });
-    let answer = llm
-        .complete(system, &serde_json::to_string_pretty(&user)?)
-        .await?;
-    Ok(answer.trim().to_string())
+    Ok(translator.synthesize_answer(question, &summary, rows).await?)
 }
 
 async fn judge_answer(
@@ -1673,7 +1404,7 @@ async fn judge_answer(
     let raw = llm
         .complete(system, &serde_json::to_string_pretty(&user)?)
         .await?;
-    let json = extract_json_object(&raw)?;
+    let json = nl::extract_json_object(&raw)?;
     let value: JsonValue = serde_json::from_str(&json)?;
     let passed = value
         .get("passed")
@@ -1702,10 +1433,10 @@ fn result_rows_json(
                     let value = db_value_to_json(v);
                     let value = if include_embeddings {
                         value
-                    } else if is_masked_embedding_name(k) {
-                        masked_embedding_value(&value)
+                    } else if nl::is_masked_embedding_name(k) {
+                        nl::masked_embedding_value(&value)
                     } else {
-                        sanitize_report_json(value, false)
+                        nl::sanitize_report_json(value, false)
                     };
                     (k.clone(), value)
                 })
@@ -1752,7 +1483,6 @@ fn json_value_text(value: &JsonValue) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::query::Literal;
     use crate::dsl::{Action, DslQuery, Filter, NodePattern};
     use serde_json::json;
 
@@ -1776,6 +1506,7 @@ mod tests {
             group_by: Vec::new(),
             sort: Vec::new(),
             limit: None,
+            distinct: false,
             prefix_label: None,
             prefix_index: None,
         };
@@ -1821,45 +1552,6 @@ mod tests {
         }];
 
         assert!(validate_expected_rows(&spec, &result).is_empty());
-    }
-
-    #[test]
-    fn mask_cypher_params_hides_embedding_vector() {
-        let params = BTreeMap::from([
-            (
-                "embedding".into(),
-                Literal::List(vec![Literal::Float(1.0), Literal::Float(2.0)]),
-            ),
-            ("limit".into(), Literal::Int(10)),
-        ]);
-
-        let masked = mask_cypher_params(&params, false);
-        assert_eq!(
-            masked.get("embedding"),
-            Some(&json!("<masked embedding len=2>"))
-        );
-        assert_eq!(masked.get("limit"), Some(&json!(10)));
-    }
-
-    #[test]
-    fn mask_cypher_params_hides_positional_embedding_vectors() {
-        let params = BTreeMap::from([
-            (
-                "p2".into(),
-                Literal::List((0..32).map(|i| Literal::Float(i as f64)).collect()),
-            ),
-            (
-                "ids".into(),
-                Literal::List(vec![
-                    Literal::String("a".into()),
-                    Literal::String("b".into()),
-                ]),
-            ),
-        ]);
-
-        let masked = mask_cypher_params(&params, false);
-        assert_eq!(masked.get("p2"), Some(&json!("<masked embedding len=32>")));
-        assert_eq!(masked.get("ids"), Some(&json!(["a", "b"])));
     }
 
     #[test]

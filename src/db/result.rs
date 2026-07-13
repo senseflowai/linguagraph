@@ -21,6 +21,21 @@ pub enum Value {
     Json(serde_json::Value),
 }
 
+impl Value {
+    /// Flatten the cell into plain JSON (scalars map 1:1, `Json` passes
+    /// through).
+    pub fn to_json(&self) -> serde_json::Value {
+        match self {
+            Value::Null => serde_json::Value::Null,
+            Value::Bool(v) => serde_json::Value::Bool(*v),
+            Value::Int(v) => serde_json::Value::from(*v),
+            Value::Float(v) => serde_json::Value::from(*v),
+            Value::String(v) => serde_json::Value::from(v.clone()),
+            Value::Json(v) => v.clone(),
+        }
+    }
+}
+
 /// High-level kind of a graph node referenced by a result column.
 ///
 /// The Cypher builder tags each [`Column`] it emits with the kind of the

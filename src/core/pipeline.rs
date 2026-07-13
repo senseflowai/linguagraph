@@ -1436,6 +1436,16 @@ impl Pipeline {
         &self.semantic_collection
     }
 
+    /// Fully-qualified qlink collection holding entity `_canonical`
+    /// embeddings, prefix-index scoping applied — the collection the
+    /// explorer's semantic entity search queries.
+    pub(crate) fn canonical_entity_collection(&self) -> String {
+        with_prefix_index(
+            self.prefix_index.as_deref(),
+            &format!("{}__{}", self.semantic_collection, "_canonical"),
+        )
+    }
+
     /// Drain the side-effect queue. Currently handles
     /// [`SideEffect::EmbedAndStore`].
     ///
@@ -1854,8 +1864,9 @@ fn traversal_result_columns(include_rerank: bool) -> Vec<crate::db::Column> {
 /// Build the vector-retrieval Cypher: one UNION ALL branch per entity
 /// name (against the `_canonical` collection) plus one branch for the
 /// goal vector (against the `text` collection). Each branch yields
-/// `(nid, score, leg)` rows.
-fn build_traversal_search_cypher(
+/// `(nid, score, leg)` rows. Shared with the explorer's semantic
+/// entity-search channel.
+pub(crate) fn build_traversal_search_cypher(
     entity_collection: &str,
     entity_vecs: &[Vec<f32>],
     chunk_collection: &str,

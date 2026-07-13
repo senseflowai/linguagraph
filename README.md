@@ -10,11 +10,13 @@ structural validation, lowering to a typed AST, compilation to Cypher with bound
 parameters, and execution through an `async` Bolt driver.
 
 The crate is equal parts query compiler and graph toolkit. Alongside the read
-path it ships data ingestion (mapping-driven and graph-JSON), live schema
-introspection, schema-aware prompt generation, a pluggable field-type system
-with built-in semantic and hybrid vector search, and a traversal retrieval
-pipeline for RAG-style chunk lookups. The same layered design runs through all
-of it: every stage has its own types, its own error type, and its own tests.
+path it ships graph-JSON data ingestion, live schema introspection,
+schema-aware prompt generation, a reusable NL front-end (question → DSL,
+rows → answer), a business-facing graph explorer with a CLI/REPL, a pluggable
+field-type system with built-in semantic and hybrid vector search, and a
+traversal retrieval pipeline for RAG-style chunk lookups. The same layered
+design runs through all of it: every stage has its own types, its own error
+type, and its own tests.
 
 ```
 natural language ──▶ LLM ──▶ JSON DSL ──▶ AST ──▶ Cypher (+ params) ──▶ Memgraph
@@ -70,11 +72,14 @@ Around that core it can also:
 - **Introspect a live graph.** The `schema` command samples a running Memgraph
   instance and reports node labels, relationship types and inferred property
   types as JSON or as a ready-to-use prompt.
-- **Ingest data.** Two ingestion paths write into the graph: a *mapping-driven*
-  path that lifts arbitrary structured JSON into typed entities and relations
-  via a declarative JSONPath mapping, and a *graph-JSON* path that ingests a
-  compact `{entities, relations}` document directly. Both run through the same
-  planner, which emits deterministic, idempotent `MERGE` batches.
+- **Ingest data.** A compact `{entities, relations}` graph-JSON document (or a
+  programmatically built `Graph`) goes through a planner that emits
+  deterministic, idempotent `MERGE` batches.
+- **Explore the graph.** A business-facing explorer (`explore::Explorer`)
+  browses entities, walks relations, filters by type, and answers
+  natural-language questions with the executed query, a result table and a
+  displayable subgraph — exposed 1:1 as `linguagraph explore` subcommands and
+  an interactive REPL. See [Graph explorer](#graph-explorer).
 - **Search semantically.** The pluggable type system ships a `SemanticText`
   type that integrates with [qlink](https://github.com/senseflowai/qlink). Each
   entity's text is embedded once into a per-entity `_canonical` document; the
@@ -112,10 +117,14 @@ model code.
   [qlink](https://github.com/senseflowai/qlink) for vector + hybrid search;
   add your own (`GeoLocation`, `Keyword`, `ImageEmbedding`) without touching
   the core. See [Pluggable type system](#pluggable-type-system).
-- **Two ingestion paths.** Mapping-driven (`ingest-json`) lifts structured JSON
-  into the graph through a declarative mapping; graph-JSON (`ingest-graph`)
-  ingests a compact `{entities, relations}` document directly. Both emit
-  deterministic, idempotent `MERGE` batches.
+- **Graph-JSON ingestion.** `ingest-graph` ingests a compact
+  `{entities, relations}` document directly, emitting deterministic,
+  idempotent `MERGE` batches.
+- **Graph explorer.** `explore::Explorer` + the `explore` CLI/REPL: NL
+  questions with full query traces, entity inspection with classified
+  properties and provenance, hop-by-hop traversal, keyword + semantic search,
+  timelines and round-trippable subgraph export — all as JSON-serializable
+  DTOs a downstream UI can consume verbatim.
 - **Soft-merge by embedding similarity.** Knowledge-extraction payloads arrive
   without a stable primary key. `linguagraph` synthesises a deterministic
   `_canonical` text from each entity's type + properties and defaults to
@@ -149,19 +158,20 @@ src/
 ├── builder/    AST → Cypher (split into match/where/return parts)
 ├── db/         GraphClient trait, Memgraph (neo4rs) impl, mock impl
 ├── config/     TOML loader with env overrides
-├── prompt/     LLM prompt generation (query prompts + knowledge-extract prompts,
-│               domain-scoped ontologies loaded from JSON)
-├── promptgen/  JSON → mapping-authoring prompt
+├── prompt/     LLM prompt generation (full + query-tailored compact prompts)
+├── llm/        provider-agnostic LlmClient trait (+ OpenAI-compatible client)
 ├── types/      pluggable field-type system (registry, handlers)
 ├── embeddings/ Embedder trait + mock + llama-cpp-2 backend
-├── graph/      owned graph model, GraphBuilder, graph specification
-├── mapper/     declarative JSON → entity-row extraction
+├── graph/      owned graph model, GraphBuilder, ontology catalog
 ├── ingest/     graph → InsertQuery planner with side-effect queue
+├── nl/         NL front-end: question → DSL translation, answer synthesis
 ├── core/       Pipeline orchestration (wires the layers together)
-├── cli/        clap-based CLI
+├── explore/    business-facing graph browser (Explorer facade + JSON DTOs)
+├── cli/        clap-based CLI (incl. `explore` subcommands + REPL)
+├── e2e.rs      end-to-end test-kit (LLM → DSL → Memgraph suites)
 └── error.rs    crate-wide Error / Result
 tests/          integration tests (no live DB required)
-examples/       sample DSL JSON, mappings, usage notes
+examples/       sample DSL JSON, graph fixtures, e2e suites
 ```
 
 Anything user-facing — the CLI, the integration tests — goes through
@@ -190,7 +200,7 @@ whole contract:
   semantic search.
 
 The legacy spellings `String` (→ `Keyword`) and `SemanticText` (→ `Text`) are
-still accepted on input for backward compatibility, but new mappings and
+still accepted on input for backward compatibility, but new fixtures and
 ontologies should use `Keyword` / `Text`.
 
 ### `Text` under the hood: the `SemanticText` handler
@@ -212,14 +222,12 @@ reranking_threshold = 0.3
 embedding_dim   = 384
 ```
 
-Tag a property in the mapping:
+Tag a property as `Text` in graph-JSON (`{"type": "Text", "value": …}`) or
+in the ontology catalog (`"property_type": "Text"`):
 
 ```json
-{
-  "name": "name",
-  "source_path": "$.companies[*].name",
-  "type": "Text"
-}
+{ "id": "acme", "type": "Company",
+  "name": { "type": "Text", "value": "Acme Corp" } }
 ```
 
 The field's raw value stays on the node (so `eq` / `neq` / `contains` are
@@ -319,8 +327,8 @@ docker run -p 7687:7687 memgraph/memgraph-platform
 Create a `config.toml` in the working directory (see
 [Configuration](#configuration) for every field) or override individual values
 with `LINGUAGRAPH__SECTION__FIELD=...` environment variables. Commands that
-don't touch the database — `dsl`, `cypher`, `generate-prompt`,
-`knowledge-prompt` — fall back to safe defaults when no config file is present.
+don't touch the database — `dsl`, `cypher` — fall back to safe defaults when
+no config file is present.
 
 ### 4. Build
 
@@ -342,6 +350,11 @@ cargo run -- run examples/find_people.json --config config.toml
 
 # Print a schema-aware system prompt for an LLM
 cargo run -- prompt --schema schema.json
+
+# Ingest a graph fixture, then browse it
+cargo run -- ingest-graph examples/e2e/text2cypher-movies/graph.json --prefix-label DEMO
+cargo run -- explore --prefix-label DEMO overview
+cargo run -- explore --prefix-label DEMO repl
 ```
 
 ## The DSL
@@ -352,7 +365,7 @@ cargo run -- prompt --schema schema.json
   "start":  { "label": "<NodeLabel>", "alias": "<ident>" },
   "traversals": [
     {
-      "edge":   { "label": "<RelLabel>", "alias": "<ident>", "direction": "out|in|both" },
+      "edge":   { "label": "<RelLabel>[|<RelLabel>…]", "alias": "<ident>", "direction": "out|in|both" },
       "target": { "label": "<NodeLabel>", "alias": "<ident>" },
       "depth":  { "min": 1, "max": 3 }
     }
@@ -363,11 +376,13 @@ cargo run -- prompt --schema schema.json
   ],
   "return": [
     { "field": "<alias>.<prop>", "alias": "<ident>" },
-    { "aggregate": "count|sum|avg|min|max", "field": "<alias>[.<prop>]", "alias": "<ident>" }
+    { "aggregate": "count|sum|avg|min|max|collect", "field": "<alias>[.<prop>]", "alias": "<ident>" },
+    { "field": "<alias>.<prop>", "date_part": "year|quarter|month|week|day", "alias": "<ident>" }
   ],
   "group_by": ["<alias>.<prop>"],
   "sort":     [{ "field": "<alias-or-projected>", "order": "asc|desc" }],
-  "limit":    100
+  "limit":    100,
+  "distinct": false
 }
 ```
 
@@ -381,6 +396,9 @@ Validation rules enforced before any query is built:
 - Aggregate queries that mix aggregated and plain projections must list the
   plain ones in `group_by`.
 - Traversal depth is bounded by `query.max_traversal_depth` from config.
+- An edge label may be a `|`-union (`"ACTED_IN|DIRECTED"`); `distinct: true`
+  emits `RETURN DISTINCT`; a `date_part` projection buckets a datetime field
+  (also usable inside `group_by`).
 - Every filter value lands in a Bolt parameter — never in the query string.
 
 ### Example: `examples/find_people.json`
@@ -423,120 +441,16 @@ with `$p0 = 30`, `$p1 = "Berlin"`.
 
 ## Ingesting data
 
-`linguagraph` writes into the graph through two front-ends that share one
-planner. The planner emits deterministic, idempotent `MERGE` batches: every
-node `MERGE` runs before any relationship `MERGE`, so endpoints always exist
-when a relation lands, and re-ingesting the same input is a no-op.
-
-### Mapping-driven ingest
-
-The `ingest-json` command takes a raw data file and a *mapping* file. The
-mapping is a declarative document — JSONPath expressions plus type tags — that
-describes how to lift rows out of arbitrary JSON into typed graph entities and
-relations. See `examples/companies_data.json` + `examples/companies_mapping.json`
-for a worked pair.
-
-```bash
-linguagraph ingest-json examples/companies_data.json examples/companies_mapping.json
-```
-
-By default a relationship between two entities is resolved by **array-context
-alignment** — it links rows that share the same nesting position (a parent and
-its nested children). When the two entities come from **separate top-level
-arrays** linked by an id value, that alignment is meaningless; declare a
-**foreign-key join** with `from_key` / `to_key` (JSONPaths) so the correct
-objects are connected:
-
-```json
-{ "type": "INSTALLED_AT", "from": "Camera", "to": "Place",
-  "from_key": "$.cameras[*].place_id", "to_key": "$.places[*].id" }
-```
-
-`from_key` is the foreign key on the `from` entity; `to_key` is the matching key
-on the `to` entity (defaults to its `primary_key`). See `examples/teye/` for a
-worked camera/place/event dataset.
-
-**Cross-ingest links.** When a foreign key points at an entity that isn't in the
-current document — e.g. you ingest a batch of `events` whose `camera_id` refers to
-a `Camera` already in the graph (or ingested later) — the target is **upserted by
-id**: an id-only stub node is `MERGE`d, so the edge links the existing node
-(preserving its properties) or a skeleton that gets enriched when the real entity
-is ingested. This works regardless of ingest order and needs no in-document copy
-of the target. (Only applies when `to_key` is the target's primary key.)
-
-`generate-prompt` analyses an arbitrary JSON document and emits a prompt that
-asks an LLM to author the mapping for it, so you don't have to write the
-mapping by hand.
-
-### LLM-generated mapping (`generate-mapping`)
-
-`generate-mapping` goes one step further than `generate-prompt`: it actually
-calls an LLM and returns a **validated mapping**. It takes three inputs —
-
-* an **ontology** (mandatory): entity `type`s are strictly whitelisted to the
-  ontology's `entity_types`; relationships and extra properties may be invented;
-* the **JSON data** document;
-* the **live graph schema** (optional): when reachable, existing labels /
-  properties / relationship types are fed to the model so it reuses them.
-
-Before generating, you pick **which top-level collections** of the input get
-mapped. A "collection" is a top-level array of objects — one per key of a root
-object (`{ "cameras": [...], "places": [...] }`), or the root array itself
-(`[...]`). Pass them explicitly with `--collections cameras,places`
-(comma-separated), or — when omitted on a terminal — choose them from an
-interactive checkbox menu. With a single collection, or a non-TTY run (e.g.
-CI), the choice is made for you: the lone collection, or all of them. Only the
-selected collections are analysed, verified, and sent to the model.
-
-The model is shown a **structural sample** of the selected data, not the whole
-file: every array (including nested ones) is capped to `--sample-items` items
-(default 2), so a 10 000-row `cameras` collection becomes a 2-row example that
-still shows the exact field shape. Analysis and `primary_key` verification still
-run over the full selected data.
-
-The result is parsed, validated, and verified (every `primary_key` must resolve
-against the data). On failure the prompt is replayed with the error appended, up
-to `--max-repairs` times. With `--interactive`, you confirm or override each
-entity's `primary_key`, choose which properties to keep (and their types), and
-review / add relationships on the terminal.
-
-With `--describe`, a follow-up step asks the LLM to write a one-line
-`description` for each property, grounded in the entity's ontology description
-plus 1–2 real sample values pulled from the source JSON. Requests run **one per
-property, concurrently** (`--describe-concurrency`, default 8) so a wide mapping
-doesn't serialize the wait; only missing descriptions are filled unless
-`--describe-overwrite` is passed.
-
-```bash
-# Using a domain from the configured ontology catalog:
-linguagraph generate-mapping examples/companies_data.json \
-  --ontology-domain core_business --no-schema -o mapping.json
-
-# Map only specific collections; the model sees a 2-item structural sample:
-linguagraph generate-mapping data.json \
-  --ontology-domain core_business --no-schema \
-  --collections cameras,places -o mapping.json
-
-# Generate, then enrich property descriptions from sample values:
-linguagraph generate-mapping examples/companies_data.json \
-  --ontology-domain core_business --no-schema --describe -o mapping.json
-
-# Using a standalone DomainOntology file, with interactive refinement:
-linguagraph generate-mapping examples/companies_data.json \
-  --ontology-file my_ontology.json --interactive
-```
-
-The LLM backend is provider-agnostic (the [`LlmClient`] trait). The bundled
-`OpenAiClient` (cargo feature `openai`, on by default) targets any
-OpenAI-compatible `/v1/chat/completions` endpoint — e.g. a self-hosted **vLLM**
-server. Point it via `[llm].base_url` / `--base-url` and `[llm].model` /
-`--model`; the API key is read from the env var named by `[llm].api_key_env`.
-Interactive refinement is behind the `interactive` feature (also on by default).
+`linguagraph` writes into the graph through one planner. It emits
+deterministic, idempotent `MERGE` batches: every node `MERGE` runs before any
+relationship `MERGE`, so endpoints always exist when a relation lands, and
+re-ingesting the same input is a no-op. Feed it a graph-JSON document
+(`ingest-graph` / `GraphBuilder::from_json`) or build a `Graph`
+programmatically with `GraphBuilder` and call `Pipeline::ingest`.
 
 ### Graph-JSON ingest
 
-When you already have a graph in hand, `ingest-graph` ingests a compact
-document directly — no mapping required:
+`ingest-graph` ingests a compact document directly:
 
 ```json
 {
@@ -564,9 +478,9 @@ as an alias for `relations`. This is the shape produced by
   similarity (see below).
 - *omitted entirely* — the builder synthesises a deterministic `_canonical`
   property from the entity's `type` + properties and defaults `primary_key`
-  to `{"soft": "_canonical"}`. This is the shape emitted by
-  `knowledge-prompt`, where the LLM doesn't know any stable identifiers —
-  only a `type` and a free-text `name`.
+  to `{"soft": "_canonical"}`. This is the natural shape for
+  LLM-extracted payloads, where the model doesn't know any stable
+  identifiers — only a `type` and a free-text `name`.
 
 ### Soft-merge: deduplicating entities by similarity
 
@@ -687,151 +601,77 @@ just `type: {entity_type}` — those candidates are *type-only* and are blocked
 from AutoMerge by default (see the `allow_type_only_auto_merge` knob above).
 See `src/graph/canonical.rs` for the implementation.
 
-### Knowledge-extraction prompt
+## Ontology catalog
 
-`knowledge-prompt` emits a deterministic LLM system prompt whose output is a
-`{entities, relations}` document — exactly the graph-JSON shape `ingest-graph`
-consumes. The entity/relation vocabulary is supplied by a *domain ontology*
-loaded from a JSON catalog; the crate ships a built-in `legal` ontology and
-additional domains can be added by pointing `[prompt].ontologies_path` at a
-JSON file.
+Query lowering, schema enrichment, prompt generation and the explorer's
+property classification all consult an `OntologyCatalog` — a domain-keyed
+vocabulary of entity types, relation types and typed properties. The crate
+ships a built-in catalog (currently a `legal` domain,
+`OntologyCatalog::builtin()`); deployments layer their own domains on top.
 
-```bash
-# Use the built-in legal ontology.
-linguagraph knowledge-prompt --domain legal
-
-# When [prompt].default_domain is set in config, --domain is optional.
-linguagraph knowledge-prompt
-
-# Ad-hoc override: ignore the catalog entirely for one run.
-linguagraph knowledge-prompt \
-    --entity-type Article \
-    --entity-type Citation \
-    --relation-type CITES \
-    --relation-type CONTAINS \
-    -o extract_prompt.md
-```
-
-The built-in `legal` domain:
-
-| Entity types | Relation types |
-|---|---|
-| `LegalNorm`, `LegalAct`, `StateBody`, `Person`, `Organization`, `LegalRight`, `LegalObligation`, `Sanction`, `LegalProcedure`, `LegalConcept`, `Date`, `Location`, `MonetaryAmount` | `GRANTS`, `REQUIRES`, `PROHIBITS`, `REGULATES`, `ESTABLISHES`, `ENFORCES`, `REFERENCES`, `AMENDS`, `REPEALS`, `APPLIES_TO`, `PART_OF`, `HAS_SANCTION`, `ISSUED_BY`, `DEFINED_AS` |
-
-#### Ontology catalog format
+### Ontology catalog format
 
 An ontology catalog is a flat JSON object — keys are domain names, values
-are `{entity_types, relation_types}` lists:
+are `{description, entity_types, relation_types}`. Entity and relation
+types may declare typed properties (`Keyword`, `Text`, `Number`, `Bool`,
+`Datetime`, `List` — see
+[Textual field types](#textual-field-types-keyword-vs-text)):
 
 ```json
 {
-  "legal": {
+  "movies": {
+    "description": "Movies, people and their credits.",
     "entity_types": [
-      { "name": "LegalNorm", "description": "A rule, provision, article, or paragraph." },
-      { "name": "StateBody", "description": "Any organ of public authority." }
+      {
+        "name": "Movie",
+        "description": "A feature film.",
+        "properties": [
+          { "name": "id", "property_type": "Keyword" },
+          { "name": "title", "property_type": "Keyword" },
+          { "name": "tagline", "property_type": "Text" },
+          { "name": "released", "property_type": "Datetime" }
+        ]
+      }
     ],
     "relation_types": [
-      { "name": "GRANTS", "description": "Subject confers a right or power on another." }
+      { "name": "ACTED_IN", "description": "Person played a role in a movie." }
     ]
-  },
-  "medical": {
-    "entity_types": [{ "name": "Disease" }, { "name": "Symptom" }],
-    "relation_types": [{ "name": "CAUSES" }, { "name": "TREATS" }]
   }
 }
 ```
 
-Wire it up via `config.toml`:
+The catalog powers domain routing and schema narrowing in query-driven
+prompt generation, `Text`-property auto-resolution during DSL lowering,
+description enrichment in `schema`/`overview` output, and property
+classification in explorer cards. See `examples/e2e/*/ontology.json` for
+worked catalogs.
 
-```toml
-[prompt]
-ontologies_path = "config/ontologies.json"
-default_domain  = "legal"
-```
+#### Wiring and storage
 
-#### Programmatic use
+A pipeline gets its catalog snapshot through the `OntologyCatalogStorage`
+trait, so deployments can keep ontologies in Postgres, an internal HTTP
+service, S3, etc. instead of a JSON file. Bundled backends:
 
-`PromptGenerator` is the high-level facade — it owns the catalog and exposes
-both prompt flavours. The domain name supplied at render time is also
-substituted into the prompt's framing sections (role, input structure, rules),
-so the LLM sees `"medical information extraction"` rather than a hardcoded
-`"legal"` framing for non-legal domains.
-
-```rust
-use linguagraph::prompt::{
-    DomainOntology, EntityTypeSpec, OntologyCatalog, PromptGenerator, RelationTypeSpec,
-};
-
-// Built-in catalog, or load your own via storage (see below).
-let generator = PromptGenerator::with_builtin_catalog()
-    .with_default_domain("legal");
-
-let prompt = generator.knowledge_extract_prompt(Some("legal"))?;
-// or fall back to default_domain:
-let prompt = generator.knowledge_extract_prompt(None)?;
-
-// Extend a built-in domain at runtime.
-let mut catalog = OntologyCatalog::builtin();
-catalog.domains.get_mut("legal").unwrap()
-    .entity_types.push(EntityTypeSpec::with_description(
-        "Citation", "Reference to another legal act or article.",
-    ));
-let generator = PromptGenerator::new(catalog);
-
-// Bypass the catalog with an ad-hoc ontology. The second argument is
-// the framing label that gets substituted into the prompt sections.
-let ad_hoc = DomainOntology {
-    entity_types: vec![EntityTypeSpec::new("Article")],
-    relation_types: vec![RelationTypeSpec::new("CITES")],
-};
-let prompt = generator.knowledge_extract_prompt_with("custom", &ad_hoc);
-```
-
-#### Pluggable storage backend
-
-The catalog is loaded through the [`OntologyCatalogStorage`] trait, so
-real-world deployments can keep ontologies in Postgres, an internal
-HTTP service, S3, etc. instead of a checked-in JSON file. The crate
-ships two ready-to-use backends:
-
-* `JsonFileOntologyCatalogStorage` — default; reads and atomically
-  rewrites a single JSON file. Used by
-  `PromptGenerator::from_config` when `[prompt].ontologies_path` is set.
-* `InMemoryOntologyCatalogStorage` — read-only, useful for tests and
-  programmatically-built catalogs.
+* `JsonFileOntologyCatalogStorage` — reads/atomically rewrites one JSON
+  file. The CLI uses it with `[graph_specification].cache_path`
+  (default `.linguagraph/ontology_catalog.json`).
+* `InMemoryOntologyCatalogStorage` — for tests and programmatically-built
+  catalogs.
 
 ```rust
-use async_trait::async_trait;
-use linguagraph::prompt::{
-    OntologyCatalog, OntologyCatalogStorage, OntologyError, PromptGenerator,
-};
+use std::sync::Arc;
+use linguagraph::graph::{JsonFileOntologyCatalogStorage, OntologyCatalogStorage};
 
-#[derive(Debug)]
-struct PostgresOntologyStorage { /* … pool, etc … */ }
-
-#[async_trait]
-impl OntologyCatalogStorage for PostgresOntologyStorage {
-    async fn load(&self) -> Result<OntologyCatalog, OntologyError> {
-        // SELECT domain, entity_types, relation_types FROM ontologies; …
-        # unimplemented!()
-    }
-
-    async fn save(&self, catalog: &OntologyCatalog) -> Result<(), OntologyError> {
-        // upsert into ontologies … 
-        # let _ = catalog;
-        # unimplemented!()
-    }
-}
-
-let storage = PostgresOntologyStorage { /* … */ };
-let generator = PromptGenerator::from_storage(&storage)
-    .await?
-    .with_default_domain("legal");
+let storage: Arc<dyn OntologyCatalogStorage> =
+    Arc::new(JsonFileOntologyCatalogStorage::new(".linguagraph/ontology_catalog.json"));
+let pipeline = pipeline.with_ontology_catalog_storage(storage);
+pipeline.load_ontology_catalog().await?;
+// …or inject a snapshot directly:
+// pipeline.with_ontology_catalog(Arc::new(catalog))
 ```
 
-The trait's `save` method has a default that returns
-`OntologyError::Unsupported`, so read-only backends only need to
-implement `load`.
+The trait's `save` has a default returning `OntologyError::Unsupported`,
+so read-only backends only implement `load`.
 
 ## Entity-type discovery
 
@@ -940,11 +780,12 @@ max_connections = 16
 query_timeout_secs = 30
 
 [llm]
-provider = "anthropic"
-model = "claude-opus-4-7"
+# OpenAI-compatible chat-completions endpoint used by the NL front-end
+# (`explore ask`, the e2e harness) — e.g. a self-hosted vLLM server.
+provider = "openai"
+model = "vllm-qwen"
 temperature = 0.0
 max_tokens = 2048
-# OpenAI-compatible endpoint used by `generate-mapping` (e.g. a vLLM server).
 base_url = "http://localhost:8000/v1"
 # Env var holding the API key (optional for local servers).
 api_key_env = "OPENAI_API_KEY"
@@ -979,28 +820,29 @@ emit_review_candidates    = true
 review_max_candidates     = 5
 conflict_properties       = ["id", "email", "url", "isbn", "phone", "ssn", "doi", "ein"]
 
+# Ontology catalog cache + embedding models for query-driven prompt
+# generation and entity-type discovery. `[ontology_catalog]` is accepted
+# as an alias for this section name.
 [graph_specification]
-cache_path = ".linguagraph/graph_specification.json"
-embedding_model = "models/bge-small.gguf"
+cache_path = ".linguagraph/ontology_catalog.json"
+embedding_model = "models/bge-m3.gguf"
 reranking_model = "models/bge-reranker.gguf"
-embedding_dim = 384
+embedding_dim = 1024
 reranking_threshold = 0.3
 
-[prompt]
-# Path to a domain-ontology JSON catalog (see "Ontology catalog format").
-# When omitted, the built-in catalog (currently the `legal` domain) is used.
-ontologies_path = "config/ontologies.json"
-# Domain selected by `knowledge-prompt` when --domain is omitted.
-default_domain  = "legal"
+[qdrant]
+# Empty url disables Qdrant — prompt generation then uses an in-process store.
+url = "http://127.0.0.1:6333"
+collection = "linguagraph_ontology"
 
 # One block per registered field type; the SemanticText handler reads this one.
 [types.SemanticText]
-embedding_model = "models/bge-small.gguf"
+embedding_model = "models/bge-m3.gguf"
 collection = "companies"
 top_k = 20
 ```
 
-`[llm]`, `[query]`, `[graph_specification]`, `[prompt]`, `[ingest.soft_merge]`
+`[llm]`, `[query]`, `[graph_specification]`, `[qdrant]`, `[ingest.soft_merge]`
 and `[types.*]` are all optional and fall back to the defaults shown above. Any field can be overridden via
 `LINGUAGRAPH__SECTION__FIELD`, e.g.:
 
@@ -1040,8 +882,8 @@ let cypher = pipeline.compile(query.clone())?; // CypherQuery { text, params }
 let ast    = pipeline.lower(query)?;           // typed AST for inspection
 ```
 
-Ingestion goes through the same `Pipeline`. Build a graph and call `ingest`, or
-hand a mapping + JSON value to `ingest_json`:
+Ingestion goes through the same `Pipeline`. Parse a graph-JSON document (or
+assemble a `Graph` with the `GraphBuilder` API) and call `ingest`:
 
 ```rust
 use linguagraph::graph::GraphBuilder;
@@ -1052,6 +894,78 @@ println!(
     "{} node rows, {} relation rows in {} ms",
     summary.node_rows, summary.relation_rows, summary.elapsed_ms,
 );
+```
+
+## Graph explorer
+
+`explore::Explorer` is the business-facing read surface: browse
+entities, walk relations, filter by type, and ask natural-language
+questions that come back with the executed query, a result table and a
+displayable subgraph. Every response is a serde-serializable DTO
+(`explore::dto`, optional `utoipa::ToSchema` behind the `utoipa`
+feature), so a downstream service can expose it over HTTP verbatim.
+
+```rust
+use std::sync::Arc;
+use linguagraph::explore::{AskOptions, Explorer, NeighborOptions};
+use linguagraph::nl::NlTranslator;
+
+let explorer = Explorer::new(pipeline)                    // wraps a configured Pipeline
+    .with_translator(Arc::new(translator));               // optional: enables ask()
+
+// Dataset overview: entity/relation types with counts, sources.
+let overview = explorer.overview().await?;
+
+// Inspect one entity: classified properties, provenance, relations.
+if let Some(card) = explorer.entity("m1").await? {
+    // Walk one hop, filtered.
+    let hop = explorer.neighbors(&card.node.id, &NeighborOptions {
+        edge_types: Some(vec!["ACTED_IN".into()]),
+        ..Default::default()
+    }).await?;
+    let doc = explorer.export(&hop);                       // GraphBuilder-compatible JSON
+}
+
+// Search: keyword (schema-driven property scan) or semantic (_canonical vectors).
+let hits = explorer.search("Keanu", &Default::default()).await?;
+
+// NL question → DSL → Cypher → rows + subgraph + trace (+ LLM answer).
+let answer = explorer.ask("Who acted in The Matrix?", &AskOptions {
+    synthesize_answer: true,
+    ..Default::default()
+}).await?;
+println!("{}", answer.trace.cypher);                       // "how was this answered"
+```
+
+Identity: the public node handle is the `id` property (stable across
+sessions; not enforced unique — lookups take the first match).
+Integer-stored `id` values match too and are stringified in responses.
+Nodes without an `id` property get a session-scoped `_nid:<internal-id>`
+handle; as a convenience, an all-digit handle that matches no `id`
+property is retried as a Memgraph internal id (the number graph tools
+like Memgraph Lab display), and the response carries the stable property
+handle. Confidence is a *data convention*: `NodeView.confidence` surfaces
+a `confidence` property when the ingested data carries one — the pipeline
+never computes it. Everything respects the pipeline's
+`prefix_label`/`prefix_index` tenant scoping.
+
+The `explore` CLI mirrors the API 1:1 (`--format json` prints the exact
+DTOs); `explore repl` adds an interactive shell with navigation state
+(rustyline, `repl` feature, on by default):
+
+```
+explore> open Spain               # or a listing number: open #2
+Spain [Country]  id=Spain
+Spain [Country]> ls
+  1. ← LOCATED_IN  Listing (125)
+Spain [Country]> go Listing       # group number (`go 1`), edge type
+                                  # (`go LOCATED_IN`) or neighbor entity type
+Spain [Country]> trail
+Spain [Country]
+Spain [Country]> ask "which listings are located in Spain?"
+Spain [Country]> show cypher      # how the last ask was answered
+Spain [Country]> filter type Listing   # restrict go/search; `filter clear` resets
+Spain [Country]> export /tmp/spain.json
 ```
 
 ## Prompt generation
@@ -1075,21 +989,30 @@ to the entity types relevant to a specific natural-language query.
 |---|---|
 | `linguagraph dsl <file.json>` | Validate a DSL file and print the lowered AST. |
 | `linguagraph cypher <file.json>` | Compile to Cypher; print query + parameters (no DB). |
-| `linguagraph query <file.json>` | Alias of `cypher`; reserved for future natural-language front-ends. |
 | `linguagraph run <file.json>` | Compile and execute a DSL query against Memgraph. |
 | `linguagraph traversal <file.json>` | Run the traversal retrieval pipeline (entity + goal chunk search). |
 | `linguagraph prompt [query] [--schema <file>] [--no-examples]` | Print a schema-aware system prompt for an LLM. |
 | `linguagraph schema [--format json\|prompt]` | Introspect the live graph schema. |
-| `linguagraph ingest-json <data.json> <mapper.json>` | Mapping-driven ingest; execute against the configured DB. |
 | `linguagraph ingest-graph <graph.json>` | Ingest a compact `{entities, relations}` graph JSON. |
-| `linguagraph generate-prompt <data.json>` | Generate a mapping-authoring prompt for an LLM. |
-| `linguagraph knowledge-prompt [--domain D] [--entity-type X] [--relation-type Y]` | Generate a knowledge-extraction system prompt for a domain ontology. `--entity-type` / `--relation-type` override the catalog for one run. |
 | `linguagraph entity-type-search <text> [--top-k N] [--score-threshold X] [--include-neighbors] [--no-catalog] [--field NAME]...` | Discover which entity types are semantically relevant to a free-text user query. Emits a JSON summary with domains, scopes and per-collection scores. See [Entity-type discovery](#entity-type-discovery). |
 | `linguagraph delete-by-source --source <name>` | Delete a source-rooted subgraph and its vectors. |
+| `linguagraph explore overview` | Entity/relation types with counts, totals, sources. |
+| `linguagraph explore entity <id>` | Inspect one entity: properties, provenance, relation summary. |
+| `linguagraph explore neighbors <id> [--edge-type T] [--target-label L] [--direction in\|out\|both]` | Walk one hop from an entity. |
+| `linguagraph explore search <text> [--type T] [--mode auto\|keyword\|semantic] [--exact]` | Find entities by text. |
+| `linguagraph explore table <Type> [--sort P] [--offset N]` | One page of entities of a type. |
+| `linguagraph explore timeline <Type>` | Dated events from `Datetime` properties. |
+| `linguagraph explore ask "<question>" [--answer] [--show-cypher]` | NL question → DSL → rows + subgraph + query trace (needs `openai` feature + `[llm]` config). |
+| `linguagraph explore run-dsl <file.json>` | Run a hand-written DSL file through the ask flow (subgraph + trace). |
+| `linguagraph explore export (--entity ID \| --type T) [-o file]` | Export a subgraph as GraphBuilder-compatible JSON. |
+| `linguagraph explore repl` | Interactive graph-walking shell (trail, numbered listings, filters). |
 
-Global flag: `--config <path>` (default `config.toml`). The ingest, `run`,
-`cypher`, `traversal` and `query` commands also accept `--prefix-label` /
-`--prefix-index` to scope reads and writes to a tenant or dataset.
+Global flag: `--config <path>` (default `config.toml`). The `ingest-graph`,
+`run`, `cypher`, `traversal`, `entity-type-search`, `delete-by-source` and
+`explore` commands also accept `--prefix-label` / `--prefix-index` to scope
+reads and writes to a tenant or dataset. Every `explore` subcommand takes
+`--format table|json`; JSON output is the exact DTO contract a downstream
+UI consumes.
 
 ## Testing
 
@@ -1108,7 +1031,8 @@ Memgraph required:
   default limits
 - `tests/type_system.rs` / `tests/property_types.rs` — the pluggable type
   registry and per-type ingestion / lowering / emission
-- `tests/promptgen.rs` / `tests/knowledge_prompt.rs` — prompt generators
+- `tests/explorer.rs` — the graph explorer against a mock client: generated
+  Cypher, DTO decoding, subgraph materialization, injection guards
 
 For live end-to-end coverage against local Memgraph, real GGUF embeddings and
 an OpenAI-compatible LLM, use the e2e test-kit:
@@ -1140,15 +1064,22 @@ The crate is built to be extended at its trait boundaries:
 - **New embedding backends.** The `embeddings::Embedder` trait is a single
   `embed_batch` call. The default build ships a deterministic mock; the
   `llama` feature wires in a GGUF-backed embedder via `llama-cpp-2`.
-- **Pluggable LLM providers.** The prompt module is provider-agnostic by
-  design; callers own the HTTP plumbing.
+- **Pluggable LLM providers.** Everything NL-facing depends on the
+  `llm::LlmClient` trait (one `complete(system, user)` call). The bundled
+  `OpenAiClient` (feature `openai`, on by default) targets any
+  OpenAI-compatible `/v1/chat/completions` endpoint, e.g. a self-hosted
+  vLLM server; other providers implement the trait.
+- **Ontology storage.** Implement `graph::OntologyCatalogStorage` to load
+  domain catalogs from Postgres, S3, an HTTP service — anything beyond the
+  bundled JSON-file and in-memory backends.
 
 ## Tech stack
 
-`serde`, `serde_json`, `toml`, `thiserror`, `anyhow`, `async-trait`, `tokio`,
-`clap`, `tracing`, `tracing-subscriber`, `neo4rs`, `tabled`, `uuid`,
-`once_cell`, `encoding_rs`, `llama-cpp-2` (optional, `llama` feature),
-`pretty_assertions` (dev).
+`serde`, `serde_json`, `toml`, `strum`, `thiserror`, `anyhow`, `async-trait`,
+`tokio`, `futures`, `clap`, `tracing`, `tracing-subscriber`, `neo4rs`,
+`tabled`, `uuid`, `once_cell`, `encoding_rs`; optional: `llama-cpp-2`
+(`llama`), `reqwest` (`openai` / `qdrant`), `rustyline` (`repl`), `utoipa`
+(`utoipa`); `pretty_assertions` (dev).
 
 ## License
 

@@ -11,7 +11,9 @@
 //! | DB           | [`db`]               | execute against Memgraph (or a mock)       |
 //! | Config       | [`config`]           | TOML + env-var configuration               |
 //! | Prompt       | [`prompt`]           | schema-aware system prompts for LLMs       |
+//! | NL           | [`nl`]               | question → DSL translation, answer synthesis |
 //! | Core         | [`core`]              | wires the layers together                  |
+//! | Explore      | [`explore`]          | business-facing graph browser              |
 //! | CLI          | [`cli`]              | command-line entrypoints                   |
 //!
 //! Anything user-facing (the CLI, integration tests) goes through
@@ -30,9 +32,11 @@ pub mod dsl;
 pub mod e2e;
 pub mod embeddings;
 pub mod error;
+pub mod explore;
 pub mod graph;
 pub mod ingest;
 pub mod llm;
+pub mod nl;
 pub mod prompt;
 pub mod resolve;
 pub mod types;

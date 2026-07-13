@@ -605,7 +605,7 @@ fn epoch_to_timestamp(secs: i64) -> String {
 /// correct across the full proleptic Gregorian range, and dependency-
 /// free. We need this here because we deliberately don't pull in
 /// `chrono` for what is otherwise a pure-data conversion.
-pub(super) fn epoch_to_ymdhms(secs: i64) -> (i64, u32, u32, u32, u32, u32) {
+pub(crate) fn epoch_to_ymdhms(secs: i64) -> (i64, u32, u32, u32, u32, u32) {
     // Seconds in a day.
     const SPD: i64 = 86_400;
     let days = secs.div_euclid(SPD);

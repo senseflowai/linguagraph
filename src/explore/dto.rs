@@ -322,6 +322,13 @@ pub struct AskOptions {
     /// Materialize the entity subgraph from the result rows.
     #[serde(default = "default_true")]
     pub include_subgraph: bool,
+    /// Auto-project fields referenced by the query's own filters when the
+    /// filtered entity is already part of the response (e.g. a
+    /// `price < 100` filter paired with `return: [name]` gains a `price`
+    /// column). Lets an answer-synthesis LLM show the value that made a
+    /// row match instead of only being told about the filter in prose.
+    #[serde(default = "default_true")]
+    pub include_filter_context: bool,
     /// Cap on rows kept in [`AskResult::table`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_rows: Option<u32>,
@@ -332,6 +339,7 @@ impl Default for AskOptions {
         Self {
             synthesize_answer: false,
             include_subgraph: true,
+            include_filter_context: true,
             max_rows: None,
         }
     }

@@ -5,11 +5,34 @@
 //! decides what Cypher fragments to emit and what boolean expression
 //! to splice here. The builder itself never inspects the type id.
 
+use std::collections::HashSet;
+
 use crate::ast::query::*;
 use crate::types::TypeRegistry;
 
 use super::cursor::Cursor;
 use super::cypher::BuilderError;
+
+/// Every alias referenced by a field in `expr` — via plain or typed
+/// predicates, recursing through `And`/`Or`/`Not`. Used by the builder to
+/// detect when a filter needs an alias that's only bound by an OPTIONAL
+/// MATCH, so it can defer the WHERE clause until after that match.
+pub(super) fn collect_referenced_aliases<'a>(expr: &'a FilterExpression, out: &mut HashSet<&'a str>) {
+    match expr {
+        FilterExpression::Predicate(p) => {
+            out.insert(p.field.alias.as_str());
+        }
+        FilterExpression::Typed(t) => {
+            out.insert(t.field.alias.as_str());
+        }
+        FilterExpression::And(parts) | FilterExpression::Or(parts) => {
+            for part in parts {
+                collect_referenced_aliases(part, out);
+            }
+        }
+        FilterExpression::Not(inner) => collect_referenced_aliases(inner, out),
+    }
+}
 
 pub(super) fn write_where(
     cur: &mut Cursor,
@@ -110,5 +133,44 @@ pub(super) fn render_property(p: &PropertyRef) -> String {
     match &p.property {
         Some(prop) => format!("{}.{}", p.alias, prop),
         None => p.alias.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pref(alias: &str, prop: &str) -> PropertyRef {
+        PropertyRef {
+            alias: Alias::new(alias),
+            property: Some(prop.to_string()),
+        }
+    }
+
+    #[test]
+    fn collects_aliases_across_and_or_not() {
+        let expr = FilterExpression::And(vec![
+            FilterExpression::Predicate(Predicate {
+                field: pref("p", "age"),
+                op: ComparisonOp::Gt,
+                value: Literal::Int(18),
+            }),
+            FilterExpression::Not(Box::new(FilterExpression::Or(vec![
+                FilterExpression::Predicate(Predicate {
+                    field: pref("c", "revenue"),
+                    op: ComparisonOp::Lt,
+                    value: Literal::Int(100),
+                }),
+                FilterExpression::Predicate(Predicate {
+                    field: pref("c", "active"),
+                    op: ComparisonOp::Eq,
+                    value: Literal::Bool(true),
+                }),
+            ]))),
+        ]);
+
+        let mut aliases = HashSet::new();
+        collect_referenced_aliases(&expr, &mut aliases);
+        assert_eq!(aliases, HashSet::from(["p", "c"]));
     }
 }

@@ -13,6 +13,14 @@
 //! original query would. The visible table is re-deduplicated after the
 //! hidden columns are stripped; combined with `limit` the visible rows
 //! can undercount what the un-rewritten query would return.
+//!
+//! Before the id injection, [`with_filter_context_returns`] runs a second,
+//! visible (non-hidden) rewrite: it adds each filter's field to the
+//! projection when the filtered entity is already returned, so an
+//! answer-synthesis LLM (and the table itself) can see the value that made
+//! a row match — e.g. a `price < 100` filter alongside `return: [name]`
+//! gains a `price` column. It no-ops for aggregate and `distinct: true`
+//! queries; see its doc comment for the full rule set.
 
 use std::collections::BTreeMap;
 use std::time::Instant;
@@ -21,7 +29,7 @@ use serde_json::Value as JsonValue;
 
 use crate::db::{QueryResult, Value as DbValue};
 use crate::dsl::schema::ReturnItem;
-use crate::dsl::DslQuery;
+use crate::dsl::{with_filter_context_returns, DslQuery};
 use crate::error::Result;
 use crate::nl;
 
@@ -95,12 +103,17 @@ impl Explorer {
         started: Instant,
         opts: &AskOptions,
     ) -> Result<AskResult> {
+        let with_filters = if opts.include_filter_context {
+            with_filter_context_returns(&dsl)
+        } else {
+            dsl.clone()
+        };
         let rewritten = if opts.include_subgraph {
-            inject_node_id_returns(&dsl)
+            inject_node_id_returns(&with_filters)
         } else {
             None
         };
-        let executed_dsl = rewritten.unwrap_or_else(|| dsl.clone());
+        let executed_dsl = rewritten.unwrap_or(with_filters);
 
         let compiled = self.pipeline().compile_for_run(executed_dsl.clone()).await?;
         let result = self.pipeline().execute(&compiled).await?;

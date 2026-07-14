@@ -53,10 +53,33 @@ pub fn build_read_with(
 
     // ── Phase 1: MATCH + WHERE (collects type contributions). ─────────
     match_part::write_match(&mut cur, query);
-    if let Some(filter) = &query.filter {
-        where_part::write_where(&mut cur, filter, registry)?;
+
+    // A filter that references a property bound *only* by an OPTIONAL
+    // traversal must be evaluated after that OPTIONAL MATCH, not before.
+    // `OPTIONAL MATCH` never drops the outer (driving) row — if no match
+    // satisfies the pattern, every variable it binds (including the
+    // property a filter checks) comes back `NULL`, and Cypher only
+    // excludes that row if a *subsequent* top-level `WHERE` re-checks it.
+    // Emitting the filter before the `OPTIONAL MATCH` that binds its
+    // field either references an unbound variable or — worse — lets the
+    // condition apply only to which candidate rows the optional join
+    // picks, not to whether the row survives at all, so rows with a
+    // null/missing property silently pass a `< 100` / `> 100` filter.
+    let defer_where = query
+        .filter
+        .as_ref()
+        .is_some_and(|f| filter_needs_optional_scope(f, query));
+    if defer_where {
+        match_part::write_optional_matches(&mut cur, query);
+        if let Some(filter) = &query.filter {
+            where_part::write_where(&mut cur, filter, registry)?;
+        }
+    } else {
+        if let Some(filter) = &query.filter {
+            where_part::write_where(&mut cur, filter, registry)?;
+        }
+        match_part::write_optional_matches(&mut cur, query);
     }
-    match_part::write_optional_matches(&mut cur, query);
 
     // ── Phase 2: post-match handler fragments. Spliced after WHERE
     //    so they can reference the matched aliases (e.g. CASE WHEN
@@ -319,6 +342,25 @@ fn collect_node_aliases(query: &ReadQuery) -> Vec<String> {
     out
 }
 
+/// True when `filter` references an alias bound only by an OPTIONAL
+/// traversal target in `query` — the signal [`build_read_with`] uses to
+/// decide whether the WHERE clause must be deferred until after the
+/// OPTIONAL MATCH that binds it (see the comment at its call site).
+fn filter_needs_optional_scope(filter: &FilterExpression, query: &ReadQuery) -> bool {
+    let optional_aliases: std::collections::HashSet<&str> = query
+        .traversals
+        .iter()
+        .filter(|t| t.optional)
+        .map(|t| t.target.alias.as_str())
+        .collect();
+    if optional_aliases.is_empty() {
+        return false;
+    }
+    let mut referenced = std::collections::HashSet::new();
+    where_part::collect_referenced_aliases(filter, &mut referenced);
+    referenced.iter().any(|alias| optional_aliases.contains(alias))
+}
+
 /// True when the caller already projects a `sources` column. Used as
 /// a defensive guard so the auto-projection doesn't collide with a
 /// user-supplied one.
@@ -504,6 +546,59 @@ mod tests {
         );
     }
 
+    /// A filter on the OPTIONAL traversal's own target must be evaluated
+    /// *after* the OPTIONAL MATCH that binds it. `OPTIONAL MATCH` never
+    /// drops the outer row: if no `Company` satisfies the pattern, `c`
+    /// (and `c.revenue`) comes back `NULL` regardless. Emitting the WHERE
+    /// before the OPTIONAL MATCH would reference `c` before it exists;
+    /// emitting it after makes the null case a normal top-level
+    /// comparison, which Cypher correctly treats as unsatisfied and drops
+    /// — instead of silently letting a company-less (or price-less) row
+    /// through a `< 100` / `> 100` filter.
+    #[test]
+    fn filter_on_optional_target_is_emitted_after_the_optional_match() {
+        let q = ReadQuery {
+            action: Action::Find,
+            start: Node {
+                label: "Person".into(),
+                alias: alias("p"),
+                prefix_label: None,
+            },
+            traversals: vec![EdgeTraversal {
+                from_alias: alias("p"),
+                edge_label: "WORKS_AT".into(),
+                edge_alias: alias("w"),
+                direction: Direction::Out,
+                target: Node {
+                    label: "Company".into(),
+                    alias: alias("c"),
+                    prefix_label: None,
+                },
+                depth: None,
+                optional: true,
+            }],
+            filter: Some(FilterExpression::Predicate(Predicate {
+                field: pref("c", Some("revenue")),
+                op: ComparisonOp::Lt,
+                value: Literal::Int(100),
+            })),
+            returns: vec![ReturnClause::Field {
+                field: pref("p", Some("name")),
+                alias: None,
+            }],
+            group_by: vec![],
+            sort: vec![],
+            limit: None,
+            distinct: false,
+        };
+
+        let out = build_read(&q).unwrap().text;
+        assert!(
+            out.contains("OPTIONAL MATCH (p)-[w:WORKS_AT]->(c:Company)\nWHERE c.revenue < $p0"),
+            "WHERE must follow the OPTIONAL MATCH that binds `c`, got: {out}"
+        );
+    }
+
     #[test]
     fn builds_aggregate_with_order_by_alias() {
         let q = ReadQuery {
@@ -548,7 +643,7 @@ mod tests {
         };
         let out = build_read(&q).unwrap().text;
         assert!(out.contains("RETURN c.name AS customer, sum(o.total) AS total_spent"));
-        assert!(out.contains("ORDER BY total_spent DESC"));
+        assert!(out.contains("ORDER BY total_spent IS NULL, total_spent DESC"));
     }
 
     #[test]

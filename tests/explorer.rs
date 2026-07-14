@@ -10,7 +10,7 @@ use linguagraph::config::{Config, DatabaseConfig, LlmConfig, OntologyCatalogConf
 use linguagraph::core::Pipeline;
 use linguagraph::db::{MockClient, QueryResult, Row, Value};
 use linguagraph::explore::{
-    EntityCard, Explorer, NeighborOptions, PageOptions, RelDirection, SearchOptions,
+    AskOptions, EntityCard, Explorer, NeighborOptions, PageOptions, RelDirection, SearchOptions,
 };
 use linguagraph::graph::{
     DomainOntology, EntityTypeSpec, OntologyCatalog, OntologyPropertyType, PropertySpec,
@@ -626,6 +626,93 @@ async fn run_dsl_injects_ids_hydrates_subgraph_and_strips_columns() {
     assert!(captured[1].text.contains("n.id IN $ids"));
     assert!(captured[1].text.contains("(n:E2E)"));
     assert!(captured[2].text.contains("a.id IN $ids"));
+}
+
+#[tokio::test]
+async fn run_dsl_projects_filtered_field_when_entity_already_returned() {
+    let mock = Arc::new(MockClient::new());
+    mock.enqueue(result(
+        vec!["title", "votes"],
+        vec![row(vec![
+            ("title", Value::String("The Matrix".into())),
+            ("votes", Value::Int(80)),
+        ])],
+    ));
+
+    let explorer = explorer_with(mock.clone(), Some("E2E"));
+    let dsl = linguagraph::dsl::parse_str(
+        r#"{
+            "start": { "label": "Movie", "alias": "m" },
+            "filters": [ { "field": "m.votes", "op": "lt", "value": 100 } ],
+            "return": [ { "field": "m.title" } ]
+        }"#,
+    )
+    .unwrap();
+
+    let answer = explorer
+        .run_dsl(
+            dsl,
+            &AskOptions {
+                include_subgraph: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("run_dsl succeeds");
+
+    // The filter's own field (votes) is auto-projected because `m` is
+    // already part of the response via `title` — the answer LLM (and the
+    // table itself) can now see the value that made the row match.
+    assert_eq!(
+        answer.table.columns,
+        vec!["title".to_string(), "votes".to_string()]
+    );
+    assert_eq!(answer.table.rows[0].get("votes"), Some(&json!(80)));
+
+    let captured = mock.captured.lock().unwrap();
+    assert_eq!(captured.len(), 1);
+    assert!(
+        captured[0].text.contains("m.votes"),
+        "filter field projected: {}",
+        captured[0].text
+    );
+}
+
+#[tokio::test]
+async fn run_dsl_skips_filter_context_when_disabled() {
+    let mock = Arc::new(MockClient::new());
+    mock.enqueue(result(
+        vec!["title"],
+        vec![row(vec![("title", Value::String("The Matrix".into()))])],
+    ));
+
+    let explorer = explorer_with(mock.clone(), Some("E2E"));
+    let dsl = linguagraph::dsl::parse_str(
+        r#"{
+            "start": { "label": "Movie", "alias": "m" },
+            "filters": [ { "field": "m.votes", "op": "lt", "value": 100 } ],
+            "return": [ { "field": "m.title" } ]
+        }"#,
+    )
+    .unwrap();
+
+    let answer = explorer
+        .run_dsl(
+            dsl,
+            &AskOptions {
+                include_subgraph: false,
+                include_filter_context: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("run_dsl succeeds");
+
+    assert_eq!(answer.table.columns, vec!["title".to_string()]);
+    let captured = mock.captured.lock().unwrap();
+    // `m.votes` still appears in the WHERE clause (the filter itself);
+    // what must stay absent is a `votes` projection in RETURN.
+    assert!(!captured[0].text.contains("RETURN m.title, m.votes"));
 }
 
 #[tokio::test]

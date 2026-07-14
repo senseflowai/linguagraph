@@ -17,7 +17,7 @@ fn find_example_round_trip() {
     assert!(cypher.text.contains("MATCH (p:Person)"));
     assert!(cypher.text.contains("[r:KNOWS*1..2]"));
     assert!(cypher.text.contains("WHERE"));
-    assert!(cypher.text.contains("ORDER BY name ASC"));
+    assert!(cypher.text.contains("ORDER BY name IS NULL, name ASC"));
     assert!(cypher.text.trim_end().ends_with("LIMIT 25"));
     // Two filter values bound as parameters.
     assert_eq!(cypher.params.len(), 2);
@@ -36,7 +36,7 @@ fn aggregate_example_round_trip() {
     let cypher = compile(include_str!("../examples/aggregate_orders.json"));
     assert!(cypher.text.contains("count(o) AS order_count"));
     assert!(cypher.text.contains("sum(o.total) AS total_spent"));
-    assert!(cypher.text.contains("ORDER BY total_spent DESC"));
+    assert!(cypher.text.contains("ORDER BY total_spent IS NULL, total_spent DESC"));
 }
 
 #[test]
@@ -85,7 +85,9 @@ fn aggregate_projects_group_by_key_for_order_by() {
     );
     // ORDER BY targets the projected alias, never the raw property.
     assert!(
-        cypher.text.contains("ORDER BY sv_work_start ASC"),
+        cypher
+            .text
+            .contains("ORDER BY sv_work_start IS NULL, sv_work_start ASC"),
         "got: {}",
         cypher.text
     );
@@ -145,7 +147,9 @@ fn aggregate_with_multiple_aggregates_sorts_by_group_key_alias() {
         "RETURN must project the group_by key with an alias: {return_line}"
     );
     assert!(
-        cypher.text.contains("ORDER BY sv_work_start ASC"),
+        cypher
+            .text
+            .contains("ORDER BY sv_work_start IS NULL, sv_work_start ASC"),
         "ORDER BY must target the projected alias: {}",
         cypher.text
     );
@@ -183,7 +187,9 @@ fn aggregate_can_group_datetime_by_year() {
         cypher.text
     );
     assert!(
-        cypher.text.contains("ORDER BY created_year ASC"),
+        cypher
+            .text
+            .contains("ORDER BY created_year IS NULL, created_year ASC"),
         "got: {}",
         cypher.text
     );
@@ -232,7 +238,7 @@ fn aggregate_can_group_datetime_by_year_for_reported_dsl() {
         cypher.text
     );
     assert!(
-        cypher.text.contains("ORDER BY year ASC"),
+        cypher.text.contains("ORDER BY year IS NULL, year ASC"),
         "got: {}",
         cypher.text
     );
@@ -278,6 +284,36 @@ fn aggregate_can_project_return_date_part_without_raw_property() {
         return_line.matches("created_year").count(),
         1,
         "group_by projection should reuse the explicit date_part return: {return_line}"
+    );
+}
+
+#[test]
+fn multi_key_sort_pushes_nulls_last_on_every_key() {
+    // Reported case: `sort: [{profit_average, desc}, {price, asc}]`. Cypher
+    // treats NULL as the *largest* value, so a plain `ORDER BY
+    // profit_average DESC` puts every listing missing that field first —
+    // burying the real top performers, especially once `limit` truncates
+    // the result. Each key must carry its own `IS NULL` tie-breaker so
+    // nulls sink to the bottom regardless of ASC/DESC.
+    let cypher = compile(
+        r#"{
+            "start": { "label": "Listing", "alias": "l" },
+            "return": [ { "field": "l.name" } ],
+            "sort": [
+                { "field": "l.profit_average", "order": "desc" },
+                { "field": "l.price", "order": "asc" }
+            ]
+        }"#,
+    );
+
+    let order_line = cypher
+        .text
+        .lines()
+        .find(|l| l.starts_with("ORDER BY "))
+        .expect("query has an ORDER BY clause");
+    assert_eq!(
+        order_line,
+        "ORDER BY l.profit_average IS NULL, l.profit_average DESC, l.price IS NULL, l.price ASC"
     );
 }
 

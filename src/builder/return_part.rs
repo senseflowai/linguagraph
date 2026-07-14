@@ -88,6 +88,15 @@ pub(super) fn write_order_by_with_extra(cur: &mut Cursor, sort: &[SortKey]) {
     cur.buf.push_str(&parts.join(", "));
 }
 
+/// Cypher treats `NULL` as the largest possible value: an `ASC` sort
+/// pushes it last, but `DESC` pushes it *first*. A `DESC` sort on a
+/// sparsely-populated numeric field (e.g. an average only some rows have
+/// enough data to compute) therefore buries every real value under a wall
+/// of `NULL` rows — worse, a following `LIMIT` can leave nothing else.
+/// Prefixing an `IS NULL` tie-breaker (always ascending, so `false`/non-null
+/// sorts first) makes absent values sort last regardless of the requested
+/// direction; rows within each null/non-null group still fall back to the
+/// field's own ordering.
 fn format_sort_key(s: &SortKey) -> String {
     let key = match &s.key {
         SortRef::Projected(name) => name.clone(),
@@ -97,7 +106,7 @@ fn format_sort_key(s: &SortKey) -> String {
         SortOrder::Asc => "ASC",
         SortOrder::Desc => "DESC",
     };
-    format!("{key} {dir}")
+    format!("{key} IS NULL, {key} {dir}")
 }
 
 pub(super) fn write_limit(cur: &mut Cursor, limit: u32) {
@@ -139,5 +148,47 @@ fn render_return(item: &ReturnClause) -> String {
                 None => call,
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sort_key_pushes_nulls_last_regardless_of_direction() {
+        let desc = SortKey {
+            key: SortRef::Property(PropertyRef {
+                alias: Alias::new("l"),
+                property: Some("profit_average".to_string()),
+            }),
+            order: SortOrder::Desc,
+        };
+        assert_eq!(
+            format_sort_key(&desc),
+            "l.profit_average IS NULL, l.profit_average DESC"
+        );
+
+        let asc = SortKey {
+            key: SortRef::Property(PropertyRef {
+                alias: Alias::new("l"),
+                property: Some("price".to_string()),
+            }),
+            order: SortOrder::Asc,
+        };
+        assert_eq!(asc.order, SortOrder::Asc);
+        assert_eq!(format_sort_key(&asc), "l.price IS NULL, l.price ASC");
+    }
+
+    #[test]
+    fn projected_alias_sort_key_also_gets_null_tiebreaker() {
+        let key = SortKey {
+            key: SortRef::Projected("total_spent".to_string()),
+            order: SortOrder::Desc,
+        };
+        assert_eq!(
+            format_sort_key(&key),
+            "total_spent IS NULL, total_spent DESC"
+        );
     }
 }

@@ -214,7 +214,7 @@ pub async fn cmd_explore(config_path: &std::path::Path, args: ExploreArgs) -> Re
             let opts = AskOptions {
                 synthesize_answer: answer,
                 include_subgraph: !no_subgraph,
-                max_rows: None,
+                ..Default::default()
             };
             let result = explorer.ask(&question, &opts).await?;
             emit(format, &result, |r| render_ask(r, show_cypher))

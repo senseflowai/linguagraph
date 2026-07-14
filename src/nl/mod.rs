@@ -255,15 +255,25 @@ impl NlTranslator {
 
     /// Answer `question` using only the supplied result rows.
     /// `query_summary` tells the model the rows are already filtered
-    /// (typically [`DslQuery::describe`]).
+    /// (typically [`DslQuery::describe`]). The rows are assumed to already
+    /// be shown to the user (e.g. as a table alongside the answer), so the
+    /// prompt instructs the model to answer directly instead of
+    /// restating/listing them back — that's pure wasted output tokens.
     pub async fn synthesize_answer(
         &self,
         question: &str,
         query_summary: &str,
         rows: &[BTreeMap<String, JsonValue>],
     ) -> Result<String, NlError> {
-        let system = "Answer the user's question using only the supplied graph query rows. \
-                      Be concise. If the rows are empty, say that the data does not contain the answer.";
+        let system = "Answer the user's question directly and concisely, using only the \
+                      supplied graph query rows as your source of truth. The rows are already \
+                      rendered as a table right next to your answer, so do not restate, list, \
+                      or paraphrase them back to the user — that wastes tokens repeating what \
+                      they can already see. State just the specific value, count, or judgment \
+                      the question asks for. Name an individual row only when the question \
+                      singles one out (e.g. \"which is cheapest\") — never enumerate the whole \
+                      result set. If the rows are empty, say the data does not contain the \
+                      answer.";
         let user = json!({
             "question": question,
             "query_summary": query_summary,

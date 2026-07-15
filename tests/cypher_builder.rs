@@ -36,7 +36,9 @@ fn aggregate_example_round_trip() {
     let cypher = compile(include_str!("../examples/aggregate_orders.json"));
     assert!(cypher.text.contains("count(o) AS order_count"));
     assert!(cypher.text.contains("sum(o.total) AS total_spent"));
-    assert!(cypher.text.contains("ORDER BY total_spent IS NULL, total_spent DESC"));
+    assert!(cypher
+        .text
+        .contains("ORDER BY total_spent IS NULL, total_spent DESC"));
 }
 
 #[test]
@@ -99,6 +101,43 @@ fn aggregate_projects_group_by_key_for_order_by() {
     assert!(
         !order_line.contains('.'),
         "ORDER BY must reference an alias, not a property expression: {order_line}"
+    );
+}
+
+#[test]
+fn aggregate_projects_group_by_field_object_alias() {
+    let cypher = compile(
+        r#"{
+            "start": { "label": "Region", "alias": "r" },
+            "traversals": [
+                { "from": "r",
+                  "edge": { "label": "CONTAINS", "alias": "r_p", "direction": "out" },
+                  "target": { "label": "Place", "alias": "p" } }
+            ],
+            "filters": [
+                { "field": "r.name", "op": "eq", "value": "медеуский район" }
+            ],
+            "return": [
+                { "aggregate": "count", "field": "p", "alias": "count" }
+            ],
+            "group_by": [
+                { "field": "r.name", "alias": "region_name" }
+            ]
+        }"#,
+    );
+
+    let return_line = cypher
+        .text
+        .lines()
+        .find(|l| l.starts_with("RETURN "))
+        .expect("query has a RETURN clause");
+    assert!(
+        return_line.contains("r.name AS region_name"),
+        "RETURN must use the explicit group_by alias: {return_line}"
+    );
+    assert!(
+        return_line.contains("count(p) AS count"),
+        "RETURN must keep the aggregate projection: {return_line}"
     );
 }
 

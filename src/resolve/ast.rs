@@ -623,6 +623,11 @@ fn lower_group_by(
             transform: None,
             alias: None,
         },
+        d::GroupByItem::FieldAlias { field, alias } => GroupByKey {
+            field: resolve_property(field, bound)?,
+            transform: None,
+            alias: alias.clone(),
+        },
         d::GroupByItem::DatePart {
             field,
             date_part,

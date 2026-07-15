@@ -196,6 +196,12 @@ fn validate(q: &DslQuery) -> Result<(), DslError> {
     for g in &q.group_by {
         match g {
             GroupByItem::Field(field) => check_field_ref(field)?,
+            GroupByItem::FieldAlias { field, alias } => {
+                check_field_ref(field)?;
+                if let Some(a) = alias {
+                    check_identifier(a)?;
+                }
+            }
             GroupByItem::DatePart { field, alias, .. } => {
                 check_field_ref(field)?;
                 if let Some(a) = alias {

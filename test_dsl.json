@@ -1,0 +1,40 @@
+{
+  "filters": [
+    {
+      "field": "r.name",
+      "op": "eq",
+      "value": "Медеуский район"
+    }
+  ],
+  "group_by": [
+    {
+      "alias": "region_name",
+      "field": "r.name"
+    }
+  ],
+  "return": [
+    {
+      "aggregate": "count",
+      "alias": "count",
+      "field": "p"
+    }
+  ],
+  "start": {
+    "alias": "r",
+    "label": "Region"
+  },
+  "traversals": [
+    {
+      "edge": {
+        "alias": "r_p",
+        "direction": "out",
+        "label": "CONTAINS"
+      },
+      "from": "r",
+      "target": {
+        "alias": "p",
+        "label": "Place"
+      }
+    }
+  ]
+}

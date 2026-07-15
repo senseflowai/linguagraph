@@ -360,6 +360,8 @@ pub struct SortItem {
 }
 
 /// A grouping key. Keep the common case tiny (`"c.name"`), but allow
+/// an explicit output alias when the group key should have a stable
+/// projected column name, and allow
 /// date/time bucketing when a timestamp should be grouped by a component.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
@@ -368,6 +370,11 @@ pub enum GroupByItem {
     DatePart {
         field: String,
         date_part: DatePart,
+        #[serde(default)]
+        alias: Option<String>,
+    },
+    FieldAlias {
+        field: String,
         #[serde(default)]
         alias: Option<String>,
     },

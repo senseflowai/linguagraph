@@ -21,6 +21,23 @@ fn accepts_example_aggregate() {
 }
 
 #[test]
+fn accepts_group_by_field_object_with_alias() {
+    let json = r#"{
+        "start": { "label": "Region", "alias": "r" },
+        "return": [{ "aggregate": "count", "field": "r", "alias": "count" }],
+        "group_by": [{ "field": "r.name", "alias": "region_name" }]
+    }"#;
+    let q = dsl::parse_str(json).expect("group_by field object should parse");
+    assert_eq!(
+        q.group_by,
+        vec![GroupByItem::FieldAlias {
+            field: "r.name".to_string(),
+            alias: Some("region_name".to_string())
+        }]
+    );
+}
+
+#[test]
 fn accepts_missing_action() {
     let json = r#"{
         "start": { "label": "Person", "alias": "p" },

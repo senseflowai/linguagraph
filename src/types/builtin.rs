@@ -36,8 +36,9 @@ use super::TypeId;
 )]
 pub enum BuiltinType {
     /// Plain string — matched by Cypher with standard operators
-    /// (`=`, `!=`, `<`, `>`, `=~`, `CONTAINS`, …). Stored and compared as
-    /// the raw value (no normalization). This is the "keyword" type:
+    /// (`=`, `!=`, `<`, `>`, `=~`, `CONTAINS`, …). Stored as the raw
+    /// value plus a normalized shadow property for case-insensitive
+    /// equality/substring matching. This is the "keyword" type:
     /// identifiers, codes, statuses, categorical labels.
     Keyword,
     /// Integer or float.

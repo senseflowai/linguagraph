@@ -2,8 +2,8 @@
   "filters": [
     {
       "field": "r.name",
-      "op": "eq",
-      "value": "Медеуский район"
+      "op": "eq_ci",
+      "value": "медеуский район"
     }
   ],
   "group_by": [

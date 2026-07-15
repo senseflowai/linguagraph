@@ -8,6 +8,7 @@
 use std::collections::HashSet;
 
 use crate::ast::query::*;
+use crate::normalize::{normalize_literal_for_match, normalized_property_name};
 use crate::types::TypeRegistry;
 
 use super::cursor::Cursor;
@@ -17,7 +18,10 @@ use super::cypher::BuilderError;
 /// predicates, recursing through `And`/`Or`/`Not`. Used by the builder to
 /// detect when a filter needs an alias that's only bound by an OPTIONAL
 /// MATCH, so it can defer the WHERE clause until after that match.
-pub(super) fn collect_referenced_aliases<'a>(expr: &'a FilterExpression, out: &mut HashSet<&'a str>) {
+pub(super) fn collect_referenced_aliases<'a>(
+    expr: &'a FilterExpression,
+    out: &mut HashSet<&'a str>,
+) {
     match expr {
         FilterExpression::Predicate(p) => {
             out.insert(p.field.alias.as_str());
@@ -112,8 +116,26 @@ fn write_joined(
 }
 
 fn write_predicate(cur: &mut Cursor, p: &Predicate, out: &mut String) {
-    let lhs = render_property(&p.field);
-    let placeholder = cur.bind(p.value.clone());
+    let case_insensitive = matches!(
+        p.op,
+        ComparisonOp::EqCi
+            | ComparisonOp::NeqCi
+            | ComparisonOp::InCi
+            | ComparisonOp::ContainsCi
+            | ComparisonOp::StartsWithCi
+            | ComparisonOp::EndsWithCi
+    );
+    let lhs = if case_insensitive {
+        render_normalized_property(&p.field)
+    } else {
+        render_property(&p.field)
+    };
+    let value = if case_insensitive {
+        normalize_literal_for_match(p.value.clone())
+    } else {
+        p.value.clone()
+    };
+    let placeholder = cur.bind(value);
     let rendered = match p.op {
         ComparisonOp::Eq => format!("{lhs} = {placeholder}"),
         ComparisonOp::Neq => format!("{lhs} <> {placeholder}"),
@@ -125,6 +147,12 @@ fn write_predicate(cur: &mut Cursor, p: &Predicate, out: &mut String) {
         ComparisonOp::Contains => format!("{lhs} CONTAINS {placeholder}"),
         ComparisonOp::StartsWith => format!("{lhs} STARTS WITH {placeholder}"),
         ComparisonOp::EndsWith => format!("{lhs} ENDS WITH {placeholder}"),
+        ComparisonOp::EqCi => format!("{lhs} = {placeholder}"),
+        ComparisonOp::NeqCi => format!("{lhs} <> {placeholder}"),
+        ComparisonOp::InCi => format!("{lhs} IN {placeholder}"),
+        ComparisonOp::ContainsCi => format!("{lhs} CONTAINS {placeholder}"),
+        ComparisonOp::StartsWithCi => format!("{lhs} STARTS WITH {placeholder}"),
+        ComparisonOp::EndsWithCi => format!("{lhs} ENDS WITH {placeholder}"),
     };
     out.push_str(&rendered);
 }
@@ -132,6 +160,13 @@ fn write_predicate(cur: &mut Cursor, p: &Predicate, out: &mut String) {
 pub(super) fn render_property(p: &PropertyRef) -> String {
     match &p.property {
         Some(prop) => format!("{}.{}", p.alias, prop),
+        None => p.alias.to_string(),
+    }
+}
+
+fn render_normalized_property(p: &PropertyRef) -> String {
+    match &p.property {
+        Some(prop) => format!("{}.{}", p.alias, normalized_property_name(prop)),
         None => p.alias.to_string(),
     }
 }

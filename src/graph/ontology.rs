@@ -32,8 +32,9 @@ use crate::types::BuiltinType;
 /// There are exactly six canonical types:
 ///
 /// * `Keyword` — a plain string matched by standard Cypher operators
-///   (`=`, `!=`, `<`, `>`, `=~`, `CONTAINS`, …); identifiers, codes,
-///   statuses, categorical labels.
+///   (`=`, `!=`, `<`, `>`, `=~`, `CONTAINS`, …); stored verbatim with
+///   normalized shadow fields for case-insensitive equality/substring
+///   matching; identifiers, codes, statuses, categorical labels.
 /// * `Text` — free-form text; always routed through the
 ///   `SemanticTextHandler` (embedded + vector-searchable).
 /// * `Number` — an integer or a float.
@@ -396,7 +397,10 @@ impl OntologyCatalog {
     /// is checked against entity types first, then relation types (see
     /// [`DomainOntology::get_property`]).
     pub fn get_property(&self, entity: &str, property: &str) -> Option<&PropertySpec> {
-        if let Some(p) = self.get_entity(entity).and_then(|(_, e)| e.property(property)) {
+        if let Some(p) = self
+            .get_entity(entity)
+            .and_then(|(_, e)| e.property(property))
+        {
             return Some(p);
         }
         self.get_relation(entity)?.1.property(property)

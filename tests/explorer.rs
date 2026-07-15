@@ -211,7 +211,9 @@ async fn entity_card_scopes_prefix_classifies_props_and_merges_relations() {
     assert!(captured[0].text.contains("MATCH (n:E2E)"));
     assert!(captured[0].text.contains("n.id = $id"));
     assert!(captured[0].text.contains(":mention|part_of"));
-    assert!(captured[1].text.contains("NOT type(r) IN [\"mention\", \"part_of\"]"));
+    assert!(captured[1]
+        .text
+        .contains("NOT type(r) IN [\"mention\", \"part_of\"]"));
 }
 
 #[tokio::test]
@@ -253,12 +255,23 @@ async fn neighbors_applies_filters_pagination_and_edge_direction() {
     // LIFO: neighbor hop (2nd call) first, origin hydration (1st) second.
     // One incoming ACTED_IN neighbor.
     mock.enqueue(result(
-        vec!["nid", "id", "labels", "props", "rel", "rel_props", "outgoing"],
+        vec![
+            "nid",
+            "id",
+            "labels",
+            "props",
+            "rel",
+            "rel_props",
+            "outgoing",
+        ],
         vec![row(vec![
             ("nid", Value::Int(8)),
             ("id", Value::String("p1".into())),
             ("labels", Value::Json(json!(["E2E", "Person"]))),
-            ("props", Value::Json(json!({"id": "p1", "name": "Keanu Reeves"}))),
+            (
+                "props",
+                Value::Json(json!({"id": "p1", "name": "Keanu Reeves"})),
+            ),
             ("rel", Value::String("ACTED_IN".into())),
             ("rel_props", Value::Json(json!({"roles": ["Neo"]}))),
             // The Memgraph client flattens bools to Json on the wire.
@@ -387,7 +400,10 @@ async fn overview_reduces_label_sets_and_excludes_builtins() {
 async fn entities_of_type_pages_sorts_and_counts() {
     let mock = Arc::new(MockClient::new());
     // LIFO: count (2nd call) first, page (1st call) second.
-    mock.enqueue(result(vec!["total"], vec![row(vec![("total", Value::Int(38))])]));
+    mock.enqueue(result(
+        vec!["total"],
+        vec![row(vec![("total", Value::Int(38))])],
+    ));
     mock.enqueue(result(
         vec!["nid", "id", "labels", "props"],
         vec![matrix_node_row()],
@@ -463,13 +479,20 @@ async fn keyword_search_scans_schema_string_props_only() {
 
     let captured = mock.captured.lock().unwrap();
     let cypher = &captured[0].text;
-    assert!(cypher.contains("n.tagline"), "string prop scanned: {cypher}");
+    assert!(
+        cypher.contains("n._lg_norm_tagline"),
+        "string prop scanned: {cypher}"
+    );
     assert!(
         !cypher.contains("n.roles"),
         "list prop must not be scanned (toString on lists errors): {cypher}"
     );
     assert!(cypher.contains("NOT n:Chunk"));
-    assert!(cypher.contains("n.id") && cypher.contains("n.name") && cypher.contains("n.title"));
+    assert!(
+        cypher.contains("n._lg_norm_id")
+            && cypher.contains("n._lg_norm_name")
+            && cypher.contains("n._lg_norm_title")
+    );
 }
 
 #[tokio::test]
@@ -502,7 +525,10 @@ async fn invalid_identifiers_are_rejected_not_interpolated() {
 
     // A malicious prefix label is rejected at query-build time too.
     let hostile = explorer_with(Arc::new(MockClient::new()), Some("E2E) DETACH DELETE (n"));
-    let err = hostile.entity("m1").await.expect_err("prefix injection rejected");
+    let err = hostile
+        .entity("m1")
+        .await
+        .expect_err("prefix injection rejected");
     assert!(err.to_string().contains("not a valid Cypher identifier"));
 }
 
@@ -535,19 +561,28 @@ async fn run_dsl_injects_ids_hydrates_subgraph_and_strips_columns() {
                 ("nid", Value::Int(1)),
                 ("id", Value::String("p1".into())),
                 ("labels", Value::Json(json!(["E2E", "Person"]))),
-                ("props", Value::Json(json!({"id": "p1", "name": "Keanu Reeves"}))),
+                (
+                    "props",
+                    Value::Json(json!({"id": "p1", "name": "Keanu Reeves"})),
+                ),
             ]),
             row(vec![
                 ("nid", Value::Int(2)),
                 ("id", Value::String("m1".into())),
                 ("labels", Value::Json(json!(["E2E", "Movie"]))),
-                ("props", Value::Json(json!({"id": "m1", "title": "The Matrix"}))),
+                (
+                    "props",
+                    Value::Json(json!({"id": "m1", "title": "The Matrix"})),
+                ),
             ]),
             row(vec![
                 ("nid", Value::Int(3)),
                 ("id", Value::String("m2".into())),
                 ("labels", Value::Json(json!(["E2E", "Movie"]))),
-                ("props", Value::Json(json!({"id": "m2", "title": "John Wick"}))),
+                (
+                    "props",
+                    Value::Json(json!({"id": "m2", "title": "John Wick"})),
+                ),
             ]),
         ],
     ));
@@ -601,7 +636,10 @@ async fn run_dsl_injects_ids_hydrates_subgraph_and_strips_columns() {
     // Table: hidden columns stripped, distinct restored.
     assert_eq!(answer.table.columns, vec!["name".to_string()]);
     assert_eq!(answer.table.rows.len(), 1);
-    assert_eq!(answer.table.rows[0].get("name"), Some(&json!("Keanu Reeves")));
+    assert_eq!(
+        answer.table.rows[0].get("name"),
+        Some(&json!("Keanu Reeves"))
+    );
 
     // Subgraph: 3 hydrated nodes, 2 edges among them.
     assert_eq!(answer.subgraph.nodes.len(), 3);
@@ -618,12 +656,19 @@ async fn run_dsl_injects_ids_hydrates_subgraph_and_strips_columns() {
     assert!(answer.trace.question.is_none());
     assert!(answer.trace.cypher.contains("__id_p"));
     assert!(answer.trace.cypher.contains("__id_m"));
-    assert!(!answer.trace.dsl_summary.contains("__id_"), "summary stays clean");
+    assert!(
+        !answer.trace.dsl_summary.contains("__id_"),
+        "summary stays clean"
+    );
     assert!(answer.answer.is_none());
 
     let captured = mock.captured.lock().unwrap();
     assert_eq!(captured.len(), 3);
-    assert!(captured[0].text.contains(":E2E"), "prefix forced: {}", captured[0].text);
+    assert!(
+        captured[0].text.contains(":E2E"),
+        "prefix forced: {}",
+        captured[0].text
+    );
     assert!(captured[1].text.contains("n.id IN $ids"));
     assert!(captured[1].text.contains("(n:E2E)"));
     assert!(captured[2].text.contains("a.id IN $ids"));
@@ -839,14 +884,21 @@ async fn aggregate_dsl_has_no_subgraph_but_full_trace() {
         .await
         .expect("aggregate runs");
 
-    assert!(answer.subgraph.is_empty(), "aggregates have no entity bindings");
+    assert!(
+        answer.subgraph.is_empty(),
+        "aggregates have no entity bindings"
+    );
     assert_eq!(answer.table.rows.len(), 1);
     assert_eq!(answer.table.rows[0].get("total"), Some(&json!(38)));
     assert!(!answer.trace.cypher.is_empty());
 
     let captured = mock.captured.lock().unwrap();
     assert_eq!(captured.len(), 1, "no hydration queries for aggregates");
-    assert!(!captured[0].text.contains("__id_"), "no injection: {}", captured[0].text);
+    assert!(
+        !captured[0].text.contains("__id_"),
+        "no injection: {}",
+        captured[0].text
+    );
 }
 
 #[tokio::test]
@@ -863,13 +915,19 @@ async fn semantic_search_ranks_hits_and_hydrates_by_internal_id() {
                 ("nid", Value::Int(1)),
                 ("id", Value::String("p1".into())),
                 ("labels", Value::Json(json!(["E2E", "Person"]))),
-                ("props", Value::Json(json!({"id": "p1", "name": "Keanu Reeves"}))),
+                (
+                    "props",
+                    Value::Json(json!({"id": "p1", "name": "Keanu Reeves"})),
+                ),
             ]),
             row(vec![
                 ("nid", Value::Int(2)),
                 ("id", Value::String("m1".into())),
                 ("labels", Value::Json(json!(["E2E", "Movie"]))),
-                ("props", Value::Json(json!({"id": "m1", "title": "The Matrix"}))),
+                (
+                    "props",
+                    Value::Json(json!({"id": "m1", "title": "The Matrix"})),
+                ),
             ]),
         ],
     ));
@@ -939,7 +997,10 @@ async fn semantic_mode_without_embedder_errors_but_auto_degrades() {
         )
         .await
         .expect_err("semantic without embedder must fail");
-    assert!(err.to_string().contains("semantic search unavailable"), "got: {err}");
+    assert!(
+        err.to_string().contains("semantic search unavailable"),
+        "got: {err}"
+    );
 
     // Auto silently uses the keyword channel instead.
     let found = explorer
@@ -964,7 +1025,10 @@ async fn all_digit_handle_falls_back_to_internal_id() {
             ("nid", Value::Int(1000086)),
             ("id", Value::String("listing-42".into())),
             ("labels", Value::Json(json!(["E2E", "Listing"]))),
-            ("props", Value::Json(json!({"id": "listing-42", "name": "Shop"}))),
+            (
+                "props",
+                Value::Json(json!({"id": "listing-42", "name": "Shop"})),
+            ),
             ("sources", Value::Json(json!([]))),
         ])],
     ));

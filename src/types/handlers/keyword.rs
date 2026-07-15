@@ -1,13 +1,15 @@
 //! Query-capable handler for the built-in `Keyword` type.
 //!
-//! A `Keyword` is a plain string stored **verbatim** (no normalization),
-//! so Cypher matches it with the standard string operators: `=`, `<>`,
-//! `<`, `>`, `<=`, `>=`, `=~` (regex), `CONTAINS`, `STARTS WITH`,
+//! A `Keyword` is a plain string stored **verbatim** plus a normalized
+//! shadow property for case-insensitive equality and substring matching.
+//! Cypher matches it with the standard string operators: `=`, `<>`, `<`,
+//! `>`, `<=`, `>=`, `=~` (regex), `CONTAINS`, `STARTS WITH`,
 //! `ENDS WITH`, and `IN`. Use it for identifiers, codes, statuses, and
 //! other short categorical values. Free-form / natural-language text that
 //! should be searchable belongs to the `SemanticText` type instead.
 
 use crate::ast::query::Literal;
+use crate::normalize::{normalize_literal_for_match, normalized_property_name};
 use crate::types::context::{EmitCtx, IngestCtx, LowerCtx};
 use crate::types::{
     BuiltinType, Capabilities, TypeError, TypeHandler, TypeId, TypedOp, TypedPredicate,
@@ -129,20 +131,20 @@ impl TypeHandler for KeywordHandler {
         Self::check_value_shape(pred.op, &pred.value)?;
 
         let lhs = super::render_property(&pred.field);
+        let normalized_lhs = render_normalized_property(&pred.field);
         // Keyword values are short categorical strings (statuses, codes,
-        // enum labels) whose casing is not semantically meaningful. We
-        // match them case-insensitively by wrapping both sides in
-        // `toLower(...)` for the operators where that preserves intent.
+        // enum labels) whose casing is not semantically meaningful. For
+        // equality and substring ops we match normalized shadow properties
+        // generated at ingest time. This deliberately avoids Memgraph's
+        // `toLower()`, which is not Unicode-aware for Cyrillic text.
         //
         // Left untouched:
         //   * `Matches` (=~) — case is governed by regex flags.
         //   * ordering (`Gt`/`Gte`/`Lt`/`Lte`) — lexicographic order under
         //     `toLower` would change the semantics, and enums don't use it.
         //
-        // Caveat: `toLower(n.field)` can prevent Memgraph from using an
-        // index on `field`. Acceptable for low-cardinality enums; if a
-        // hot high-cardinality path ever needs this, normalise on ingest
-        // and match the normalised value instead.
+        // The shadow property is a normal stored field, so it can be
+        // indexed by callers that need a hot high-cardinality path.
         let op = match pred.op {
             TypedOp::Eq => "=",
             TypedOp::Neq => "<>",
@@ -161,12 +163,8 @@ impl TypeHandler for KeywordHandler {
                     ctx.set_where("false".to_string());
                     return Ok(());
                 }
-                let clauses = items
-                    .iter()
-                    .map(|item| format!("toLower({lhs}) = toLower({})", ctx.bind(item.clone())))
-                    .collect::<Vec<_>>()
-                    .join(" OR ");
-                ctx.set_where(format!("({clauses})"));
+                let placeholder = ctx.bind(normalize_literal_for_match(pred.value.clone()));
+                ctx.set_where(format!("{normalized_lhs} IN {placeholder}"));
                 return Ok(());
             }
             TypedOp::Contains => "CONTAINS",
@@ -180,9 +178,6 @@ impl TypeHandler for KeywordHandler {
                 })
             }
         };
-        let placeholder = ctx.bind(pred.value.clone());
-        // Ordering and regex keep verbatim casing; equality, inequality
-        // and substring ops fold case on both operands.
         let case_insensitive = matches!(
             pred.op,
             TypedOp::Eq
@@ -191,12 +186,26 @@ impl TypeHandler for KeywordHandler {
                 | TypedOp::StartsWith
                 | TypedOp::EndsWith
         );
+        let placeholder = if case_insensitive {
+            ctx.bind(normalize_literal_for_match(pred.value.clone()))
+        } else {
+            ctx.bind(pred.value.clone())
+        };
+        // Ordering and regex keep verbatim casing; equality, inequality
+        // and substring ops use the normalized shadow property.
         if case_insensitive {
-            ctx.set_where(format!("toLower({lhs}) {op} toLower({placeholder})"));
+            ctx.set_where(format!("{normalized_lhs} {op} {placeholder}"));
         } else {
             ctx.set_where(format!("{lhs} {op} {placeholder}"));
         }
         Ok(())
+    }
+}
+
+fn render_normalized_property(p: &crate::ast::query::PropertyRef) -> String {
+    match &p.property {
+        Some(prop) => format!("{}.{}", p.alias, normalized_property_name(prop)),
+        None => p.alias.to_string(),
     }
 }
 
@@ -281,13 +290,12 @@ mod tests {
 
         assert_eq!(
             contribution.where_inline.as_deref(),
-            Some("toLower(c.vin) = toLower($p0)")
+            Some("c._lg_norm_vin = $p0")
         );
-        // Stored verbatim — no normalization; casing is folded at match
-        // time via toLower, not by mutating the bound value.
+        // Stored verbatim in the AST; normalized only when bound.
         assert_eq!(
             binder.params.get("p0"),
-            Some(&Literal::String("WBA 8G-510/60K587560".into()))
+            Some(&Literal::String("wba 8g-510/60k587560".into()))
         );
     }
 
@@ -296,23 +304,20 @@ mod tests {
         let (where_inline, params) = emit_pred(TypedOp::Contains, Literal::String("BMW X".into()));
         assert_eq!(
             where_inline.as_deref(),
-            Some("toLower(c.name) CONTAINS toLower($p0)")
+            Some("c._lg_norm_name CONTAINS $p0")
         );
-        assert_eq!(params.get("p0"), Some(&Literal::String("BMW X".into())));
+        assert_eq!(params.get("p0"), Some(&Literal::String("bmw x".into())));
     }
 
     #[test]
     fn keyword_emits_starts_with_and_ends_with() {
         for (op, expected) in [
-            (
-                TypedOp::StartsWith,
-                "toLower(c.name) STARTS WITH toLower($p0)",
-            ),
-            (TypedOp::EndsWith, "toLower(c.name) ENDS WITH toLower($p0)"),
+            (TypedOp::StartsWith, "c._lg_norm_name STARTS WITH $p0"),
+            (TypedOp::EndsWith, "c._lg_norm_name ENDS WITH $p0"),
         ] {
             let (where_inline, params) = emit_pred(op, Literal::String("BMW X".into()));
             assert_eq!(where_inline.as_deref(), Some(expected));
-            assert_eq!(params.get("p0"), Some(&Literal::String("BMW X".into())));
+            assert_eq!(params.get("p0"), Some(&Literal::String("bmw x".into())));
         }
     }
 
@@ -331,11 +336,15 @@ mod tests {
 
     #[test]
     fn keyword_emits_case_insensitive_eq_and_neq() {
-        let (eq, _) = emit_pred(TypedOp::Eq, Literal::String("Completed".into()));
-        assert_eq!(eq.as_deref(), Some("toLower(c.name) = toLower($p0)"));
+        let (eq, eq_params) = emit_pred(TypedOp::Eq, Literal::String("Completed".into()));
+        assert_eq!(eq.as_deref(), Some("c._lg_norm_name = $p0"));
+        assert_eq!(
+            eq_params.get("p0"),
+            Some(&Literal::String("completed".into()))
+        );
 
         let (neq, _) = emit_pred(TypedOp::Neq, Literal::String("Completed".into()));
-        assert_eq!(neq.as_deref(), Some("toLower(c.name) <> toLower($p0)"));
+        assert_eq!(neq.as_deref(), Some("c._lg_norm_name <> $p0"));
     }
 
     #[test]
@@ -355,12 +364,14 @@ mod tests {
                 Literal::String("Audi-Q7".into()),
             ]),
         );
+        assert_eq!(where_inline.as_deref(), Some("c._lg_norm_name IN $p0"));
         assert_eq!(
-            where_inline.as_deref(),
-            Some("(toLower(c.name) = toLower($p0) OR toLower(c.name) = toLower($p1))")
+            params.get("p0"),
+            Some(&Literal::List(vec![
+                Literal::String("bmw x".into()),
+                Literal::String("audi-q7".into()),
+            ]))
         );
-        assert_eq!(params.get("p0"), Some(&Literal::String("BMW X".into())));
-        assert_eq!(params.get("p1"), Some(&Literal::String("Audi-Q7".into())));
     }
 
     #[test]

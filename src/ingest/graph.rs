@@ -8,6 +8,7 @@ use crate::ast::query::{InsertQuery, Literal, NodeBatch, NodeRow, RelationBatch,
 use crate::graph::{
     EntityGraph, EntityRef, Graph, PrimaryKey, Property, PropertyType, Scope, CANONICAL_FIELD,
 };
+use crate::normalize::{normalize_for_match, normalized_property_name};
 use crate::types::context::IngestCtx;
 use crate::types::handlers::SemanticTextHandler;
 use crate::types::{BuiltinType, SideEffectQueue, TypeId, TypeRegistry};
@@ -285,7 +286,7 @@ fn lower_entity_properties(
             effects,
             prefix_index,
         )? {
-            out.insert(property.name.clone(), lit);
+            insert_property_with_normalized_shadow(&mut out, &property.name, lit);
         }
     }
     Ok(out)
@@ -336,9 +337,31 @@ fn lower_relation_properties(
     let mut out = BTreeMap::new();
     for property in properties.values() {
         let lit = lower_relation_property(property, registry)?;
-        out.insert(property.name.clone(), lit);
+        insert_property_with_normalized_shadow(&mut out, &property.name, lit);
     }
     Ok(out)
+}
+
+fn insert_property_with_normalized_shadow(
+    out: &mut BTreeMap<String, Literal>,
+    name: &str,
+    lit: Literal,
+) {
+    let normalized = match &lit {
+        Literal::String(s) if should_add_normalized_shadow(name) => {
+            Some(Literal::String(normalize_for_match(s)))
+        }
+        _ => None,
+    };
+    out.insert(name.to_string(), lit);
+    if let Some(normalized) = normalized {
+        out.entry(normalized_property_name(name))
+            .or_insert(normalized);
+    }
+}
+
+fn should_add_normalized_shadow(name: &str) -> bool {
+    !name.starts_with('_')
 }
 
 fn lower_relation_property(
@@ -626,6 +649,51 @@ mod tests {
             Literal::Int(2024)
         );
         assert_eq!(effects.len(), 2);
+    }
+
+    #[test]
+    fn string_properties_get_unicode_normalized_shadow_values() {
+        let mut graph = GraphBuilder::new();
+        let region = graph
+            .entity("Region")
+            .strict_primary_key("id")
+            .property("id", PropertyType::Keyword, "r1")
+            .property("name", PropertyType::Keyword, "Медеуский район")
+            .property("_canonical", PropertyType::Text, "Region: Медеуский район")
+            .add();
+        graph
+            .relationship(region, "CONTAINS", region)
+            .property("label", PropertyType::Keyword, "Внутри")
+            .add()
+            .unwrap();
+
+        let insert = plan_graph_with_registry(
+            &graph.build(),
+            PlannerOptions::default(),
+            &registry(),
+            &mut SideEffectQueue::new(),
+        )
+        .unwrap();
+
+        let props = &insert.node_batches[0].rows[0].props;
+        assert_eq!(
+            props.get("name"),
+            Some(&Literal::String("Медеуский район".into()))
+        );
+        assert_eq!(
+            props.get("_lg_norm_name"),
+            Some(&Literal::String("медеуский район".into()))
+        );
+        assert!(
+            !props.contains_key("_lg_norm__canonical"),
+            "system properties should not get normalized shadows"
+        );
+
+        let rel_props = &insert.relation_batches[0].rows[0].props;
+        assert_eq!(
+            rel_props.get("_lg_norm_label"),
+            Some(&Literal::String("внутри".into()))
+        );
     }
 
     #[test]

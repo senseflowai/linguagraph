@@ -13,6 +13,7 @@ use crate::ast::query::Literal;
 use crate::builder::CypherQuery;
 use crate::graph::{MENTION_REL, PART_OF_REL, SOURCE_LABEL};
 use crate::ingest::delete::is_valid_ident;
+use crate::normalize::{normalize_for_match, normalized_property_name};
 
 use super::dto::RelDirection;
 use super::ExploreError;
@@ -52,8 +53,7 @@ impl NodeHandle {
     fn where_clause(&self) -> (String, BTreeMap<String, Literal>) {
         match self {
             NodeHandle::AppId(id) => {
-                let mut params =
-                    BTreeMap::from([("id".to_string(), Literal::String(id.clone()))]);
+                let mut params = BTreeMap::from([("id".to_string(), Literal::String(id.clone()))]);
                 match id.parse::<i64>() {
                     Ok(numeric) => {
                         params.insert("id_int".to_string(), Literal::Int(numeric));
@@ -212,7 +212,10 @@ fn id_list_predicate(
 }
 
 /// T4 — hydrate nodes by public ids.
-pub(crate) fn nodes_by_ids(ids: &[String], prefix: Option<&str>) -> Result<CypherQuery, ExploreError> {
+pub(crate) fn nodes_by_ids(
+    ids: &[String],
+    prefix: Option<&str>,
+) -> Result<CypherQuery, ExploreError> {
     let p = label_suffix(prefix)?;
     let (predicate, params) = id_list_predicate("n.id", ids, "");
     let text = format!(
@@ -223,7 +226,10 @@ pub(crate) fn nodes_by_ids(ids: &[String], prefix: Option<&str>) -> Result<Cyphe
 }
 
 /// T4b — hydrate nodes by internal ids (bridge from vector search).
-pub(crate) fn nodes_by_nids(nids: &[i64], prefix: Option<&str>) -> Result<CypherQuery, ExploreError> {
+pub(crate) fn nodes_by_nids(
+    nids: &[i64],
+    prefix: Option<&str>,
+) -> Result<CypherQuery, ExploreError> {
     let p = label_suffix(prefix)?;
     let text = format!(
         "MATCH (n{p}) WHERE id(n) IN $nids \
@@ -308,8 +314,9 @@ pub(crate) fn keyword_search(
         if exact {
             predicates.push(format!("n.{prop} = $q"));
         } else {
+            let normalized = normalized_property_name(prop);
             predicates.push(format!(
-                "toLower(toString(coalesce(n.{prop}, \"\"))) CONTAINS $q"
+                "toString(coalesce(n.{normalized}, \"\")) CONTAINS $q"
             ));
         }
     }
@@ -332,7 +339,7 @@ pub(crate) fn keyword_search(
     let needle = if exact {
         needle.to_string()
     } else {
-        needle.to_lowercase()
+        normalize_for_match(needle)
     };
     let params = BTreeMap::from([("q".to_string(), Literal::String(needle))]);
     Ok(CypherQuery::new(text, params))
@@ -376,10 +383,7 @@ mod tests {
     #[test]
     fn node_handle_parses_nid_fallback() {
         assert_eq!(NodeHandle::parse("_nid:42"), NodeHandle::Nid(42));
-        assert_eq!(
-            NodeHandle::parse("m1"),
-            NodeHandle::AppId("m1".to_string())
-        );
+        assert_eq!(NodeHandle::parse("m1"), NodeHandle::AppId("m1".to_string()));
         // Malformed nid falls back to an app id, never panics.
         assert_eq!(
             NodeHandle::parse("_nid:abc"),
@@ -432,9 +436,14 @@ mod tests {
         .unwrap();
         assert!(q.text.contains("<-[r]-"));
         assert!(q.text.contains("type(r) IN $edge_types"));
-        assert!(q.text.contains("any(l IN labels(m) WHERE l IN $target_labels)"));
+        assert!(q
+            .text
+            .contains("any(l IN labels(m) WHERE l IN $target_labels)"));
         assert!(q.text.contains("SKIP 20 LIMIT 10"));
-        assert!(!q.text.contains("NOT type(r) IN"), "explicit edge types disable the builtin guard");
+        assert!(
+            !q.text.contains("NOT type(r) IN"),
+            "explicit edge types disable the builtin guard"
+        );
     }
 
     #[test]
@@ -463,7 +472,9 @@ mod tests {
             "bad prop".to_string(), // skipped, not an ident
         ];
         let q = keyword_search("Keanu", &props, None, false, 25, Some("T1")).unwrap();
-        assert!(q.text.contains("toLower(toString(coalesce(n.name, \"\"))) CONTAINS $q"));
+        assert!(q
+            .text
+            .contains("toString(coalesce(n._lg_norm_name, \"\")) CONTAINS $q"));
         assert!(!q.text.contains("bad prop"));
         assert!(q.text.contains("NOT n:Chunk"));
         assert_eq!(q.params.get("q"), Some(&Literal::String("keanu".into())));

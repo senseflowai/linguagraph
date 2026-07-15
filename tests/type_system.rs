@@ -862,16 +862,12 @@ fn keyword_property_from_ontology_catalog_auto_resolves_to_keyword_handler() {
     )
     .unwrap();
     let cypher = pipeline.compile(dsl_query).unwrap();
-    // Keyword equality folds case on both operands so the LLM needn't
-    // guess the exact stored casing.
-    assert!(cypher
-        .text
-        .contains("WHERE toLower(c.industry) = toLower($p0)"));
-    // Keyword stores/compares the value verbatim — no normalization of
-    // the bound value itself (case is folded at match time via toLower).
+    // Keyword equality uses the normalized shadow property so the LLM
+    // needn't guess exact stored casing, including non-ASCII casing.
+    assert!(cypher.text.contains("WHERE c._lg_norm_industry = $p0"));
     assert_eq!(
         cypher.params.get("p0"),
-        Some(&Literal::String(" Fin-Tech ".into()))
+        Some(&Literal::String("fin-tech".into()))
     );
     assert!(!cypher.text.contains("qlink"));
 }

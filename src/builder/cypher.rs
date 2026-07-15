@@ -151,7 +151,11 @@ pub fn build_read_with(
     // ("Unbound variable"). `WITH *` between blocks carries every
     // binding seen so far (this block's plus all prior ones) forward.
     if !cur.pre_match.is_empty() {
-        let mut pre = cur.pre_match.drain(..).collect::<Vec<_>>().join("\nWITH *\n");
+        let mut pre = cur
+            .pre_match
+            .drain(..)
+            .collect::<Vec<_>>()
+            .join("\nWITH *\n");
         pre.push('\n');
         cur.buf = format!("{pre}{}", cur.buf);
     }
@@ -358,7 +362,9 @@ fn filter_needs_optional_scope(filter: &FilterExpression, query: &ReadQuery) -> 
     }
     let mut referenced = std::collections::HashSet::new();
     where_part::collect_referenced_aliases(filter, &mut referenced);
-    referenced.iter().any(|alias| optional_aliases.contains(alias))
+    referenced
+        .iter()
+        .any(|alias| optional_aliases.contains(alias))
 }
 
 /// True when the caller already projects a `sources` column. Used as
@@ -459,6 +465,35 @@ mod tests {
         assert!(q.text.contains("RETURN p.name AS name"));
         assert!(q.text.trim_end().ends_with("LIMIT 10"));
         assert_eq!(q.params.get("p0"), Some(&Literal::Int(30)));
+    }
+
+    #[test]
+    fn case_insensitive_filter_uses_normalized_shadow_property() {
+        let q = ReadQuery {
+            action: Action::Find,
+            start: Node {
+                label: "Region".into(),
+                alias: alias("r"),
+                prefix_label: None,
+            },
+            traversals: vec![],
+            filter: Some(FilterExpression::Predicate(Predicate {
+                field: pref("r", Some("name")),
+                op: ComparisonOp::ContainsCi,
+                value: Literal::String("Медеу".into()),
+            })),
+            returns: vec![ReturnClause::Field {
+                field: pref("r", Some("name")),
+                alias: Some("name".into()),
+            }],
+            group_by: vec![],
+            sort: vec![],
+            limit: Some(10),
+            distinct: false,
+        };
+        let q = build_read(&q).unwrap();
+        assert!(q.text.contains("WHERE r._lg_norm_name CONTAINS $p0"));
+        assert_eq!(q.params.get("p0"), Some(&Literal::String("медеу".into())));
     }
 
     #[test]

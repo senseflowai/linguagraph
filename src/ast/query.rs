@@ -164,6 +164,12 @@ pub enum ComparisonOp {
     Contains,
     StartsWith,
     EndsWith,
+    EqCi,
+    NeqCi,
+    InCi,
+    ContainsCi,
+    StartsWithCi,
+    EndsWithCi,
 }
 
 /// Restricted literal set. We only let through what Memgraph parameters

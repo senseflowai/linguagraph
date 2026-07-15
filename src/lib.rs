@@ -37,6 +37,7 @@ pub mod graph;
 pub mod ingest;
 pub mod llm;
 pub mod nl;
+mod normalize;
 pub mod prompt;
 pub mod resolve;
 pub mod types;

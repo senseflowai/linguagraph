@@ -118,6 +118,12 @@ fn describe_op(op: FilterOp) -> &'static str {
         FilterOp::Contains => "contains",
         FilterOp::StartsWith => "starts with",
         FilterOp::EndsWith => "ends with",
+        FilterOp::EqCi => "=",
+        FilterOp::NeqCi => "!=",
+        FilterOp::InCi => "in",
+        FilterOp::ContainsCi => "contains",
+        FilterOp::StartsWithCi => "starts with",
+        FilterOp::EndsWithCi => "ends with",
     }
 }
 
@@ -294,6 +300,14 @@ pub enum FilterOp {
     Contains,
     StartsWith,
     EndsWith,
+    /// Unicode-aware case-insensitive equality over normalized shadow
+    /// properties generated at ingest time.
+    EqCi,
+    NeqCi,
+    InCi,
+    ContainsCi,
+    StartsWithCi,
+    EndsWithCi,
 }
 
 impl FilterOp {
@@ -312,6 +326,12 @@ impl FilterOp {
             "contains" => FilterOp::Contains,
             "starts_with" => FilterOp::StartsWith,
             "ends_with" => FilterOp::EndsWith,
+            "eq_ci" => FilterOp::EqCi,
+            "neq_ci" => FilterOp::NeqCi,
+            "in_ci" => FilterOp::InCi,
+            "contains_ci" => FilterOp::ContainsCi,
+            "starts_with_ci" => FilterOp::StartsWithCi,
+            "ends_with_ci" => FilterOp::EndsWithCi,
             _ => return None,
         })
     }

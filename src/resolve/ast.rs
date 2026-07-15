@@ -587,6 +587,12 @@ fn lower_op(op: d::FilterOp) -> ComparisonOp {
         d::FilterOp::Contains => ComparisonOp::Contains,
         d::FilterOp::StartsWith => ComparisonOp::StartsWith,
         d::FilterOp::EndsWith => ComparisonOp::EndsWith,
+        d::FilterOp::EqCi => ComparisonOp::EqCi,
+        d::FilterOp::NeqCi => ComparisonOp::NeqCi,
+        d::FilterOp::InCi => ComparisonOp::InCi,
+        d::FilterOp::ContainsCi => ComparisonOp::ContainsCi,
+        d::FilterOp::StartsWithCi => ComparisonOp::StartsWithCi,
+        d::FilterOp::EndsWithCi => ComparisonOp::EndsWithCi,
     }
 }
 

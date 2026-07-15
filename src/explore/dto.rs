@@ -184,6 +184,24 @@ pub struct QueryTrace {
 pub struct TableSlice {
     pub columns: Vec<String>,
     pub rows: Vec<BTreeMap<String, JsonValue>>,
+    /// Visible column name → the bound node alias whose property that
+    /// column projects (e.g. `"price" -> "l"`). Aggregates, group keys,
+    /// and any projection that isn't a plain `<alias>.<property>` field
+    /// have no entry — there's no single entity to navigate to.
+    ///
+    /// Combined with `row_entities`, this lets a UI resolve any cell back
+    /// to the entity it came from and open it with
+    /// [`crate::explore::Explorer::entity`]:
+    /// `row_entities[row_index][entity_columns[column]]`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub entity_columns: BTreeMap<String, String>,
+    /// Per-row entity handles — the same handle [`NodeView::id`] uses —
+    /// keyed by node alias. Index-aligned with `rows`. An alias is absent
+    /// from a given row's map when that row's node for it has no usable
+    /// id (mirrors [`NodeView::ephemeral_handle`]'s "no id property"
+    /// case; the ephemeral `_nid:` fallback isn't available here).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub row_entities: Vec<BTreeMap<String, String>>,
 }
 
 /// Everything the explorer produces for one question / query run.
@@ -329,6 +347,14 @@ pub struct AskOptions {
     /// row match instead of only being told about the filter in prose.
     #[serde(default = "default_true")]
     pub include_filter_context: bool,
+    /// Populate [`TableSlice::entity_columns`] / [`TableSlice::row_entities`]
+    /// so a UI can navigate from a row back to the entity it came from.
+    /// Cheap — reuses the same per-alias id projection `include_subgraph`
+    /// injects, with no extra database round trip — so it defaults on
+    /// independently of `include_subgraph` (a table-only UI can still get
+    /// clickable rows without paying for subgraph hydration).
+    #[serde(default = "default_true")]
+    pub include_entity_refs: bool,
     /// Cap on rows kept in [`AskResult::table`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_rows: Option<u32>,
@@ -340,6 +366,7 @@ impl Default for AskOptions {
             synthesize_answer: false,
             include_subgraph: true,
             include_filter_context: true,
+            include_entity_refs: true,
             max_rows: None,
         }
     }

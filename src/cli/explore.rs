@@ -752,6 +752,8 @@ mod tests {
             table: TableSlice {
                 columns: vec!["name".into()],
                 rows: vec![BTreeMap::from([("name".into(), json!("Keanu Reeves"))])],
+                entity_columns: BTreeMap::new(),
+                row_entities: Vec::new(),
             },
             subgraph: Subgraph::default(),
             sources: Vec::new(),

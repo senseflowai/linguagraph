@@ -21,6 +21,18 @@
 //! a row match — e.g. a `price < 100` filter alongside `return: [name]`
 //! gains a `price` column. It no-ops for aggregate and `distinct: true`
 //! queries; see its doc comment for the full rule set.
+//!
+//! The same hidden `__id_<alias>` columns that drive subgraph hydration
+//! also answer a second question a UI needs: "which entity does this
+//! table cell belong to?". [`visible_table`] repurposes them into
+//! [`TableSlice::row_entities`] (per row, `alias -> handle`) instead of
+//! only using them to seed the subgraph; [`column_entity_aliases`] maps
+//! each visible column to the alias that owns it. A UI joins the two —
+//! `row_entities[i][entity_columns[column]]` — to turn any cell into a
+//! link, without a second round trip. This is gated by
+//! `include_entity_refs` rather than folded into `include_subgraph`,
+//! since a plain data-grid UI may want clickable rows without paying for
+//! full subgraph hydration.
 
 use std::collections::BTreeMap;
 use std::time::Instant;
@@ -92,6 +104,41 @@ pub(crate) fn inject_node_id_returns(dsl: &DslQuery) -> Option<DslQuery> {
     Some(rewritten)
 }
 
+/// Extract a stable id string from a `__id_<alias>` cell. Test doubles
+/// produce typed cells; the Memgraph client flattens everything to
+/// `Json`. Integer-stored ids are stringified to match the public handle
+/// type. Empty strings and any other shape mean "no usable id".
+fn cell_as_id_string(value: &DbValue) -> Option<String> {
+    match value {
+        DbValue::String(s) if !s.is_empty() => Some(s.clone()),
+        DbValue::Int(v) => Some(v.to_string()),
+        DbValue::Json(JsonValue::String(s)) if !s.is_empty() => Some(s.clone()),
+        DbValue::Json(JsonValue::Number(n)) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+/// Map each visible column a Find-shaped query renders to the node alias
+/// whose property it projects, e.g. `"price" -> "l"` for
+/// `{"field": "l.price", "alias": "price"}`, or `"l.price" -> "l"` when
+/// unaliased (the builder names an unaliased field column after the raw
+/// `<alias>.<property>` expression). Aggregates, date-part group keys, and
+/// bare entity references (no `.<property>`) have no single owning
+/// property and are left out.
+pub(crate) fn column_entity_aliases(dsl: &DslQuery) -> BTreeMap<String, String> {
+    dsl.return_
+        .iter()
+        .filter_map(|item| match item {
+            ReturnItem::Field { field, alias } => {
+                let (entity_alias, _prop) = field.split_once('.')?;
+                let column = alias.clone().unwrap_or_else(|| field.clone());
+                Some((column, entity_alias.to_string()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 impl Explorer {
     /// Shared tail of [`Explorer::ask`] and [`Explorer::run_dsl`]:
     /// compile, execute, and assemble the [`AskResult`].
@@ -108,12 +155,13 @@ impl Explorer {
         } else {
             dsl.clone()
         };
-        let rewritten = if opts.include_subgraph {
+        let want_entity_refs = opts.include_subgraph || opts.include_entity_refs;
+        let rewritten = if want_entity_refs {
             inject_node_id_returns(&with_filters)
         } else {
             None
         };
-        let executed_dsl = rewritten.unwrap_or(with_filters);
+        let executed_dsl = rewritten.unwrap_or_else(|| with_filters.clone());
 
         let compiled = self.pipeline().compile_for_run(executed_dsl.clone()).await?;
         let result = self.pipeline().execute(&compiled).await?;
@@ -124,7 +172,14 @@ impl Explorer {
             Subgraph::default()
         };
 
-        let table = visible_table(&result, dsl.distinct, opts.max_rows);
+        let mut table = visible_table(&result, dsl.distinct, opts.max_rows);
+        // `row_entities` is already empty here when `want_entity_refs` is
+        // false: without it, `inject_node_id_returns` never ran, so the
+        // executed query never carried `__id_<alias>` columns to extract
+        // from. Only the static column -> alias map needs gating.
+        if want_entity_refs {
+            table.entity_columns = column_entity_aliases(&with_filters);
+        }
         let sources = collect_row_sources(&result);
 
         let answer = if opts.synthesize_answer {
@@ -176,15 +231,8 @@ impl Explorer {
                 if !column.starts_with(ID_COLUMN_PREFIX) {
                     continue;
                 }
-                // Test doubles produce typed cells; the Memgraph client
-                // flattens everything to `Json`. Integer-stored ids are
-                // stringified to match the public handle type.
-                let id = match value {
-                    DbValue::String(s) if !s.is_empty() => s.clone(),
-                    DbValue::Int(v) => v.to_string(),
-                    DbValue::Json(JsonValue::String(s)) if !s.is_empty() => s.clone(),
-                    DbValue::Json(JsonValue::Number(n)) => n.to_string(),
-                    _ => continue,
+                let Some(id) = cell_as_id_string(value) else {
+                    continue;
                 };
                 if ids.contains(&id) {
                     continue;
@@ -275,7 +323,21 @@ fn visible_table(result: &QueryResult, distinct: bool, max_rows: Option<u32>) ->
         }
     }
 
+    // Whether the executed query carried any `__id_<alias>` projection at
+    // all — checked once so a query run with entity refs disabled leaves
+    // `row_entities` genuinely empty (`Vec::new()`) rather than a run of
+    // empty per-row maps, keeping `skip_serializing_if` effective.
+    let has_id_columns = result
+        .columns
+        .iter()
+        .any(|c| c.name.starts_with(ID_COLUMN_PREFIX))
+        || result
+            .rows
+            .first()
+            .is_some_and(|r| r.fields.keys().any(|k| k.starts_with(ID_COLUMN_PREFIX)));
+
     let mut rows: Vec<BTreeMap<String, JsonValue>> = Vec::new();
+    let mut row_entities: Vec<BTreeMap<String, String>> = Vec::new();
     for row in &result.rows {
         let visible: BTreeMap<String, JsonValue> = row
             .fields
@@ -288,6 +350,19 @@ fn visible_table(result: &QueryResult, distinct: bool, max_rows: Option<u32>) ->
         if distinct && rows.contains(&visible) {
             continue;
         }
+        if has_id_columns {
+            // Fold this row's `__id_<alias>` cells into `alias -> handle`,
+            // index-aligned with the visible row pushed below.
+            let entities: BTreeMap<String, String> = row
+                .fields
+                .iter()
+                .filter_map(|(name, value)| {
+                    let alias = name.strip_prefix(ID_COLUMN_PREFIX)?;
+                    Some((alias.to_string(), cell_as_id_string(value)?))
+                })
+                .collect();
+            row_entities.push(entities);
+        }
         rows.push(visible);
         if let Some(cap) = max_rows {
             if rows.len() >= cap as usize {
@@ -295,7 +370,12 @@ fn visible_table(result: &QueryResult, distinct: bool, max_rows: Option<u32>) ->
             }
         }
     }
-    TableSlice { columns, rows }
+    TableSlice {
+        columns,
+        rows,
+        entity_columns: BTreeMap::new(),
+        row_entities,
+    }
 }
 
 /// Dedup the provenance refs from the builder's auto-injected `sources`
@@ -405,12 +485,56 @@ mod tests {
         let table = visible_table(&result, true, None);
         assert_eq!(table.columns, vec!["name".to_string()]);
         assert_eq!(table.rows.len(), 1, "distinct restored after stripping");
+        // Distinct collapses onto the first matching row — its entity
+        // handle (`p1`, not the discarded duplicate's `p2`) is what survives.
+        assert_eq!(
+            table.row_entities,
+            vec![BTreeMap::from([("p".to_string(), "p1".to_string())])]
+        );
 
         let plain = visible_table(&result, false, None);
         assert_eq!(plain.rows.len(), 2);
+        assert_eq!(
+            plain.row_entities,
+            vec![
+                BTreeMap::from([("p".to_string(), "p1".to_string())]),
+                BTreeMap::from([("p".to_string(), "p2".to_string())]),
+            ],
+            "row_entities stays index-aligned with rows"
+        );
 
         let capped = visible_table(&result, false, Some(1));
         assert_eq!(capped.rows.len(), 1);
+        assert_eq!(capped.row_entities.len(), 1);
+    }
+
+    #[test]
+    fn column_entity_aliases_maps_aliased_and_raw_fields_and_skips_non_fields() {
+        let dsl = dsl::parse_str(
+            r#"{
+                "start": { "label": "Listing", "alias": "l" },
+                "return": [
+                    { "field": "l.price", "alias": "price" },
+                    { "field": "l.title" },
+                    { "field": "l.created_at", "date_part": "year", "alias": "created_year" },
+                    { "aggregate": "count", "field": "l", "alias": "total" }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let mapping = column_entity_aliases(&dsl);
+        assert_eq!(mapping.get("price").map(String::as_str), Some("l"));
+        assert_eq!(mapping.get("l.title").map(String::as_str), Some("l"));
+        assert!(
+            !mapping.contains_key("created_year"),
+            "date_part group keys have no single owning property"
+        );
+        assert!(
+            !mapping.contains_key("total"),
+            "aggregates have no single owning entity"
+        );
+        assert_eq!(mapping.len(), 2);
     }
 
     #[test]

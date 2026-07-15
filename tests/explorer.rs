@@ -4,6 +4,7 @@
 //! **reverse call order** — and captures every executed Cypher query, so
 //! each test asserts both the decoded DTOs and the generated query text.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use linguagraph::config::{Config, DatabaseConfig, LlmConfig, OntologyCatalogConfig, QueryConfig};
@@ -713,6 +714,107 @@ async fn run_dsl_skips_filter_context_when_disabled() {
     // `m.votes` still appears in the WHERE clause (the filter itself);
     // what must stay absent is a `votes` projection in RETURN.
     assert!(!captured[0].text.contains("RETURN m.title, m.votes"));
+}
+
+#[tokio::test]
+async fn run_dsl_exposes_entity_refs_without_subgraph() {
+    let mock = Arc::new(MockClient::new());
+    mock.enqueue(result(
+        vec!["title", "__id_m"],
+        vec![
+            row(vec![
+                ("title", Value::String("The Matrix".into())),
+                ("__id_m", Value::String("m1".into())),
+            ]),
+            row(vec![
+                ("title", Value::String("John Wick".into())),
+                ("__id_m", Value::String("m2".into())),
+            ]),
+        ],
+    ));
+
+    let explorer = explorer_with(mock.clone(), Some("E2E"));
+    let dsl = linguagraph::dsl::parse_str(
+        r#"{
+            "start": { "label": "Movie", "alias": "m" },
+            "return": [ { "field": "m.title", "alias": "title" } ]
+        }"#,
+    )
+    .unwrap();
+
+    let answer = explorer
+        .run_dsl(
+            dsl,
+            &AskOptions {
+                include_subgraph: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("run_dsl succeeds");
+
+    // No subgraph hydration round trips — just the one main query — yet
+    // the table still carries enough to navigate from a cell to its node.
+    assert!(answer.subgraph.is_empty());
+    {
+        let captured = mock.captured.lock().unwrap();
+        assert_eq!(
+            captured.len(),
+            1,
+            "no hydration queries without include_subgraph"
+        );
+        assert!(captured[0].text.contains("m.id AS __id_m"));
+    }
+
+    assert_eq!(answer.table.columns, vec!["title".to_string()]);
+    assert_eq!(
+        answer.table.entity_columns.get("title").map(String::as_str),
+        Some("m"),
+        "the `title` column is traced back to alias `m`"
+    );
+    assert_eq!(
+        answer.table.row_entities,
+        vec![
+            BTreeMap::from([("m".to_string(), "m1".to_string())]),
+            BTreeMap::from([("m".to_string(), "m2".to_string())]),
+        ],
+        "row_entities stays index-aligned with table.rows"
+    );
+}
+
+#[tokio::test]
+async fn run_dsl_disabling_entity_refs_omits_them() {
+    let mock = Arc::new(MockClient::new());
+    mock.enqueue(result(
+        vec!["title"],
+        vec![row(vec![("title", Value::String("The Matrix".into()))])],
+    ));
+
+    let explorer = explorer_with(mock.clone(), Some("E2E"));
+    let dsl = linguagraph::dsl::parse_str(
+        r#"{
+            "start": { "label": "Movie", "alias": "m" },
+            "return": [ { "field": "m.title", "alias": "title" } ]
+        }"#,
+    )
+    .unwrap();
+
+    let answer = explorer
+        .run_dsl(
+            dsl,
+            &AskOptions {
+                include_subgraph: false,
+                include_entity_refs: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("run_dsl succeeds");
+
+    assert!(answer.table.entity_columns.is_empty());
+    assert!(answer.table.row_entities.is_empty());
+    let captured = mock.captured.lock().unwrap();
+    assert!(!captured[0].text.contains("__id_"));
 }
 
 #[tokio::test]

@@ -17,11 +17,12 @@ use std::fmt::Write;
 
 use super::generator::SCHEMA_HIDDEN_PROPS;
 use super::is_enum_candidate_property_name;
-use super::schema::{GraphSchema, NodeKind, Property};
+use super::schema::{GraphSchema, NodeKind, Property, PropertyType};
 use crate::embeddings::{
     ensure_indexed, EmbedError, Embedder, EmbeddingFilter, EmbeddingIndex, EmbeddingKind,
     EmbeddingPayload,
 };
+use crate::graph::{DomainOntology, EntityTypeSpec, OntologyPropertyType, PropertySpec};
 
 /// Tunables for [`select_query_schema`].
 #[derive(Debug, Clone)]
@@ -120,28 +121,13 @@ struct NodeScore {
     prop_scores: BTreeMap<String, f32>,
 }
 
-/// Narrow the already domain-filtered `domain_schemas` down to the schema
-/// slice relevant to `query`.
-///
-/// Passages for every entity and property are lazily embedded and upserted
-/// into `index` (only the ones the store is missing), then a single
-/// filtered vector search scores them all **server-side**. Returns a merged
-/// [`GraphSchema`] with the score-selected entities (and their relevant
-/// properties), their `neighbor_hops` neighbours, and every relationship
-/// whose endpoints both survive. Node `domain` fields are preserved so the
-/// renderer can still resolve per-domain catalog annotations.
-pub(crate) async fn select_query_schema(
-    query: &str,
+/// Build one entity passage plus one passage per non-hidden property for
+/// every node across `domain_schemas`. Shared by [`select_query_schema`]
+/// (query-time, scored immediately) and [`reindex_domain_schema`]
+/// (post-edit warm-up, indexed with no query to score against).
+fn schema_passages(
     domain_schemas: &BTreeMap<String, GraphSchema>,
-    embedder: &dyn Embedder,
-    index: &EmbeddingIndex<'_>,
-    params: &QuerySelectionParams,
-) -> Result<GraphSchema, EmbedError> {
-    if domain_schemas.is_empty() {
-        return Ok(GraphSchema::default());
-    }
-
-    // One entity passage plus one passage per non-hidden property.
+) -> Vec<(EmbeddingPayload, String)> {
     let mut passages: Vec<(EmbeddingPayload, String)> = Vec::new();
     for (domain, schema) in domain_schemas {
         for node in &schema.nodes {
@@ -164,6 +150,111 @@ pub(crate) async fn select_query_schema(
             }
         }
     }
+    passages
+}
+
+/// Map an ontology-declared property type to the scalar vocabulary
+/// [`property_embedding_text`] renders. Mirrors [`PropertyType::as_str`]'s
+/// existing collapse of int/float into one "number" bucket: `Keyword` and
+/// `Text` both read as "string" here too, since the semantic-text-vs-plain
+/// distinction is a storage/handler concern, not something the embedding
+/// passage needs to spell out.
+fn property_type_from_ontology(ty: OntologyPropertyType) -> PropertyType {
+    match ty {
+        OntologyPropertyType::Keyword | OntologyPropertyType::Text => PropertyType::String,
+        OntologyPropertyType::Number => PropertyType::Float,
+        OntologyPropertyType::Bool => PropertyType::Bool,
+        OntologyPropertyType::Datetime => PropertyType::Datetime,
+        OntologyPropertyType::List => PropertyType::List,
+    }
+}
+
+fn property_from_spec(spec: &PropertySpec) -> Property {
+    Property {
+        name: spec.name.clone(),
+        ty: property_type_from_ontology(spec.property_type),
+        description: spec.description.clone(),
+        allowed_values: spec.allowed_values.clone(),
+    }
+}
+
+fn node_from_entity_spec(domain_name: &str, spec: &EntityTypeSpec) -> NodeKind {
+    NodeKind {
+        label: spec.name.clone(),
+        domain: Some(domain_name.to_string()),
+        extra_labels: Vec::new(),
+        scopes: Vec::new(),
+        description: spec.description.clone(),
+        properties: spec.properties.iter().map(property_from_spec).collect(),
+    }
+}
+
+/// Pre-warm the entity/property-level routing embeddings for one domain's
+/// **declared** schema — independent of whether any live graph data exists
+/// for it yet.
+///
+/// [`generate_query_prompt`](super::generate_query_prompt) only ever
+/// refreshes this index lazily, as a side effect of the first real query
+/// after a domain is created or edited (see [`select_query_schema`]'s call
+/// to [`ensure_indexed`]): it needs a *live* [`GraphSchema`] to project the
+/// catalog onto, which a brand-new domain doesn't have until something is
+/// ingested. Call this instead right after saving a domain ontology so
+/// that first query doesn't pay for embedding every entity/property
+/// passage in one go — passages are built straight from `ontology`'s
+/// declared entity types, so a domain with zero live nodes still gets
+/// pre-warmed.
+///
+/// Safe to call repeatedly: embedding points are content-addressed (see
+/// [`crate::embeddings::point_id`]), so unchanged passages are reused and
+/// only genuinely new/edited ones cost an embedder call. [`ensure_indexed`]
+/// also bounds and chunks that cost, so a large domain doesn't turn this
+/// into one oversized embedder request.
+pub async fn reindex_domain_schema(
+    domain_name: &str,
+    ontology: &DomainOntology,
+    embedder: &dyn Embedder,
+    index: &EmbeddingIndex<'_>,
+) -> Result<(), EmbedError> {
+    if ontology.entity_types.is_empty() {
+        return Ok(());
+    }
+    let schema = GraphSchema {
+        nodes: ontology
+            .entity_types
+            .iter()
+            .map(|spec| node_from_entity_spec(domain_name, spec))
+            .collect(),
+        relationships: Vec::new(),
+    };
+    let mut domain_schemas = BTreeMap::new();
+    domain_schemas.insert(domain_name.to_string(), schema);
+    let passages = schema_passages(&domain_schemas);
+    ensure_indexed(index, embedder, &passages).await
+}
+
+/// Narrow the already domain-filtered `domain_schemas` down to the schema
+/// slice relevant to `query`.
+///
+/// Passages for every entity and property are lazily embedded and upserted
+/// into `index` (only the ones the store is missing), then a single
+/// filtered vector search scores them all **server-side**. Returns a merged
+/// [`GraphSchema`] with the score-selected entities (and their relevant
+/// properties), their `neighbor_hops` neighbours, and every relationship
+/// whose endpoints both survive. Node `domain` fields are preserved so the
+/// renderer can still resolve per-domain catalog annotations.
+pub(crate) async fn select_query_schema(
+    query: &str,
+    domain_schemas: &BTreeMap<String, GraphSchema>,
+    embedder: &dyn Embedder,
+    index: &EmbeddingIndex<'_>,
+    params: &QuerySelectionParams,
+) -> Result<GraphSchema, EmbedError> {
+    if domain_schemas.is_empty() {
+        return Ok(GraphSchema::default());
+    }
+
+    // One entity passage plus one passage per non-hidden property.
+    let passages = schema_passages(domain_schemas);
     if passages.is_empty() {
         return Ok(GraphSchema::default());
     }
@@ -571,5 +662,64 @@ mod tests {
         let listing = &narrowed.nodes[0];
         let names: Vec<&str> = listing.properties.iter().map(|p| p.name.as_str()).collect();
         assert!(names.contains(&"sale_method"), "enum property retained");
+    }
+
+    #[tokio::test]
+    async fn reindex_domain_schema_warms_entity_and_property_passages_with_no_live_data() {
+        use crate::embeddings::{EmbeddingStore, InMemoryEmbeddingStore};
+        use crate::graph::{DomainOntology, EntityTypeSpec};
+
+        let mut ontology = DomainOntology::default();
+        ontology.entity_types.push(EntityTypeSpec {
+            name: "Listing".into(),
+            description: Some("A marketplace listing".into()),
+            properties: vec![PropertySpec {
+                name: "sale_method".into(),
+                description: Some("Sale method".into()),
+                property_type: OntologyPropertyType::Keyword,
+                required: false,
+                allowed_values: vec!["auction".into(), "instant_sale".into()],
+            }],
+        });
+
+        let store = InMemoryEmbeddingStore::new();
+        let index = EmbeddingIndex {
+            store: &store,
+            collection: "c",
+            model: "m",
+        };
+        let embedder = StubEmbedder;
+
+        // No live graph, no prior query — the domain has never been
+        // searched. This is exactly the state right after an ontology
+        // save, before any data has been ingested.
+        reindex_domain_schema("flippa", &ontology, &embedder, &index)
+            .await
+            .unwrap();
+
+        let hits = store
+            .search(
+                "c",
+                &embedder.embed_batch(&["auction listing"]).unwrap()[0],
+                10,
+                None,
+                &EmbeddingFilter {
+                    kinds: vec![EmbeddingKind::Entity, EmbeddingKind::Property],
+                    domains: vec!["flippa".to_string()],
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(hits.len(), 2, "one entity passage + one property passage");
+
+        // Re-running after the ontology hasn't changed touches nothing new
+        // (content-addressed points), and a domain with no entity types at
+        // all is a cheap no-op rather than an error.
+        reindex_domain_schema("flippa", &ontology, &embedder, &index)
+            .await
+            .unwrap();
+        reindex_domain_schema("empty", &DomainOntology::default(), &embedder, &index)
+            .await
+            .unwrap();
     }
 }

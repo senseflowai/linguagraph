@@ -286,12 +286,31 @@ pub fn point_id(model: &str, dim: usize, payload: &EmbeddingPayload, text: &str)
     Uuid::new_v5(&POINT_NAMESPACE, key.as_bytes())
 }
 
+/// Upper bound on how many passages ride in a single [`Embedder::embed_batch`]
+/// call from [`ensure_indexed`]. Some backends (notably a remote gRPC/RunPod
+/// embedder with a handful of concurrent worker slots) are reliable for a
+/// small batch but time out or drop the connection under a large one — e.g.
+/// warming every entity/property passage for a freshly-created ontology
+/// domain in one shot can easily be 100+ texts. Chunking trades a few extra
+/// round trips for not depending on the backend's own internal batching to
+/// cope with an unbounded burst.
+const EMBED_BATCH_CHUNK_SIZE: usize = 16;
+
 /// Ensure every `(payload, text)` passage is present in the index,
 /// embedding and upserting only the ones the store is missing.
 ///
 /// This is the shared "index-or-reuse" step in front of a search: it keeps
 /// the embedder call to the genuinely new passages, exactly like the old
 /// file cache's miss-only embedding.
+///
+/// The missing passages are embedded and upserted in
+/// [`EMBED_BATCH_CHUNK_SIZE`]-sized chunks rather than one call covering the
+/// whole backlog. This bounds how much a single burst asks of the embedder
+/// backend, and — because each chunk is upserted as soon as it's embedded —
+/// means a failure partway through a large backlog still leaves the
+/// completed chunks durably indexed (points are content-addressed, see
+/// [`point_id`]), so a retry only has to redo the remainder instead of
+/// starting over.
 pub async fn ensure_indexed(
     index: &EmbeddingIndex<'_>,
     embedder: &dyn Embedder,
@@ -327,24 +346,30 @@ pub async fn ensure_indexed(
         }
     }
 
-    let vectors = embedder.embed_batch(&texts)?;
-    if vectors.len() != coords.len() {
-        return Err(EmbedError::Backend(format!(
-            "embedder returned {} vectors for {} passages",
-            vectors.len(),
-            coords.len()
-        )));
+    for (chunk_texts, chunk_coords) in texts
+        .chunks(EMBED_BATCH_CHUNK_SIZE)
+        .zip(coords.chunks(EMBED_BATCH_CHUNK_SIZE))
+    {
+        let vectors = embedder.embed_batch(chunk_texts)?;
+        if vectors.len() != chunk_coords.len() {
+            return Err(EmbedError::Backend(format!(
+                "embedder returned {} vectors for {} passages",
+                vectors.len(),
+                chunk_coords.len()
+            )));
+        }
+        let points: Vec<StoredEmbedding> = chunk_coords
+            .iter()
+            .cloned()
+            .zip(vectors)
+            .map(|((id, payload), vector)| StoredEmbedding {
+                id,
+                vector,
+                payload,
+            })
+            .collect();
+        index.store.upsert(index.collection, points).await?;
     }
-    let points = coords
-        .into_iter()
-        .zip(vectors)
-        .map(|((id, payload), vector)| StoredEmbedding {
-            id,
-            vector,
-            payload,
-        })
-        .collect();
-    index.store.upsert(index.collection, points).await?;
     Ok(())
 }
 
@@ -535,5 +560,116 @@ mod tests {
         assert_eq!(a, same, "same inputs -> same id");
         // Model change invalidates too.
         assert_ne!(a, point_id("m2", 3, &p, "type: enum"));
+    }
+
+    /// Records the size of every `embed_batch` call it receives; optionally
+    /// fails (without recording) once `fail_after` successful calls have
+    /// gone through, to simulate a backend that falls over partway through
+    /// a large burst.
+    #[derive(Debug, Default)]
+    struct RecordingEmbedder {
+        call_sizes: Mutex<Vec<usize>>,
+        fail_after: Option<usize>,
+    }
+
+    impl Embedder for RecordingEmbedder {
+        fn dim(&self) -> usize {
+            3
+        }
+        fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbedError> {
+            let mut calls = self.call_sizes.lock().unwrap();
+            if self.fail_after.is_some_and(|limit| calls.len() >= limit) {
+                return Err(EmbedError::Backend("simulated transport error".into()));
+            }
+            calls.push(texts.len());
+            // Distinct, deterministic vector per text so upserted points
+            // are individually distinguishable in assertions.
+            Ok(texts
+                .iter()
+                .enumerate()
+                .map(|(i, _)| vec3(i as f32, calls.len() as f32, 1.0))
+                .collect())
+        }
+    }
+
+    fn passages(n: usize) -> Vec<(EmbeddingPayload, String)> {
+        (0..n)
+            .map(|i| {
+                (
+                    EmbeddingPayload::entity("d", format!("E{i}")),
+                    format!("entity: E{i}"),
+                )
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn ensure_indexed_splits_large_backlog_into_bounded_chunks() {
+        let store = InMemoryEmbeddingStore::new();
+        store.ensure("c", 3).await.unwrap();
+        let index = EmbeddingIndex {
+            store: &store,
+            collection: "c",
+            model: "m",
+        };
+        let embedder = RecordingEmbedder::default();
+
+        // 40 passages, chunk size 16 -> three calls of 16/16/8, never one
+        // call covering all 40.
+        ensure_indexed(&index, &embedder, &passages(40)).await.unwrap();
+
+        let calls = embedder.call_sizes.lock().unwrap().clone();
+        assert_eq!(calls, vec![16, 16, 8], "chunked into bounded batches");
+        assert!(
+            calls.iter().all(|&n| n <= EMBED_BATCH_CHUNK_SIZE),
+            "no call exceeds the chunk size"
+        );
+
+        // Re-running is a no-op: every point is already present.
+        ensure_indexed(&index, &embedder, &passages(40)).await.unwrap();
+        assert_eq!(
+            embedder.call_sizes.lock().unwrap().len(),
+            3,
+            "unchanged passages are not re-embedded"
+        );
+    }
+
+    #[tokio::test]
+    async fn ensure_indexed_keeps_completed_chunks_when_a_later_chunk_fails() {
+        let store = InMemoryEmbeddingStore::new();
+        store.ensure("c", 3).await.unwrap();
+        let index = EmbeddingIndex {
+            store: &store,
+            collection: "c",
+            model: "m",
+        };
+        // 40 passages / chunk size 16 -> 3 calls; fail starting on the 2nd.
+        let embedder = RecordingEmbedder {
+            call_sizes: Mutex::new(Vec::new()),
+            fail_after: Some(1),
+        };
+
+        let err = ensure_indexed(&index, &embedder, &passages(40)).await;
+        assert!(err.is_err(), "second chunk's simulated failure propagates");
+
+        // The first chunk's 16 points were upserted before the failure and
+        // are durably indexed; only they should report as present.
+        let ids: Vec<Uuid> = passages(40)
+            .iter()
+            .map(|(p, t)| point_id("m", 3, p, t))
+            .collect();
+        let missing = store.missing("c", &ids).await.unwrap();
+        assert_eq!(missing.len(), 24, "only the un-embedded remainder is missing");
+
+        // A retry with a healthy embedder only has to redo the remainder,
+        // not the whole 40-passage backlog.
+        let healthy = RecordingEmbedder::default();
+        ensure_indexed(&index, &healthy, &passages(40)).await.unwrap();
+        let retried_sizes = healthy.call_sizes.lock().unwrap().clone();
+        assert_eq!(
+            retried_sizes.iter().sum::<usize>(),
+            24,
+            "retry only re-embeds the passages the failed run never reached"
+        );
     }
 }

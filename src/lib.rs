@@ -38,6 +38,7 @@ pub mod ingest;
 pub mod llm;
 pub mod nl;
 mod normalize;
+pub mod ontology;
 pub mod prompt;
 pub mod resolve;
 pub mod types;

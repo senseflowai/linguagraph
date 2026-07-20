@@ -537,6 +537,7 @@ async fn entity_type_search_returns_unique_types_with_domains_and_scopes() {
         "legal",
         DomainOntology {
             name: None,
+            example: None,
             description: None,
             entity_types: vec![
                 EntityTypeSpec {

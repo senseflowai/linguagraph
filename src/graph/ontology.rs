@@ -253,6 +253,14 @@ pub struct DomainOntology {
     pub entity_types: Vec<EntityTypeSpec>,
     #[serde(default)]
     pub relation_types: Vec<RelationTypeSpec>,
+
+    /// Few-shot example block shown to the knowledge-extraction LLM for
+    /// this domain. linguagraph **persists** it (so schema and its example
+    /// live in one place) but does not consume it itself — it is rendered
+    /// by the extraction-prompt builder in the consuming service. `None`
+    /// ⇒ that consumer falls back to a neutral placeholder example.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub example: Option<String>,
 }
 
 impl DomainOntology {
@@ -740,7 +748,7 @@ fn domain_query_text(query: &str) -> String {
     format!("User query:{query}\nTask: Identify the most relevant ontology domains for this query")
 }
 
-fn domain_embedding_text(domain: &str, ontology: &DomainOntology) -> String {
+pub(crate) fn domain_embedding_text(domain: &str, ontology: &DomainOntology) -> String {
     let mut out = format!("Domain: {domain}\n");
     if let Some(description) = ontology.description.as_deref().filter(|d| !d.is_empty()) {
         out.push_str("Description: ");
@@ -837,6 +845,7 @@ mod tests {
             "demo",
             DomainOntology {
                 name: None,
+                example: None,
                 description: None,
                 entity_types: vec![EntityTypeSpec::with_description("Foo", "A foo.")],
                 relation_types: vec![RelationTypeSpec::new("KNOWS")],
@@ -909,6 +918,7 @@ mod tests {
             "shop",
             DomainOntology {
                 name: None,
+                example: None,
                 description: None,
                 entity_types: vec![
                     EntityTypeSpec {
@@ -945,6 +955,7 @@ mod tests {
             "debug",
             DomainOntology {
                 name: None,
+                example: None,
                 description: None,
                 entity_types: vec![EntityTypeSpec {
                     name: "DebugNode".into(),
@@ -1087,6 +1098,7 @@ mod tests {
             "core",
             DomainOntology {
                 name: None,
+                example: None,
                 description: None,
                 entity_types: vec![
                     EntityTypeSpec::new("Person"),
@@ -1102,6 +1114,7 @@ mod tests {
             "camera",
             DomainOntology {
                 name: None,
+                example: None,
                 description: None,
                 entity_types: vec![EntityTypeSpec::new("Camera"), EntityTypeSpec::new("Place")],
                 relation_types: vec![RelationTypeSpec::new("LOCATED_AT")],
@@ -1155,6 +1168,7 @@ mod tests {
             "camera_domain",
             DomainOntology {
                 name: None,
+                example: None,
                 description: None,
                 entity_types: vec![EntityTypeSpec::new("Camera"), EntityTypeSpec::new("Place")],
                 relation_types: vec![RelationTypeSpec::with_description(

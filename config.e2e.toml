@@ -13,7 +13,7 @@ embedding_insert_batch_size = 500
 
 [llm]
 provider = "openai"
-base_url = "http://79.117.32.66:50715/v1"
+base_url = "https://squishy-coyness-neglector.ngrok-free.dev/v1"
 model = "vllm-qwen36"
 temperature = 0.0
 max_tokens = 2048
@@ -39,7 +39,7 @@ embedding_model = "/home/df/.cache/huggingface/hub/models--gpustack--bge-m3-GGUF
 # (a single named entity). Without this the reranker is not attached and the
 # "one" pin falls back to the RRF fusion order.
 reranking_model = "/home/df/.cache/huggingface/hub/models--gpustack--bge-reranker-v2-m3-GGUF/snapshots/3093af03b1a635e67b084b1d8c03c5f5e020fd05/bge-reranker-v2-m3-Q4_K_M.gguf"
-collection = "linguagraph_e2e"
+collection = "senseflow"
 top_k = 20
 threshold = 0.35
 reranker_threshold = 0.2

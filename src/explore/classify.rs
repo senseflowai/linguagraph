@@ -123,6 +123,7 @@ mod tests {
             "movies",
             DomainOntology {
                 name: None,
+                example: None,
                 description: None,
                 entity_types: vec![EntityTypeSpec {
                     name: "Movie".to_string(),

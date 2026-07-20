@@ -427,6 +427,7 @@ mod tests {
             "test",
             DomainOntology {
                 name: None,
+                example: None,
                 description: None,
                 entity_types: vec![EntityTypeSpec {
                     name: "Person".into(),

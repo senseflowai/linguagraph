@@ -667,6 +667,7 @@ fn semantic_catalog() -> OntologyCatalog {
         "test",
         DomainOntology {
             name: None,
+            example: None,
             description: None,
             entity_types: vec![EntityTypeSpec {
                 name: "Company".into(),
@@ -726,6 +727,7 @@ fn untyped_datetime_filter_auto_resolves_and_expands_eq_to_a_day_range() {
         "test",
         DomainOntology {
             name: None,
+            example: None,
             description: None,
             entity_types: vec![EntityTypeSpec {
                 name: "ServiceVisit".into(),
@@ -884,6 +886,7 @@ fn ontology_catalog_lookup_keys_off_label_not_alias() {
         "test",
         DomainOntology {
             name: None,
+            example: None,
             description: None,
             entity_types: vec![EntityTypeSpec {
                 name: "Company".into(),

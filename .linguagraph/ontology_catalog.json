@@ -1,2551 +1,712 @@
 {
-  "E2E_CAMERA_BASIC": {
-    "description": null,
+  "coffeline": {
     "entity_types": [
-      {
-        "name": "Camera",
-        "description": "The record of CCTV IP Camera.",
-        "properties": [
-          {
-            "name": "id",
-            "description": "Primary key.",
-            "property_type": "keyword",
-            "required": true
-          },
-          {
-            "name": "name",
-            "description": "The name assigned to the IP camera device.",
-            "property_type": "text",
-            "required": false
-          },
-          {
-            "name": "place_id",
-            "description": "The unique identifier of the place where the CCTV IP camera is installed.",
-            "property_type": "number",
-            "required": false
-          },
-          {
-            "name": "is_dvr",
-            "description": "Indicates whether the camera is associated with a digital video recorder.",
-            "property_type": "bool",
-            "required": false
-          },
-          {
-            "name": "scheduler_group",
-            "description": "The group name assigned to the camera's scheduling configuration.",
-            "property_type": "keyword",
-            "required": false
-          },
-          {
-            "name": "state",
-            "description": "Indicates whether the camera is currently operational or non-operational. The value only: 'active' or 'inactive'",
-            "property_type": "keyword",
-            "required": false
-          },
-          {
-            "name": "capacitygroup_token",
-            "description": "The unique keyword identifier for the capacity group to which the camera belongs.",
-            "property_type": "keyword",
-            "required": false
-          },
-          {
-            "name": "created_at",
-            "description": "The timestamp when the CCTV IP camera record was created in the system.",
-            "property_type": "datetime",
-            "required": false
-          },
-          {
-            "name": "updated_at",
-            "description": "The date and time when the camera record was last updated.",
-            "property_type": "datetime",
-            "required": false
-          },
-          {
-            "name": "video_streaming_storage_depth",
-            "description": "The number of days video streaming data is retained in storage.",
-            "property_type": "number",
-            "required": false
-          },
-          {
-            "name": "ptz",
-            "description": "Indicates whether the camera supports pan-tilt-zoom functionality.",
-            "property_type": "text",
-            "required": false
-          }
-        ]
-      },
-      {
-        "name": "Place",
-        "description": "Camera installation location.",
-        "properties": [
-          {
-            "name": "id",
-            "description": "Primary key.",
-            "property_type": "keyword",
-            "required": true
-          },
-          {
-            "name": "name",
-            "description": "The name of the camera installation location.",
-            "property_type": "text",
-            "required": false
-          },
-          {
-            "name": "description",
-            "description": "The physical address where the camera is installed.",
-            "property_type": "text",
-            "required": false
-          },
-          {
-            "name": "latitude",
-            "description": "The geographic coordinate indicating the north-south position of the camera installation location on Earth.",
-            "property_type": "number",
-            "required": false
-          },
-          {
-            "name": "longitude",
-            "description": "The geographic longitude coordinate of the camera installation location.",
-            "property_type": "number",
-            "required": false
-          },
-          {
-            "name": "created_at",
-            "description": "The date and time the camera installation location was created.",
-            "property_type": "datetime",
-            "required": false
-          },
-          {
-            "name": "category_name",
-            "description": "The name of the category to which the place belongs, such as a specific store or location identifier.",
-            "property_type": "keyword",
-            "required": false
-          },
-          {
-            "name": "kind_name",
-            "description": "The specific type or name of the place, such as mosque, school, or hospital.",
-            "property_type": "text",
-            "required": false
-          }
-        ]
-      },
-      {
-        "name": "Event",
-        "description": "Cameras events.",
-        "properties": [
-          {
-            "name": "event_id",
-            "description": "The unique identifier for a camera event record.",
-            "property_type": "text",
-            "required": false
-          },
-          {
-            "name": "event_type",
-            "description": "Specifies the category or classification of the camera event.",
-            "property_type": "text",
-            "required": false
-          },
-          {
-            "name": "ts",
-            "description": "The timestamp of the event in milliseconds since epoch.",
-            "property_type": "number",
-            "required": false
-          },
-          {
-            "name": "obsolete",
-            "description": "Indicates whether the camera event is no longer current or valid.",
-            "property_type": "bool",
-            "required": false
-          },
-          {
-            "name": "snapshot_url",
-            "description": "A URL pointing to a snapshot image captured during the event.",
-            "property_type": "text",
-            "required": false
-          },
-          {
-            "name": "event_age",
-            "description": "The age of the event in years.",
-            "property_type": "number",
-            "required": false
-          },
-          {
-            "name": "event_beard",
-            "description": "Whether the event involves a beard.",
-            "property_type": "number",
-            "required": false
-          },
-          {
-            "name": "event_gender",
-            "description": "The gender of the person involved in the camera event.",
-            "property_type": "number",
-            "required": false
-          },
-          {
-            "name": "event_glasses",
-            "description": "Number of glasses worn during the event.",
-            "property_type": "number",
-            "required": false
-          },
-          {
-            "name": "event_mask",
-            "description": "A bitmask indicating the types of camera events being monitored or triggered.",
-            "property_type": "number",
-            "required": false
-          }
-        ]
-      }
+        {
+            "name": "Client",
+            "description": "A business customer (cafe, restaurant, hotel or corporate office) buying coffee equipment and consumables from the distributor.",
+            "properties": [
+                {
+                    "name": "id",
+                    "description": "Primary key. Internal client code.",
+                    "property_type": "keyword",
+                    "required": true
+                },
+                {
+                    "name": "name",
+                    "description": "Client company name, useful for semantic search.",
+                    "property_type": "text",
+                    "required": true
+                },
+                {
+                    "name": "segment",
+                    "description": "Account tier, e.g. VIP, Standard or New.",
+                    "property_type": "keyword",
+                    "required": true
+                },
+                {
+                    "name": "status",
+                    "description": "Account status, e.g. active or churned.",
+                    "property_type": "keyword",
+                    "required": true
+                },
+                {
+                    "name": "since",
+                    "description": "Date the client relationship started.",
+                    "property_type": "datetime",
+                    "required": false
+                }
+            ]
+        },
+        {
+            "name": "Contact",
+            "description": "A person at a client company who places orders or corresponds with the distributor.",
+            "properties": [
+                {
+                    "name": "id",
+                    "description": "Primary key.",
+                    "property_type": "keyword",
+                    "required": true
+                },
+                {
+                    "name": "name",
+                    "description": "Contact full name.",
+                    "property_type": "text",
+                    "required": true
+                },
+                {
+                    "name": "position",
+                    "description": "Job title / role at the client.",
+                    "property_type": "keyword",
+                    "required": false
+                },
+                {
+                    "name": "email",
+                    "description": "Contact email address.",
+                    "property_type": "keyword",
+                    "required": false
+                },
+                {
+                    "name": "phone",
+                    "description": "Contact phone number.",
+                    "property_type": "keyword",
+                    "required": false
+                }
+            ]
+        },
+        {
+            "name": "Manager",
+            "description": "A sales / account manager employed by the distributor who owns client relationships.",
+            "properties": [
+                {
+                    "name": "id",
+                    "description": "Primary key.",
+                    "property_type": "keyword",
+                    "required": true
+                },
+                {
+                    "name": "name",
+                    "description": "Manager full name.",
+                    "property_type": "keyword",
+                    "required": true
+                },
+                {
+                    "name": "email",
+                    "description": "Manager work email.",
+                    "property_type": "keyword",
+                    "required": false
+                },
+                {
+                    "name": "role",
+                    "description": "Role title, e.g. sales manager or key account manager.",
+                    "property_type": "keyword",
+                    "required": false
+                },
+                {
+                    "name": "hire_date",
+                    "description": "Date the manager was hired.",
+                    "property_type": "datetime",
+                    "required": false
+                }
+            ]
+        },
+        {
+            "name": "Region",
+            "description": "Geographic region or city where a client is located.",
+            "properties": [
+                {
+                    "name": "id",
+                    "description": "Primary key. Normalized region name.",
+                    "property_type": "keyword",
+                    "required": true
+                },
+                {
+                    "name": "name",
+                    "description": "Region or city name.",
+                    "property_type": "keyword",
+                    "required": true
+                }
+            ]
+        },
+        {
+            "name": "Industry",
+            "description": "Vertical / business type a client operates in, e.g. cafe, restaurant, hotel, office or coffee-shop chain.",
+            "properties": [
+                {
+                    "name": "id",
+                    "description": "Primary key. Normalized industry name.",
+                    "property_type": "keyword",
+                    "required": true
+                },
+                {
+                    "name": "name",
+                    "description": "Industry label.",
+                    "property_type": "keyword",
+                    "required": true
+                }
+            ]
+        },
+        {
+            "name": "ProductCategory",
+            "description": "Product category in the distributor's catalog, e.g. machines, grinders, beans, dairy/syrups or consumables.",
+            "properties": [
+                {
+                    "name": "id",
+                    "description": "Primary key. Normalized category name.",
+                    "property_type": "keyword",
+                    "required": true
+                },
+                {
+                    "name": "name",
+                    "description": "Category name.",
+                    "property_type": "keyword",
+                    "required": true
+                }
+            ]
+        },
+        {
+            "name": "Supplier",
+            "description": "An upstream manufacturer or vendor the distributor sources products from.",
+            "properties": [
+                {
+                    "name": "id",
+                    "description": "Primary key.",
+                    "property_type": "keyword",
+                    "required": true
+                },
+                {
+                    "name": "name",
+                    "description": "Supplier company name.",
+                    "property_type": "keyword",
+                    "required": true
+                },
+                {
+                    "name": "country",
+                    "description": "Supplier country of origin.",
+                    "property_type": "keyword",
+                    "required": false
+                }
+            ]
+        },
+        {
+            "name": "Product",
+            "description": "A SKU in the distributor's catalog: coffee machine, grinder, beans, dairy/syrup or consumable.",
+            "properties": [
+                {
+                    "name": "id",
+                    "description": "Primary key. SKU code.",
+                    "property_type": "keyword",
+                    "required": true
+                },
+                {
+                    "name": "name",
+                    "description": "Product display name, useful for semantic search.",
+                    "property_type": "text",
+                    "required": true
+                },
+                {
+                    "name": "unit",
+                    "description": "Unit of sale, e.g. шт, уп., л, кг.",
+                    "property_type": "keyword",
+                    "required": false
+                },
+                {
+                    "name": "unit_price",
+                    "description": "List price per unit in KZT.",
+                    "property_type": "number",
+                    "required": true
+                },
+                {
+                    "name": "cost_price",
+                    "description": "Cost of goods per unit in KZT.",
+                    "property_type": "number",
+                    "required": false
+                },
+                {
+                    "name": "margin_pct",
+                    "description": "Derived gross margin percentage: (unit_price - cost_price) / unit_price.",
+                    "property_type": "number",
+                    "required": false
+                }
+            ]
+        },
+        {
+            "name": "Warehouse",
+            "description": "A distributor warehouse that stocks products and fulfills shipments.",
+            "properties": [
+                {
+                    "name": "id",
+                    "description": "Primary key.",
+                    "property_type": "keyword",
+                    "required": true
+                },
+                {
+                    "name": "name",
+                    "description": "Warehouse name.",
+                    "property_type": "keyword",
+                    "required": true
+                },
+                {
+                    "name": "city",
+                    "description": "City the warehouse is located in.",
+                    "property_type": "keyword",
+                    "required": false
+                }
+            ]
+        },
+        {
+            "name": "StockLevel",
+            "description": "Derived inventory record for one product at one warehouse.",
+            "properties": [
+                {
+                    "name": "id",
+                    "description": "Primary key. Composite of product and warehouse.",
+                    "property_type": "keyword",
+                    "required": true
+                },
+                {
+                    "name": "quantity",
+                    "description": "Units currently in stock.",
+                    "property_type": "number",
+                    "required": true
+                },
+                {
+                    "name": "reorder_point",
+                    "description": "Quantity threshold below which restocking is triggered.",
+                    "property_type": "number",
+                    "required": true
+                },
+                {
+                    "name": "low_stock",
+                    "description": "Derived flag: quantity is at or below reorder_point.",
+                    "property_type": "bool",
+                    "required": true
+                }
+            ]
+        },
+        {
+            "name": "Order",
+            "description": "A sales order placed by a client.",
+            "properties": [
+                {
+                    "name": "id",
+                    "description": "Primary key. Order number.",
+                    "property_type": "keyword",
+                    "required": true
+                },
+                {
+                    "name": "order_date",
+                    "description": "Date the order was placed.",
+                    "property_type": "datetime",
+                    "required": true
+                },
+                {
+                    "name": "status",
+                    "description": "Order status, e.g. processing or delivered.",
+                    "property_type": "keyword",
+                    "required": true
+                },
+                {
+                    "name": "currency",
+                    "description": "Order currency code.",
+                    "property_type": "keyword",
+                    "required": false
+                },
+                {
+                    "name": "total_amount",
+                    "description": "Derived total order value, sum of its order lines.",
+                    "property_type": "number",
+                    "required": true
+                }
+            ]
+        },
+        {
+            "name": "OrderLine",
+            "description": "A single product line item within an order.",
+            "properties": [
+                {
+                    "name": "id",
+                    "description": "Primary key. Order id plus line index.",
+                    "property_type": "keyword",
+                    "required": true
+                },
+                {
+                    "name": "quantity",
+                    "description": "Quantity of the product ordered.",
+                    "property_type": "number",
+                    "required": true
+                },
+                {
+                    "name": "unit_price",
+                    "description": "Price per unit at order time.",
+                    "property_type": "number",
+                    "required": true
+                },
+                {
+                    "name": "line_total",
+                    "description": "Derived quantity * unit_price.",
+                    "property_type": "number",
+                    "required": true
+                }
+            ]
+        },
+        {
+            "name": "Invoice",
+            "description": "A financial invoice billed for an order.",
+            "properties": [
+                {
+                    "name": "id",
+                    "description": "Primary key. Invoice number.",
+                    "property_type": "keyword",
+                    "required": true
+                },
+                {
+                    "name": "issue_date",
+                    "description": "Date the invoice was issued.",
+                    "property_type": "datetime",
+                    "required": true
+                },
+                {
+                    "name": "due_date",
+                    "description": "Payment due date.",
+                    "property_type": "datetime",
+                    "required": true
+                },
+                {
+                    "name": "amount",
+                    "description": "Total invoice amount in KZT.",
+                    "property_type": "number",
+                    "required": true
+                },
+                {
+                    "name": "status",
+                    "description": "Invoice status: paid, pending or overdue.",
+                    "property_type": "keyword",
+                    "required": true
+                },
+                {
+                    "name": "paid_amount",
+                    "description": "Amount paid so far.",
+                    "property_type": "number",
+                    "required": false
+                },
+                {
+                    "name": "days_overdue",
+                    "description": "Derived number of days past due_date when unpaid.",
+                    "property_type": "number",
+                    "required": false
+                }
+            ]
+        },
+        {
+            "name": "Payment",
+            "description": "A payment received against an invoice.",
+            "properties": [
+                {
+                    "name": "id",
+                    "description": "Primary key.",
+                    "property_type": "keyword",
+                    "required": true
+                },
+                {
+                    "name": "payment_date",
+                    "description": "Date the payment was received.",
+                    "property_type": "datetime",
+                    "required": true
+                },
+                {
+                    "name": "amount",
+                    "description": "Payment amount in KZT.",
+                    "property_type": "number",
+                    "required": true
+                },
+                {
+                    "name": "method",
+                    "description": "Payment method, e.g. bank_transfer, card or cash.",
+                    "property_type": "keyword",
+                    "required": false
+                }
+            ]
+        },
+        {
+            "name": "Shipment",
+            "description": "A logistics shipment fulfilling an order from a warehouse.",
+            "properties": [
+                {
+                    "name": "id",
+                    "description": "Primary key.",
+                    "property_type": "keyword",
+                    "required": true
+                },
+                {
+                    "name": "ship_date",
+                    "description": "Date the shipment left the warehouse.",
+                    "property_type": "datetime",
+                    "required": false
+                },
+                {
+                    "name": "promised_date",
+                    "description": "Delivery date promised to the client.",
+                    "property_type": "datetime",
+                    "required": false
+                },
+                {
+                    "name": "delivered_date",
+                    "description": "Actual delivery date, if delivered.",
+                    "property_type": "datetime",
+                    "required": false
+                },
+                {
+                    "name": "status",
+                    "description": "Shipment status: in_transit, delivered or delayed.",
+                    "property_type": "keyword",
+                    "required": true
+                },
+                {
+                    "name": "delay_days",
+                    "description": "Days late versus promised_date.",
+                    "property_type": "number",
+                    "required": false
+                }
+            ]
+        },
+        {
+            "name": "Carrier",
+            "description": "A third-party logistics carrier used to deliver shipments.",
+            "properties": [
+                {
+                    "name": "id",
+                    "description": "Primary key.",
+                    "property_type": "keyword",
+                    "required": true
+                },
+                {
+                    "name": "name",
+                    "description": "Carrier company name.",
+                    "property_type": "keyword",
+                    "required": true
+                }
+            ]
+        },
+        {
+            "name": "Correspondence",
+            "description": "A single email or chat message exchanged between a client contact and a manager, sourced from the mailbox / CRM timeline.",
+            "properties": [
+                {
+                    "name": "id",
+                    "description": "Primary key.",
+                    "property_type": "keyword",
+                    "required": true
+                },
+                {
+                    "name": "channel",
+                    "description": "Communication channel: email or chat.",
+                    "property_type": "keyword",
+                    "required": true
+                },
+                {
+                    "name": "direction",
+                    "description": "inbound (from client) or outbound (from manager).",
+                    "property_type": "keyword",
+                    "required": true
+                },
+                {
+                    "name": "sent_at",
+                    "description": "Timestamp the message was sent.",
+                    "property_type": "datetime",
+                    "required": true
+                },
+                {
+                    "name": "subject",
+                    "description": "Message subject line, if any.",
+                    "property_type": "keyword",
+                    "required": false
+                },
+                {
+                    "name": "body",
+                    "description": "Full message text, embedded for semantic search.",
+                    "property_type": "text",
+                    "required": true
+                },
+                {
+                    "name": "sentiment",
+                    "description": "Sentiment tag: positive, neutral or negative.",
+                    "property_type": "keyword",
+                    "required": true
+                }
+            ]
+        },
+        {
+            "name": "Topic",
+            "description": "A normalized topic/intent tag applied to correspondence, e.g. delivery delay, quality complaint or discount request.",
+            "properties": [
+                {
+                    "name": "id",
+                    "description": "Primary key. Normalized topic code.",
+                    "property_type": "keyword",
+                    "required": true
+                },
+                {
+                    "name": "name",
+                    "description": "Human-readable topic label.",
+                    "property_type": "keyword",
+                    "required": true
+                }
+            ]
+        },
+        {
+            "name": "RiskSignal",
+            "description": "A derived negative business signal about a client, computed from invoices, shipments and correspondence, with an explainable evidence trail.",
+            "properties": [
+                {
+                    "name": "id",
+                    "description": "Primary key. Client id plus signal type.",
+                    "property_type": "keyword",
+                    "required": true
+                },
+                {
+                    "name": "name",
+                    "description": "Signal name, e.g. ChurnRisk, PaymentRisk, DeliveryRisk or QualityRisk.",
+                    "property_type": "keyword",
+                    "required": true
+                },
+                {
+                    "name": "description",
+                    "description": "Human-readable explanation of why the signal fired.",
+                    "property_type": "text",
+                    "required": false
+                },
+                {
+                    "name": "severity",
+                    "description": "Severity score used for ranking / prioritization.",
+                    "property_type": "number",
+                    "required": false
+                }
+            ]
+        },
+        {
+            "name": "OpportunitySignal",
+            "description": "A derived positive business signal about a client, computed from correspondence and order history, with an explainable evidence trail.",
+            "properties": [
+                {
+                    "name": "id",
+                    "description": "Primary key. Client id plus signal type.",
+                    "property_type": "keyword",
+                    "required": true
+                },
+                {
+                    "name": "name",
+                    "description": "Signal name, e.g. ExpansionReady, RenewalOpportunity or LoyalAdvocate.",
+                    "property_type": "keyword",
+                    "required": true
+                },
+                {
+                    "name": "description",
+                    "description": "Human-readable explanation of why the signal fired.",
+                    "property_type": "text",
+                    "required": false
+                },
+                {
+                    "name": "weight",
+                    "description": "Weight/priority score used for ranking upsell targets.",
+                    "property_type": "number",
+                    "required": false
+                }
+            ]
+        }
     ],
     "relation_types": [
-      {
-        "name": "LOCATED_AT"
-      },
-      {
-        "name": "CAPTURED_BY"
-      }
+        {
+            "name": "MANAGED_BY",
+            "description": "Direction Client -> Manager. The account manager who owns this client relationship."
+        },
+        {
+            "name": "LOCATED_IN",
+            "description": "Direction Client -> Region. The region/city the client is located in."
+        },
+        {
+            "name": "IN_INDUSTRY",
+            "description": "Direction Client -> Industry. The vertical the client operates in."
+        },
+        {
+            "name": "WORKS_AT",
+            "description": "Direction Contact -> Client. The client company a contact person works at."
+        },
+        {
+            "name": "PLACED_ORDER",
+            "description": "Direction Client -> Order. The client that placed an order."
+        },
+        {
+            "name": "HANDLED_BY",
+            "description": "Direction Order -> Manager. The manager who processed the order (may differ from the client's account manager)."
+        },
+        {
+            "name": "HAS_LINE",
+            "description": "Direction Order -> OrderLine. Line items belonging to an order."
+        },
+        {
+            "name": "OF_PRODUCT",
+            "description": "Direction OrderLine -> Product, and StockLevel -> Product. The product a line item or stock record refers to."
+        },
+        {
+            "name": "IN_CATEGORY",
+            "description": "Direction Product -> ProductCategory. The catalog category a product belongs to."
+        },
+        {
+            "name": "SUPPLIED_BY",
+            "description": "Direction Product -> Supplier. The upstream supplier of a product."
+        },
+        {
+            "name": "AT_WAREHOUSE",
+            "description": "Direction StockLevel -> Warehouse, and Shipment -> Warehouse. The warehouse a stock record or shipment is associated with."
+        },
+        {
+            "name": "HAS_INVOICE",
+            "description": "Direction Order -> Invoice. The invoice billed for an order."
+        },
+        {
+            "name": "HAS_PAYMENT",
+            "description": "Direction Invoice -> Payment. A payment received against an invoice."
+        },
+        {
+            "name": "HAS_SHIPMENT",
+            "description": "Direction Order -> Shipment. The shipment fulfilling an order."
+        },
+        {
+            "name": "SHIPPED_VIA",
+            "description": "Direction Shipment -> Carrier. The logistics carrier used for a shipment."
+        },
+        {
+            "name": "FROM_CONTACT",
+            "description": "Direction Correspondence -> Contact. The client contact who sent or received the message."
+        },
+        {
+            "name": "ABOUT_CLIENT",
+            "description": "Direction Correspondence -> Client. The client account a message relates to."
+        },
+        {
+            "name": "HANDLED_BY_MANAGER",
+            "description": "Direction Correspondence -> Manager. The manager who sent or received the message."
+        },
+        {
+            "name": "MENTIONS_TOPIC",
+            "description": "Direction Correspondence -> Topic. Topic(s) detected in a message."
+        },
+        {
+            "name": "REFERENCES",
+            "description": "Direction Correspondence -> Order | Invoice. An order or invoice explicitly referenced in a message."
+        },
+        {
+            "name": "HAS_RISK_SIGNAL",
+            "description": "Direction Client -> RiskSignal. A derived risk signal attached to a client."
+        },
+        {
+            "name": "HAS_OPPORTUNITY_SIGNAL",
+            "description": "Direction Client -> OpportunitySignal. A derived positive signal attached to a client."
+        },
+        {
+            "name": "EVIDENCED_BY",
+            "description": "Direction RiskSignal | OpportunitySignal -> Correspondence | Invoice | Shipment. The concrete records that justify a derived signal, making it explainable."
+        }
     ]
-  },
-  "beauty_wellness": {
-    "description": null,
-    "entity_types": [
-      {
-        "name": "Client",
-        "description": "A person booking beauty or wellness services."
-      },
-      {
-        "name": "Specialist",
-        "description": "A practitioner (stylist, therapist, trainer) providing services."
-      },
-      {
-        "name": "Appointment",
-        "description": "A booked time slot for a service between client and specialist."
-      },
-      {
-        "name": "Service",
-        "description": "A specific treatment or session offered (haircut, massage, class)."
-      },
-      {
-        "name": "Membership",
-        "description": "A recurring subscription giving a client access to services."
-      },
-      {
-        "name": "Visit",
-        "description": "A record of a client attending a scheduled appointment."
-      },
-      {
-        "name": "Product",
-        "description": "A retail item sold alongside services (cosmetic, supplement)."
-      },
-      {
-        "name": "Location",
-        "description": "A salon, studio, or wellness centre where services are delivered."
-      }
-    ],
-    "relation_types": [
-      {
-        "name": "BOOKED_BY",
-        "description": "Appointment was booked by the target client."
-      },
-      {
-        "name": "DELIVERED_BY",
-        "description": "Service or appointment was delivered by the target specialist."
-      },
-      {
-        "name": "HELD_AT",
-        "description": "Appointment or visit took place at the target location."
-      },
-      {
-        "name": "INCLUDES",
-        "description": "Appointment includes the target service."
-      },
-      {
-        "name": "HOLDS",
-        "description": "Client holds the target membership."
-      },
-      {
-        "name": "RECORDS",
-        "description": "Visit records attendance of the target appointment."
-      },
-      {
-        "name": "PURCHASED",
-        "description": "Client purchased the target product or membership."
-      },
-      {
-        "name": "EMPLOYS",
-        "description": "Location employs or hosts the target specialist."
-      }
-    ]
-  },
-  "construction_trades": {
-    "description": null,
-    "entity_types": [
-      {
-        "name": "Project",
-        "description": "A construction or renovation initiative with scope, budget, and timeline."
-      },
-      {
-        "name": "Site",
-        "description": "The physical location where construction work takes place."
-      },
-      {
-        "name": "Contractor",
-        "description": "A company or individual carrying out construction works."
-      },
-      {
-        "name": "Subcontractor",
-        "description": "A specialist trade firm hired by the main contractor."
-      },
-      {
-        "name": "Estimate",
-        "description": "A cost projection for a project or work package."
-      },
-      {
-        "name": "WorkOrder",
-        "description": "An instruction to execute a defined scope of work on site."
-      },
-      {
-        "name": "Material",
-        "description": "A construction material or supply item used on site."
-      },
-      {
-        "name": "Inspection",
-        "description": "A formal quality or compliance check of completed work."
-      },
-      {
-        "name": "Certificate",
-        "description": "A document certifying completion, quality, or compliance."
-      },
-      {
-        "name": "DrawingRevision",
-        "description": "A versioned engineering or architectural drawing for the project."
-      }
-    ],
-    "relation_types": [
-      {
-        "name": "EXECUTED_AT",
-        "description": "Project or work order is executed at the target site."
-      },
-      {
-        "name": "CONTRACTED_TO",
-        "description": "Work is contracted to the target contractor or subcontractor."
-      },
-      {
-        "name": "USES",
-        "description": "Project or work order uses the target material."
-      },
-      {
-        "name": "COVERS",
-        "description": "Estimate covers the target work order or project scope."
-      },
-      {
-        "name": "INSPECTED_IN",
-        "description": "Work was assessed in the target inspection."
-      },
-      {
-        "name": "CERTIFIED_BY",
-        "description": "Work or phase is certified by the target certificate."
-      },
-      {
-        "name": "REFERENCES",
-        "description": "Work order references the target drawing revision."
-      },
-      {
-        "name": "SUBCONTRACTS",
-        "description": "Contractor subcontracts the target work to a subcontractor."
-      }
-    ]
-  },
-  "core_business": {
-    "description": null,
-    "entity_types": [
-      {
-        "name": "Person",
-        "description": "A natural person identified by name, role, or contact details."
-      },
-      {
-        "name": "Organization",
-        "description": "A company, firm, partnership, or other legal entity."
-      },
-      {
-        "name": "Contact",
-        "description": "A set of communication details (email, phone, address) linked to a person or organization."
-      },
-      {
-        "name": "Document",
-        "description": "Any formal written record: contract, report, letter, form, or policy."
-      },
-      {
-        "name": "Location",
-        "description": "A physical or administrative place: address, city, region, country."
-      },
-      {
-        "name": "MonetaryAmount",
-        "description": "A specific sum of money with optional currency and date context."
-      },
-      {
-        "name": "Date",
-        "description": "A specific date, deadline, or time period explicitly mentioned."
-      },
-      {
-        "name": "Product",
-        "description": "A good or service offered or referenced in a business context."
-      },
-      {
-        "name": "Category",
-        "description": "A classification label grouping related entities or items."
-      },
-      {
-        "name": "Event",
-        "description": "A significant occurrence with a date, participants, and outcome."
-      },
-      {
-        "name": "Note",
-        "description": "A free-text observation or comment attached to another entity."
-      },
-      {
-        "name": "Tag",
-        "description": "A short label used for search, filtering, or grouping."
-      }
-    ],
-    "relation_types": [
-      {
-        "name": "WORKS_FOR",
-        "description": "Person is employed by or associated with the organization."
-      },
-      {
-        "name": "BELONGS_TO",
-        "description": "Subject is classified under or owned by the target."
-      },
-      {
-        "name": "LOCATED_AT",
-        "description": "Subject has its physical or registered location at the target."
-      },
-      {
-        "name": "HAS_CONTACT",
-        "description": "Subject person or organization has the target contact details."
-      },
-      {
-        "name": "ISSUED_ON",
-        "description": "Document or event was created or occurred on the target date."
-      },
-      {
-        "name": "INVOLVES",
-        "description": "Event or document involves the target person or organization."
-      },
-      {
-        "name": "RELATED_TO",
-        "description": "Generic association between two entities."
-      },
-      {
-        "name": "TAGGED_WITH",
-        "description": "Subject is labeled with the target tag or category."
-      },
-      {
-        "name": "PART_OF",
-        "description": "Subject is a component or subdivision of the target."
-      }
-    ]
-  },
-  "customer_support": {
-    "description": null,
-    "entity_types": [
-      {
-        "name": "Ticket",
-        "description": "A recorded customer request, issue, or complaint."
-      },
-      {
-        "name": "Customer",
-        "description": "A person or company that has submitted a support request."
-      },
-      {
-        "name": "Agent",
-        "description": "A support team member who handles tickets."
-      },
-      {
-        "name": "Queue",
-        "description": "A group or bucket to which tickets are routed."
-      },
-      {
-        "name": "SLA",
-        "description": "A service-level agreement defining response and resolution time targets."
-      },
-      {
-        "name": "Channel",
-        "description": "The communication channel used: email, chat, phone, portal."
-      },
-      {
-        "name": "Category",
-        "description": "A topic classification assigned to a ticket."
-      },
-      {
-        "name": "Resolution",
-        "description": "The solution or answer provided to close a ticket."
-      },
-      {
-        "name": "Escalation",
-        "description": "A transfer of a ticket to a higher-tier team or manager."
-      },
-      {
-        "name": "KnowledgeArticle",
-        "description": "A self-service document used to resolve common issues."
-      }
-    ],
-    "relation_types": [
-      {
-        "name": "SUBMITTED_BY",
-        "description": "Ticket was submitted by the target customer."
-      },
-      {
-        "name": "ASSIGNED_TO",
-        "description": "Ticket is assigned to the target agent or queue."
-      },
-      {
-        "name": "GOVERNED_BY",
-        "description": "Ticket is subject to the target SLA."
-      },
-      {
-        "name": "RECEIVED_VIA",
-        "description": "Ticket arrived through the target channel."
-      },
-      {
-        "name": "CLASSIFIED_AS",
-        "description": "Ticket is classified under the target category."
-      },
-      {
-        "name": "RESOLVED_WITH",
-        "description": "Ticket was closed using the target resolution or knowledge article."
-      },
-      {
-        "name": "ESCALATED_TO",
-        "description": "Ticket was escalated to the target agent, queue, or escalation record."
-      },
-      {
-        "name": "RELATED_TO",
-        "description": "Ticket is related to another ticket or issue."
-      }
-    ]
-  },
-  "ecommerce": {
-    "description": null,
-    "entity_types": [
-      {
-        "name": "OnlineOrder",
-        "description": "A customer order placed via a digital channel."
-      },
-      {
-        "name": "Customer",
-        "description": "A registered user who places orders on the platform."
-      },
-      {
-        "name": "Cart",
-        "description": "A temporary collection of items a customer intends to purchase."
-      },
-      {
-        "name": "Product",
-        "description": "A digital catalogue item with price, images, and attributes."
-      },
-      {
-        "name": "Shipment",
-        "description": "A physical dispatch of ordered goods, with tracking and status."
-      },
-      {
-        "name": "Return",
-        "description": "A customer-initiated request to send back an ordered item."
-      },
-      {
-        "name": "SalesChannel",
-        "description": "A marketplace or platform through which orders are received."
-      },
-      {
-        "name": "Coupon",
-        "description": "A discount code or voucher applied at checkout."
-      },
-      {
-        "name": "Review",
-        "description": "A customer-written rating and comment on a product."
-      },
-      {
-        "name": "Warehouse",
-        "description": "A fulfilment location that stores and dispatches products."
-      }
-    ],
-    "relation_types": [
-      {
-        "name": "PLACED_BY",
-        "description": "Order was placed by the target customer."
-      },
-      {
-        "name": "CONTAINS",
-        "description": "Cart or order contains the target product."
-      },
-      {
-        "name": "FULFILLED_VIA",
-        "description": "Order is fulfilled via the target warehouse or channel."
-      },
-      {
-        "name": "SHIPPED_AS",
-        "description": "Order is dispatched as the target shipment."
-      },
-      {
-        "name": "RECEIVED_THROUGH",
-        "description": "Order was received through the target sales channel."
-      },
-      {
-        "name": "DISCOUNTED_BY",
-        "description": "Order or item is discounted by the target coupon."
-      },
-      {
-        "name": "REVIEWED_AS",
-        "description": "Product received the target review."
-      },
-      {
-        "name": "RETURNED_IN",
-        "description": "Shipment item is subject to the target return."
-      }
-    ]
-  },
-  "education_training": {
-    "description": null,
-    "entity_types": [
-      {
-        "name": "Student",
-        "description": "A person enrolled in a course or training programme."
-      },
-      {
-        "name": "Instructor",
-        "description": "A teacher, trainer, or facilitator delivering course content."
-      },
-      {
-        "name": "Course",
-        "description": "A structured learning programme with topics, materials, and assessments."
-      },
-      {
-        "name": "Session",
-        "description": "A single class or workshop meeting within a course."
-      },
-      {
-        "name": "Group",
-        "description": "A cohort of students learning together in a course."
-      },
-      {
-        "name": "Enrollment",
-        "description": "A record of a student joining a course or group."
-      },
-      {
-        "name": "Assessment",
-        "description": "An exam, quiz, or assignment used to evaluate student progress."
-      },
-      {
-        "name": "Certificate",
-        "description": "A credential issued to a student upon course completion."
-      },
-      {
-        "name": "Material",
-        "description": "A learning resource: slide deck, video, worksheet, or reading."
-      }
-    ],
-    "relation_types": [
-      {
-        "name": "ENROLLED_IN",
-        "description": "Student is enrolled in the target course or group."
-      },
-      {
-        "name": "TAUGHT_BY",
-        "description": "Course or session is taught by the target instructor."
-      },
-      {
-        "name": "BELONGS_TO",
-        "description": "Session or assessment belongs to the target course."
-      },
-      {
-        "name": "ATTENDS",
-        "description": "Student attends the target session."
-      },
-      {
-        "name": "COMPLETES",
-        "description": "Student completes the target course or assessment."
-      },
-      {
-        "name": "AWARDED_TO",
-        "description": "Certificate is awarded to the target student."
-      },
-      {
-        "name": "USES",
-        "description": "Course or session uses the target material."
-      },
-      {
-        "name": "GROUPED_IN",
-        "description": "Student is grouped in the target cohort or group."
-      }
-    ]
-  },
-  "field_services": {
-    "description": null,
-    "entity_types": [
-      {
-        "name": "ServiceOrder",
-        "description": "A work order for an on-site visit or repair job."
-      },
-      {
-        "name": "Customer",
-        "description": "A person or organisation requesting field service."
-      },
-      {
-        "name": "Technician",
-        "description": "A field worker dispatched to carry out service orders."
-      },
-      {
-        "name": "Appointment",
-        "description": "A scheduled visit agreed with the customer."
-      },
-      {
-        "name": "SparePart",
-        "description": "A component or material used during a service visit."
-      },
-      {
-        "name": "ServiceReport",
-        "description": "A record of work done, parts used, and outcome after a visit."
-      },
-      {
-        "name": "Asset",
-        "description": "A piece of equipment or installation being serviced."
-      },
-      {
-        "name": "Zone",
-        "description": "A geographic area or territory assigned to a technician or team."
-      },
-      {
-        "name": "Signature",
-        "description": "Customer sign-off confirming completion of a service order."
-      }
-    ],
-    "relation_types": [
-      {
-        "name": "REQUESTED_BY",
-        "description": "Service order was requested by the target customer."
-      },
-      {
-        "name": "ASSIGNED_TO",
-        "description": "Service order or appointment is assigned to the target technician."
-      },
-      {
-        "name": "SCHEDULED_AS",
-        "description": "Service order is scheduled as the target appointment."
-      },
-      {
-        "name": "COVERS",
-        "description": "Zone covers the target customer address or asset location."
-      },
-      {
-        "name": "USES",
-        "description": "Service order or report uses the target spare part."
-      },
-      {
-        "name": "TARGETS",
-        "description": "Service order targets the target asset for repair or maintenance."
-      },
-      {
-        "name": "DOCUMENTED_IN",
-        "description": "Work done is documented in the target service report."
-      },
-      {
-        "name": "CONFIRMED_BY",
-        "description": "Service order completion is confirmed by the target signature."
-      }
-    ]
-  },
-  "finance_accounting": {
-    "description": null,
-    "entity_types": [
-      {
-        "name": "Invoice",
-        "description": "A document requesting payment for goods or services delivered."
-      },
-      {
-        "name": "Payment",
-        "description": "A record of money transferred to settle an obligation."
-      },
-      {
-        "name": "Expense",
-        "description": "A cost incurred by the business, with category and amount."
-      },
-      {
-        "name": "Budget",
-        "description": "A planned allocation of funds for a period or cost centre."
-      },
-      {
-        "name": "Account",
-        "description": "A chart-of-accounts entry tracking a category of transactions."
-      },
-      {
-        "name": "Transaction",
-        "description": "A single financial entry: debit or credit with date and amount."
-      },
-      {
-        "name": "Counterparty",
-        "description": "A supplier, customer, or partner involved in financial transactions."
-      },
-      {
-        "name": "TaxRecord",
-        "description": "A record of tax liability, payment, or filing for a period."
-      },
-      {
-        "name": "CostCentre",
-        "description": "An organisational unit to which costs are allocated."
-      },
-      {
-        "name": "FinancialReport",
-        "description": "A periodic statement: balance sheet, P&L, cash-flow report."
-      }
-    ],
-    "relation_types": [
-      {
-        "name": "ISSUED_TO",
-        "description": "Invoice is addressed to the target counterparty."
-      },
-      {
-        "name": "SETTLES",
-        "description": "Payment settles the target invoice or obligation."
-      },
-      {
-        "name": "CHARGED_TO",
-        "description": "Expense or transaction is charged to the target account or cost centre."
-      },
-      {
-        "name": "ALLOCATED_TO",
-        "description": "Budget amount is allocated to the target cost centre or project."
-      },
-      {
-        "name": "INVOLVES",
-        "description": "Transaction involves the target counterparty."
-      },
-      {
-        "name": "BELONGS_TO",
-        "description": "Transaction or expense belongs to the target account."
-      },
-      {
-        "name": "COVERED_BY",
-        "description": "Expense is covered by the target budget."
-      },
-      {
-        "name": "REPORTED_IN",
-        "description": "Transaction or account balance is reported in the target financial report."
-      }
-    ]
-  },
-  "flippa": {
-    "description": "Flippa is an online marketplace that connects buyers and sellers of websites, domain names, apps, and online businesses.",
-    "entity_types": [
-      {
-        "name": "Listing",
-        "description": "A Flippa marketplace listing for a digital asset offered for sale.",
-        "properties": [
-          {
-            "name": "id",
-            "description": "Primary key. Flippa listing ID.",
-            "property_type": "keyword",
-            "required": true
-          },
-          {
-            "name": "listing_url",
-            "description": "Public URL of the Flippa listing.",
-            "property_type": "keyword",
-            "required": true
-          },
-          {
-            "name": "title",
-            "description": "Listing title, useful for semantic search and claim extraction.",
-            "property_type": "keyword",
-            "required": false
-          },
-          {
-            "name": "summary",
-            "description": "Short listing summary.",
-            "property_type": "keyword",
-            "required": false
-          },
-          {
-            "name": "property_name",
-            "description": "Asset or property display name.",
-            "property_type": "keyword",
-            "required": true
-          },
-          {
-            "name": "price",
-            "description": "Current listing price in USD.",
-            "property_type": "number",
-            "required": true
-          },
-          {
-            "name": "original_price",
-            "description": "Original price before price drop, if available.",
-            "property_type": "number",
-            "required": false
-          },
-          {
-            "name": "price_dropped",
-            "description": "Whether the listing price has dropped.",
-            "property_type": "bool",
-            "required": true
-          },
-          {
-            "name": "price_dropped_percent",
-            "description": "Percentage of price drop.",
-            "property_type": "number",
-            "required": false
-          },
-          {
-            "name": "bid_count",
-            "description": "Number of bids on the listing.",
-            "property_type": "number",
-            "required": true
-          },
-          {
-            "name": "sale_method",
-            "description": "Sale method, for example auction or fixed price.",
-            "property_type": "keyword",
-            "required": true
-          },
-          {
-            "name": "sale_method_title",
-            "description": "Human-readable sale method label.",
-            "property_type": "keyword",
-            "required": false
-          },
-          {
-            "name": "status",
-            "description": "Listing status, for example open.",
-            "property_type": "keyword",
-            "required": true
-          },
-          {
-            "name": "end_at",
-            "description": "Auction or listing end timestamp.",
-            "property_type": "datetime",
-            "required": false
-          },
-          {
-            "name": "open_listing",
-            "description": "Whether the listing is currently open.",
-            "property_type": "bool",
-            "required": true
-          },
-          {
-            "name": "open_to_offer",
-            "description": "Whether seller accepts offers.",
-            "property_type": "bool",
-            "required": true
-          },
-          {
-            "name": "under_offer",
-            "description": "Whether the listing is under offer.",
-            "property_type": "bool",
-            "required": true
-          },
-          {
-            "name": "profit_average",
-            "description": "Average monthly net profit in USD.",
-            "property_type": "number",
-            "required": false
-          },
-          {
-            "name": "revenue_average",
-            "description": "Average monthly revenue in USD.",
-            "property_type": "number",
-            "required": false
-          },
-          {
-            "name": "multiple",
-            "description": "Profit multiple shown by Flippa.",
-            "property_type": "number",
-            "required": false
-          },
-          {
-            "name": "revenue_multiple",
-            "description": "Revenue multiple shown by Flippa.",
-            "property_type": "number",
-            "required": false
-          },
-          {
-            "name": "has_multiple",
-            "description": "Whether a multiple is available.",
-            "property_type": "bool",
-            "required": true
-          },
-          {
-            "name": "ttm_revenue",
-            "description": "Trailing twelve-month revenue, if available.",
-            "property_type": "number",
-            "required": false
-          },
-          {
-            "name": "target_raise_amount",
-            "description": "Target raise amount for investment-style listings.",
-            "property_type": "number",
-            "required": false
-          },
-          {
-            "name": "uniques_per_month",
-            "description": "Monthly unique visitors or users.",
-            "property_type": "number",
-            "required": false
-          },
-          {
-            "name": "annual_organic_traffic",
-            "description": "Annual organic traffic estimate.",
-            "property_type": "number",
-            "required": false
-          },
-          {
-            "name": "authority_score",
-            "description": "SEO or domain authority score.",
-            "property_type": "number",
-            "required": false
-          },
-          {
-            "name": "app_rating",
-            "description": "App rating for mobile app listings.",
-            "property_type": "number",
-            "required": false
-          },
-          {
-            "name": "established_at",
-            "description": "Asset age in years as numeric value.",
-            "property_type": "number",
-            "required": false
-          },
-          {
-            "name": "formatted_age_in_years",
-            "description": "Human-readable age label.",
-            "property_type": "keyword",
-            "required": false
-          },
-          {
-            "name": "age_label",
-            "description": "Type of age label, such as Site Age or App Age.",
-            "property_type": "keyword",
-            "required": false
-          },
-          {
-            "name": "has_verified_traffic",
-            "description": "Whether traffic is verified.",
-            "property_type": "bool",
-            "required": true
-          },
-          {
-            "name": "has_verified_revenue",
-            "description": "Whether revenue is verified.",
-            "property_type": "bool",
-            "required": true
-          },
-          {
-            "name": "display_verification_badge",
-            "description": "Whether Flippa displays a verification badge.",
-            "property_type": "bool",
-            "required": true
-          },
-          {
-            "name": "manually_vetted",
-            "description": "Whether the listing was manually vetted.",
-            "property_type": "bool",
-            "required": true
-          },
-          {
-            "name": "super_seller",
-            "description": "Whether seller is marked as super seller.",
-            "property_type": "bool",
-            "required": true
-          },
-          {
-            "name": "broker_seller",
-            "description": "Whether seller is a broker.",
-            "property_type": "bool",
-            "required": true
-          },
-          {
-            "name": "managed_by_flippa",
-            "description": "Whether listing is managed by Flippa.",
-            "property_type": "bool",
-            "required": true
-          },
-          {
-            "name": "sponsored",
-            "description": "Whether the listing is sponsored.",
-            "property_type": "bool",
-            "required": true
-          },
-          {
-            "name": "editors_choice",
-            "description": "Whether listing is marked as editor's choice.",
-            "property_type": "bool",
-            "required": true
-          },
-          {
-            "name": "confidential",
-            "description": "Whether listing is confidential.",
-            "property_type": "bool",
-            "required": true
-          },
-          {
-            "name": "ready_made",
-            "description": "Whether the asset is ready-made.",
-            "property_type": "bool",
-            "required": true
-          },
-          {
-            "name": "protect_listing",
-            "description": "Whether listing protection is enabled.",
-            "property_type": "bool",
-            "required": true
-          },
-          {
-            "name": "early_access_listing",
-            "description": "Whether the listing had early access mode.",
-            "property_type": "bool",
-            "required": true
-          },
-          {
-            "name": "early_access_days_remaining",
-            "description": "Days remaining for early access.",
-            "property_type": "number",
-            "required": false
-          },
-          {
-            "name": "early_access_open_at",
-            "description": "Timestamp when early access opens.",
-            "property_type": "datetime",
-            "required": false
-          },
-          {
-            "name": "special_tags",
-            "description": "Whether listing has special tags.",
-            "property_type": "bool",
-            "required": true
-          },
-          {
-            "name": "listing_watchable",
-            "description": "Whether listing can be watched.",
-            "property_type": "bool",
-            "required": true
-          },
-          {
-            "name": "watched",
-            "description": "Whether current viewer watches the listing.",
-            "property_type": "bool",
-            "required": true
-          },
-          {
-            "name": "show_multiple",
-            "description": "Whether multiple should be displayed.",
-            "property_type": "bool",
-            "required": true
-          },
-          {
-            "name": "invest",
-            "description": "Whether listing is investment-style.",
-            "property_type": "bool",
-            "required": true
-          },
-          {
-            "name": "partial_sale",
-            "description": "Whether listing is a partial sale.",
-            "property_type": "bool",
-            "required": false
-          },
-          {
-            "name": "equity_sale_percentage",
-            "description": "Equity percentage offered for sale.",
-            "property_type": "number",
-            "required": false
-          },
-          {
-            "name": "hide_profit",
-            "description": "Whether profit is hidden.",
-            "property_type": "bool",
-            "required": true
-          },
-          {
-            "name": "domain_only",
-            "description": "Whether the listing is domain-only.",
-            "property_type": "bool",
-            "required": true
-          },
-          {
-            "name": "primary_platform",
-            "description": "Primary platform, if supplied.",
-            "property_type": "keyword",
-            "required": false
-          },
-          {
-            "name": "thumbnail_url",
-            "description": "Primary thumbnail URL.",
-            "property_type": "keyword",
-            "required": false
-          },
-          {
-            "name": "default_image_url",
-            "description": "Default placeholder image URL.",
-            "property_type": "keyword",
-            "required": false
-          },
-          {
-            "name": "currency_label",
-            "description": "Currency display label.",
-            "property_type": "keyword",
-            "required": false
-          },
-          {
-            "name": "price_text",
-            "description": "Human-readable price label.",
-            "property_type": "keyword",
-            "required": false
-          },
-          {
-            "name": "action_button_text",
-            "description": "CTA text shown by Flippa.",
-            "property_type": "keyword",
-            "required": false
-          }
-        ]
-      },
-      {
-        "name": "AssetType",
-        "description": "Type of digital asset, such as SaaS, Ecommerce, Content, Android App, Marketplace, YouTube Channel or Amazon Store.",
-        "properties": [
-          {
-            "name": "id",
-            "description": "Primary key. Normalized asset type name.",
-            "property_type": "keyword",
-            "required": true
-          },
-          {
-            "name": "name",
-            "description": "Asset type name.",
-            "property_type": "keyword",
-            "required": true
-          }
-        ]
-      },
-      {
-        "name": "Category",
-        "description": "Flippa industry or category assigned to the listing.",
-        "properties": [
-          {
-            "name": "id",
-            "description": "Primary key. Normalized category name.",
-            "property_type": "keyword",
-            "required": true
-          },
-          {
-            "name": "name",
-            "description": "Category name.",
-            "property_type": "keyword",
-            "required": true
-          }
-        ]
-      },
-      {
-        "name": "Monetization",
-        "description": "Revenue model used by the asset.",
-        "properties": [
-          {
-            "name": "id",
-            "description": "Primary key. Normalized monetization name.",
-            "property_type": "keyword",
-            "required": true
-          },
-          {
-            "name": "name",
-            "description": "Monetization model name.",
-            "property_type": "keyword",
-            "required": true
-          }
-        ]
-      },
-      {
-        "name": "Country",
-        "description": "Country or seller/listing location as presented by Flippa.",
-        "properties": [
-          {
-            "name": "id",
-            "description": "Primary key. Normalized country or location name.",
-            "property_type": "keyword",
-            "required": true
-          },
-          {
-            "name": "name",
-            "description": "Country or location label.",
-            "property_type": "keyword",
-            "required": true
-          }
-        ]
-      },
-      {
-        "name": "Integration",
-        "description": "External platform or data provider connected to a listing, such as Stripe, Google Analytics, Google AdSense or Amazon Seller.",
-        "properties": [
-          {
-            "name": "id",
-            "description": "Primary key. Integration provider code.",
-            "property_type": "keyword",
-            "required": true
-          },
-          {
-            "name": "provider",
-            "description": "Provider name.",
-            "property_type": "keyword",
-            "required": true
-          },
-          {
-            "name": "icon_url",
-            "description": "Provider icon URL.",
-            "property_type": "keyword",
-            "required": false
-          },
-          {
-            "name": "tooltip_text",
-            "description": "Tooltip text shown for the integration.",
-            "property_type": "keyword",
-            "required": false
-          }
-        ]
-      },
-      {
-        "name": "Verification",
-        "description": "Verification signal attached to a listing.",
-        "properties": [
-          {
-            "name": "id",
-            "description": "Primary key. Verification provider or type.",
-            "property_type": "keyword",
-            "required": true
-          },
-          {
-            "name": "provider",
-            "description": "Verification provider, such as verified-listing, stripe or google_analytics.",
-            "property_type": "keyword",
-            "required": true
-          },
-          {
-            "name": "tooltip_text",
-            "description": "Explanation of verification.",
-            "property_type": "keyword",
-            "required": false
-          },
-          {
-            "name": "icon_url",
-            "description": "Verification icon URL.",
-            "property_type": "keyword",
-            "required": false
-          }
-        ]
-      },
-      {
-        "name": "Badge",
-        "description": "Visual badge or label attached to a listing.",
-        "properties": [
-          {
-            "name": "id",
-            "description": "Primary key. Normalized badge text and variant.",
-            "property_type": "keyword",
-            "required": true
-          },
-          {
-            "name": "text",
-            "description": "Badge text.",
-            "property_type": "keyword",
-            "required": true
-          },
-          {
-            "name": "variant",
-            "description": "Badge style or semantic variant.",
-            "property_type": "keyword",
-            "required": false
-          },
-          {
-            "name": "icon",
-            "description": "Badge icon identifier or URL.",
-            "property_type": "keyword",
-            "required": false
-          }
-        ]
-      },
-      {
-        "name": "KeyData",
-        "description": "Label-value fact displayed in Flippa's key data block.",
-        "properties": [
-          {
-            "name": "id",
-            "description": "Primary key. Listing ID plus normalized label.",
-            "property_type": "keyword",
-            "required": true
-          },
-          {
-            "name": "label",
-            "description": "Displayed key data label, such as Type, Industry, Monetization, Site Age or Net Profit.",
-            "property_type": "keyword",
-            "required": true
-          },
-          {
-            "name": "value",
-            "description": "Displayed key data value.",
-            "property_type": "keyword",
-            "required": true
-          }
-        ]
-      },
-      {
-        "name": "RiskFlag",
-        "description": "Derived analytical risk flag used for due diligence and ranking.",
-        "properties": [
-          {
-            "name": "id",
-            "description": "Primary key. Normalized risk flag name.",
-            "property_type": "keyword",
-            "required": true
-          },
-          {
-            "name": "name",
-            "description": "Risk flag name.",
-            "property_type": "keyword",
-            "required": true
-          },
-          {
-            "name": "description",
-            "description": "Risk flag explanation.",
-            "property_type": "keyword",
-            "required": false
-          },
-          {
-            "name": "severity",
-            "description": "Risk severity score or level.",
-            "property_type": "number",
-            "required": false
-          }
-        ]
-      },
-      {
-        "name": "OpportunitySignal",
-        "description": "Derived positive investment signal used for deal sourcing.",
-        "properties": [
-          {
-            "name": "id",
-            "description": "Primary key. Normalized opportunity signal name.",
-            "property_type": "keyword",
-            "required": true
-          },
-          {
-            "name": "name",
-            "description": "Opportunity signal name.",
-            "property_type": "keyword",
-            "required": true
-          },
-          {
-            "name": "description",
-            "description": "Explanation of the positive signal.",
-            "property_type": "keyword",
-            "required": false
-          },
-          {
-            "name": "weight",
-            "description": "Signal weight for ranking.",
-            "property_type": "number",
-            "required": false
-          }
-        ]
-      }
-    ],
-    "relation_types": [
-      {
-        "name": "HAS_ASSET_TYPE",
-        "description": "Direction Listing -> AssetType. Connects a Flippa listing to its digital asset type."
-      },
-      {
-        "name": "IN_CATEGORY",
-        "description": "Direction Listing -> Category. Connects a listing to its Flippa industry or category."
-      },
-      {
-        "name": "USES_MONETIZATION",
-        "description": "Direction Listing -> Monetization. Connects a listing to its revenue model."
-      },
-      {
-        "name": "LOCATED_IN",
-        "description": "Direction Listing -> Country. Connects a listing to the country or location shown by Flippa."
-      },
-      {
-        "name": "HAS_INTEGRATION",
-        "description": "Direction Listing -> Integration. Connects a listing to connected external data providers or commerce platforms."
-      },
-      {
-        "name": "HAS_VERIFICATION",
-        "description": "Direction Listing -> Verification. Connects a listing to verification signals such as verified-listing, google_analytics, stripe or shopify."
-      },
-      {
-        "name": "HAS_BADGE",
-        "description": "Direction Listing -> Badge. Connects a listing to visual marketplace badges such as Sponsored, Broker, Super Seller, Managed by Flippa or Editor's Choice."
-      },
-      {
-        "name": "HAS_KEY_DATA",
-        "description": "Direction Listing -> KeyData. Connects a listing to displayed label-value facts from the Flippa key data block."
-      },
-      {
-        "name": "HAS_RISK_FLAG",
-        "description": "Direction Listing -> RiskFlag. Connects a listing to derived due-diligence risk flags."
-      },
-      {
-        "name": "HAS_OPPORTUNITY_SIGNAL",
-        "description": "Direction Listing -> OpportunitySignal. Connects a listing to derived positive sourcing signals."
-      }
-    ]
-  },
-  "healthcare_clinic": {
-    "description": null,
-    "entity_types": [
-      {
-        "name": "Patient",
-        "description": "A person receiving medical care or consultation."
-      },
-      {
-        "name": "Doctor",
-        "description": "A licensed medical professional who provides consultations and prescriptions."
-      },
-      {
-        "name": "Visit",
-        "description": "A scheduled or walk-in appointment between a patient and a doctor."
-      },
-      {
-        "name": "Prescription",
-        "description": "A medical instruction to dispense medication or treatment."
-      },
-      {
-        "name": "Diagnosis",
-        "description": "A clinical finding or condition identified during a visit."
-      },
-      {
-        "name": "Service",
-        "description": "A medical procedure, test, or treatment provided to a patient."
-      },
-      {
-        "name": "Consent",
-        "description": "A patient's informed agreement to a procedure or data processing."
-      },
-      {
-        "name": "Invoice",
-        "description": "A billing document for medical services rendered."
-      },
-      {
-        "name": "MedicalRecord",
-        "description": "A cumulative health history record for a patient."
-      }
-    ],
-    "relation_types": [
-      {
-        "name": "TREATED_BY",
-        "description": "Patient was treated by the target doctor."
-      },
-      {
-        "name": "ATTENDED",
-        "description": "Patient attended the target visit."
-      },
-      {
-        "name": "RESULTED_IN",
-        "description": "Visit resulted in the target diagnosis or prescription."
-      },
-      {
-        "name": "COVERS",
-        "description": "Medical record covers the target patient's history."
-      },
-      {
-        "name": "PROVIDED_AT",
-        "description": "Service was provided during the target visit."
-      },
-      {
-        "name": "BILLED_IN",
-        "description": "Service is billed in the target invoice."
-      },
-      {
-        "name": "AUTHORISED_BY",
-        "description": "Prescription or procedure is authorised by the target consent."
-      },
-      {
-        "name": "REFERS_TO",
-        "description": "Doctor or visit refers to another doctor or specialist."
-      }
-    ]
-  },
-  "hospitality_food": {
-    "description": null,
-    "entity_types": [
-      {
-        "name": "Venue",
-        "description": "A restaurant, café, bar, or hotel property."
-      },
-      {
-        "name": "Guest",
-        "description": "A customer who visits, dines, or stays at the venue."
-      },
-      {
-        "name": "Reservation",
-        "description": "An advance booking for a table, room, or event space."
-      },
-      {
-        "name": "Table",
-        "description": "A seating unit in a restaurant or bar with capacity and status."
-      },
-      {
-        "name": "Room",
-        "description": "A hotel or accommodation unit with type, rate, and availability."
-      },
-      {
-        "name": "MenuItem",
-        "description": "A food or drink item on the menu with price and description."
-      },
-      {
-        "name": "Order",
-        "description": "A guest's food and drink order placed during a visit."
-      },
-      {
-        "name": "Shift",
-        "description": "A scheduled work period for staff at the venue."
-      },
-      {
-        "name": "Supplier",
-        "description": "A vendor providing food, beverage, or supplies to the venue."
-      },
-      {
-        "name": "Invoice",
-        "description": "A billing document for supplies delivered to the venue."
-      }
-    ],
-    "relation_types": [
-      {
-        "name": "MADE_BY",
-        "description": "Reservation or order was made by the target guest."
-      },
-      {
-        "name": "HELD_AT",
-        "description": "Reservation or event is held at the target venue."
-      },
-      {
-        "name": "ASSIGNED_TO",
-        "description": "Reservation is assigned to the target table or room."
-      },
-      {
-        "name": "INCLUDES",
-        "description": "Order includes the target menu item."
-      },
-      {
-        "name": "WORKED_BY",
-        "description": "Shift is worked by the target staff member."
-      },
-      {
-        "name": "SUPPLIED_BY",
-        "description": "Menu item or supply is provided by the target supplier."
-      },
-      {
-        "name": "BILLED_IN",
-        "description": "Order or stay is billed in the target invoice."
-      },
-      {
-        "name": "FOLLOWS",
-        "description": "Reservation or order follows a prior visit or stay by the guest."
-      }
-    ]
-  },
-  "hr_recruiting": {
-    "description": null,
-    "entity_types": [
-      {
-        "name": "Employee",
-        "description": "A person currently employed by the organisation."
-      },
-      {
-        "name": "Candidate",
-        "description": "A person being considered for an open position."
-      },
-      {
-        "name": "JobPosting",
-        "description": "An advertised vacancy with requirements, title, and location."
-      },
-      {
-        "name": "Application",
-        "description": "A submission by a candidate for a specific job posting."
-      },
-      {
-        "name": "Interview",
-        "description": "A scheduled evaluation session between a candidate and interviewers."
-      },
-      {
-        "name": "Department",
-        "description": "An organisational unit grouping employees by function."
-      },
-      {
-        "name": "Role",
-        "description": "A job title or position with defined responsibilities."
-      },
-      {
-        "name": "LeaveRequest",
-        "description": "A formal request by an employee for absence or time off."
-      },
-      {
-        "name": "PerformanceReview",
-        "description": "A periodic assessment of an employee's work and goals."
-      },
-      {
-        "name": "Onboarding",
-        "description": "The process and checklist for integrating a new hire."
-      }
-    ],
-    "relation_types": [
-      {
-        "name": "WORKS_IN",
-        "description": "Employee works in the target department."
-      },
-      {
-        "name": "HOLDS",
-        "description": "Employee holds the target role."
-      },
-      {
-        "name": "APPLIED_FOR",
-        "description": "Candidate applied for the target job posting."
-      },
-      {
-        "name": "RESULTED_IN",
-        "description": "Application resulted in the target interview or offer."
-      },
-      {
-        "name": "CONDUCTED_BY",
-        "description": "Interview was conducted by the target employee or panel."
-      },
-      {
-        "name": "REPORTS_TO",
-        "description": "Employee reports to the target manager."
-      },
-      {
-        "name": "SUBMITTED_BY",
-        "description": "Leave request or review was submitted by the target employee."
-      },
-      {
-        "name": "ASSIGNED_TO",
-        "description": "Onboarding task or review is assigned to the target employee."
-      }
-    ]
-  },
-  "legal": {
-    "description": null,
-    "entity_types": [
-      {
-        "name": "LegalNorm",
-        "description": "A rule, provision, article, or paragraph stated in the text."
-      },
-      {
-        "name": "LegalAct",
-        "description": "A named statute, code, law, decree, or treaty."
-      },
-      {
-        "name": "StateBody",
-        "description": "Any organ of public authority: court, ministry, agency, parliament."
-      },
-      {
-        "name": "Person",
-        "description": "A natural person identified by role or name (judge, plaintiff, citizen)."
-      },
-      {
-        "name": "Organization",
-        "description": "A legal entity, association, or corporation other than a state body."
-      },
-      {
-        "name": "LegalRight",
-        "description": "An entitlement or freedom granted to a subject."
-      },
-      {
-        "name": "LegalObligation",
-        "description": "A duty, requirement, or prohibition imposed on a subject."
-      },
-      {
-        "name": "Sanction",
-        "description": "A penalty, fine, or other consequence for a violation."
-      },
-      {
-        "name": "LegalProcedure",
-        "description": "A formally described process (filing, appeal, hearing, registration)."
-      },
-      {
-        "name": "LegalConcept",
-        "description": "A defined legal term or category (property, citizenship, contract)."
-      },
-      {
-        "name": "Date",
-        "description": "A specific date or time period explicitly mentioned."
-      },
-      {
-        "name": "Location",
-        "description": "A jurisdiction, territory, or named place."
-      },
-      {
-        "name": "MonetaryAmount",
-        "description": "A specific sum of money referenced in the text."
-      }
-    ],
-    "relation_types": [
-      {
-        "name": "GRANTS",
-        "description": "Subject confers a right or power on another."
-      },
-      {
-        "name": "REQUIRES",
-        "description": "Subject imposes a requirement on another."
-      },
-      {
-        "name": "PROHIBITS",
-        "description": "Subject forbids the target action or state."
-      },
-      {
-        "name": "REGULATES",
-        "description": "Subject sets rules over the target."
-      },
-      {
-        "name": "ESTABLISHES",
-        "description": "Subject creates, founds, or institutes the target."
-      },
-      {
-        "name": "ENFORCES",
-        "description": "Subject implements or compels compliance with the target."
-      },
-      {
-        "name": "REFERENCES",
-        "description": "Subject cites or invokes the target."
-      },
-      {
-        "name": "AMENDS",
-        "description": "Subject modifies the target legal act/norm."
-      },
-      {
-        "name": "REPEALS",
-        "description": "Subject revokes the target legal act/norm."
-      },
-      {
-        "name": "APPLIES_TO",
-        "description": "Subject's scope covers the target."
-      },
-      {
-        "name": "PART_OF",
-        "description": "Subject is structurally contained in the target."
-      },
-      {
-        "name": "HAS_SANCTION",
-        "description": "Subject (norm) attaches the target sanction."
-      },
-      {
-        "name": "ISSUED_BY",
-        "description": "Subject (act/decision) was issued by the target body."
-      },
-      {
-        "name": "DEFINED_AS",
-        "description": "Subject term is defined as the target concept."
-      }
-    ]
-  },
-  "logistics_delivery": {
-    "description": null,
-    "entity_types": [
-      {
-        "name": "Shipment",
-        "description": "A consignment of goods dispatched from origin to destination."
-      },
-      {
-        "name": "Parcel",
-        "description": "An individual package within a shipment."
-      },
-      {
-        "name": "Route",
-        "description": "A planned sequence of stops for a vehicle on a delivery run."
-      },
-      {
-        "name": "Driver",
-        "description": "A person operating a vehicle to carry out deliveries."
-      },
-      {
-        "name": "Vehicle",
-        "description": "A transport asset (van, truck, bike) used for deliveries."
-      },
-      {
-        "name": "DeliveryStop",
-        "description": "A single destination address on a route where goods are delivered."
-      },
-      {
-        "name": "TrackingEvent",
-        "description": "A status update recording a parcel's location or state change."
-      },
-      {
-        "name": "Sender",
-        "description": "The person or organisation dispatching the shipment."
-      },
-      {
-        "name": "Recipient",
-        "description": "The person or organisation receiving the shipment."
-      },
-      {
-        "name": "Depot",
-        "description": "A hub or sorting facility where shipments are consolidated or transferred."
-      }
-    ],
-    "relation_types": [
-      {
-        "name": "DISPATCHED_BY",
-        "description": "Shipment was dispatched by the target sender."
-      },
-      {
-        "name": "DELIVERED_TO",
-        "description": "Shipment or parcel was delivered to the target recipient."
-      },
-      {
-        "name": "ASSIGNED_TO",
-        "description": "Route is assigned to the target driver or vehicle."
-      },
-      {
-        "name": "INCLUDES",
-        "description": "Shipment includes the target parcel."
-      },
-      {
-        "name": "FOLLOWS",
-        "description": "Route follows the target sequence of delivery stops."
-      },
-      {
-        "name": "TRACKED_BY",
-        "description": "Parcel state is captured in the target tracking event."
-      },
-      {
-        "name": "PROCESSED_AT",
-        "description": "Shipment is processed at the target depot."
-      },
-      {
-        "name": "STOPS_AT",
-        "description": "Route stops at the target delivery stop."
-      }
-    ]
-  },
-  "manufacturing_light": {
-    "description": null,
-    "entity_types": [
-      {
-        "name": "Product",
-        "description": "A finished or semi-finished good produced in the facility."
-      },
-      {
-        "name": "BOM",
-        "description": "A bill of materials listing components required to make a product."
-      },
-      {
-        "name": "Component",
-        "description": "A raw material or sub-assembly used in production."
-      },
-      {
-        "name": "Batch",
-        "description": "A discrete production run of a product with quantity and date."
-      },
-      {
-        "name": "ProductionOrder",
-        "description": "An instruction to manufacture a specified quantity of a product."
-      },
-      {
-        "name": "Operation",
-        "description": "A single step in the manufacturing process (cut, assemble, pack)."
-      },
-      {
-        "name": "Machine",
-        "description": "A piece of equipment used in production operations."
-      },
-      {
-        "name": "QualityCheck",
-        "description": "An inspection result confirming batch or product conformance."
-      },
-      {
-        "name": "Supplier",
-        "description": "A vendor providing raw materials or components."
-      }
-    ],
-    "relation_types": [
-      {
-        "name": "DEFINED_BY",
-        "description": "Product's composition is defined by the target BOM."
-      },
-      {
-        "name": "REQUIRES",
-        "description": "BOM requires the target component."
-      },
-      {
-        "name": "PRODUCED_IN",
-        "description": "Batch was produced in the target production order."
-      },
-      {
-        "name": "EXECUTED_ON",
-        "description": "Operation was executed on the target machine."
-      },
-      {
-        "name": "PART_OF",
-        "description": "Operation is part of the target production order."
-      },
-      {
-        "name": "CHECKED_IN",
-        "description": "Batch passed or failed the target quality check."
-      },
-      {
-        "name": "SUPPLIED_BY",
-        "description": "Component is supplied by the target supplier."
-      },
-      {
-        "name": "YIELDS",
-        "description": "Production order yields the target batch or product."
-      }
-    ]
-  },
-  "nonprofit": {
-    "description": null,
-    "entity_types": [
-      {
-        "name": "Donor",
-        "description": "A person or organisation that contributes funds or resources."
-      },
-      {
-        "name": "Donation",
-        "description": "A financial or in-kind contribution made by a donor."
-      },
-      {
-        "name": "Campaign",
-        "description": "A time-limited fundraising or awareness initiative."
-      },
-      {
-        "name": "Grant",
-        "description": "Funding awarded by a foundation or government to the organisation."
-      },
-      {
-        "name": "Volunteer",
-        "description": "A person giving their time and skills without pay."
-      },
-      {
-        "name": "Event",
-        "description": "A fundraising, community, or awareness-raising activity."
-      },
-      {
-        "name": "Beneficiary",
-        "description": "A person or community that receives services or support."
-      },
-      {
-        "name": "Program",
-        "description": "A long-running initiative delivering services to beneficiaries."
-      },
-      {
-        "name": "GrantReport",
-        "description": "A document reporting outcomes and spending to a grant-making body."
-      }
-    ],
-    "relation_types": [
-      {
-        "name": "DONATED_BY",
-        "description": "Donation was made by the target donor."
-      },
-      {
-        "name": "RAISED_IN",
-        "description": "Donation or funds were raised in the target campaign or event."
-      },
-      {
-        "name": "AWARDED_BY",
-        "description": "Grant was awarded by the target foundation or agency."
-      },
-      {
-        "name": "SUPPORTS",
-        "description": "Campaign, grant, or program supports the target beneficiary or program."
-      },
-      {
-        "name": "PARTICIPATES_IN",
-        "description": "Volunteer participates in the target event or program."
-      },
-      {
-        "name": "SERVES",
-        "description": "Program serves the target beneficiary."
-      },
-      {
-        "name": "REPORTED_IN",
-        "description": "Grant outcomes are reported in the target grant report."
-      },
-      {
-        "name": "ORGANISED_BY",
-        "description": "Event is organised by a staff member, volunteer, or the organisation."
-      }
-    ]
-  },
-  "operations_projects": {
-    "description": null,
-    "entity_types": [
-      {
-        "name": "Project",
-        "description": "A time-bounded initiative with a goal, owner, and deliverables."
-      },
-      {
-        "name": "Task",
-        "description": "An atomic unit of work within a project or sprint."
-      },
-      {
-        "name": "Milestone",
-        "description": "A significant checkpoint or deadline within a project."
-      },
-      {
-        "name": "Sprint",
-        "description": "A fixed time-box in which a set of tasks is planned and executed."
-      },
-      {
-        "name": "TeamMember",
-        "description": "A person assigned to one or more projects or tasks."
-      },
-      {
-        "name": "Resource",
-        "description": "A person, tool, budget, or asset allocated to project work."
-      },
-      {
-        "name": "Risk",
-        "description": "An identified uncertainty that could affect project delivery."
-      },
-      {
-        "name": "Dependency",
-        "description": "A constraint that links two tasks or milestones in sequence."
-      },
-      {
-        "name": "Deliverable",
-        "description": "A specific output or artifact produced by the project."
-      },
-      {
-        "name": "StatusUpdate",
-        "description": "A periodic report on project or task progress."
-      }
-    ],
-    "relation_types": [
-      {
-        "name": "ASSIGNED_TO",
-        "description": "Task is assigned to the target team member."
-      },
-      {
-        "name": "BELONGS_TO",
-        "description": "Task or milestone belongs to the target project or sprint."
-      },
-      {
-        "name": "DEPENDS_ON",
-        "description": "Task cannot start until the target task or milestone is complete."
-      },
-      {
-        "name": "BLOCKS",
-        "description": "Subject task blocks progress on the target task."
-      },
-      {
-        "name": "OWNS",
-        "description": "Team member or role owns the target project or deliverable."
-      },
-      {
-        "name": "USES",
-        "description": "Project or task uses the target resource."
-      },
-      {
-        "name": "MITIGATES",
-        "description": "Action or plan mitigates the target risk."
-      },
-      {
-        "name": "PRODUCES",
-        "description": "Project or task produces the target deliverable."
-      }
-    ]
-  },
-  "procurement_inventory": {
-    "description": null,
-    "entity_types": [
-      {
-        "name": "Supplier",
-        "description": "An external party that provides goods or services."
-      },
-      {
-        "name": "PurchaseOrder",
-        "description": "A formal request to a supplier to deliver goods at agreed terms."
-      },
-      {
-        "name": "Product",
-        "description": "A physical or digital item that is stocked or procured."
-      },
-      {
-        "name": "StockItem",
-        "description": "A specific SKU tracked in inventory with quantity on hand."
-      },
-      {
-        "name": "Warehouse",
-        "description": "A physical location where inventory is stored."
-      },
-      {
-        "name": "Delivery",
-        "description": "A shipment of goods received from a supplier or dispatched to a customer."
-      },
-      {
-        "name": "Invoice",
-        "description": "A billing document issued by a supplier for goods delivered."
-      },
-      {
-        "name": "PriceList",
-        "description": "A supplier's or internal catalogue of prices for products."
-      },
-      {
-        "name": "Requisition",
-        "description": "An internal request to purchase goods or services."
-      },
-      {
-        "name": "Contract",
-        "description": "A supply agreement defining terms, pricing, and volumes."
-      }
-    ],
-    "relation_types": [
-      {
-        "name": "SUPPLIED_BY",
-        "description": "Product or delivery is supplied by the target supplier."
-      },
-      {
-        "name": "FULFILS",
-        "description": "Delivery fulfils the target purchase order or requisition."
-      },
-      {
-        "name": "STORED_IN",
-        "description": "Stock item is stored in the target warehouse."
-      },
-      {
-        "name": "COVERED_BY",
-        "description": "Purchase order is covered by the target contract."
-      },
-      {
-        "name": "ISSUED_FOR",
-        "description": "Invoice is issued for the target purchase order or delivery."
-      },
-      {
-        "name": "LISTED_IN",
-        "description": "Product is listed in the target price list."
-      },
-      {
-        "name": "TRIGGERS",
-        "description": "Requisition triggers the target purchase order."
-      },
-      {
-        "name": "REPLENISHES",
-        "description": "Delivery replenishes the target stock item."
-      }
-    ]
-  },
-  "professional_services": {
-    "description": null,
-    "entity_types": [
-      {
-        "name": "Client",
-        "description": "An organisation or individual purchasing professional services."
-      },
-      {
-        "name": "Engagement",
-        "description": "A scoped project or retainer agreement with a client."
-      },
-      {
-        "name": "Deliverable",
-        "description": "A specific output committed to a client: report, code, design."
-      },
-      {
-        "name": "Consultant",
-        "description": "A professional assigned to deliver work on an engagement."
-      },
-      {
-        "name": "TimeEntry",
-        "description": "A logged record of hours worked on an engagement or task."
-      },
-      {
-        "name": "Invoice",
-        "description": "A billing document sent to a client for hours or milestones."
-      },
-      {
-        "name": "Proposal",
-        "description": "A scoped offer describing work, timeline, and fees."
-      },
-      {
-        "name": "Milestone",
-        "description": "A key checkpoint or billing trigger within an engagement."
-      },
-      {
-        "name": "Feedback",
-        "description": "Client input on deliverable quality or team performance."
-      },
-      {
-        "name": "Contract",
-        "description": "A signed agreement defining scope, fees, and terms."
-      }
-    ],
-    "relation_types": [
-      {
-        "name": "SERVES",
-        "description": "Engagement or consultant serves the target client."
-      },
-      {
-        "name": "ASSIGNED_TO",
-        "description": "Consultant is assigned to the target engagement or task."
-      },
-      {
-        "name": "PRODUCES",
-        "description": "Engagement or consultant produces the target deliverable."
-      },
-      {
-        "name": "BILLED_FOR",
-        "description": "Invoice is billed for the target engagement or milestone."
-      },
-      {
-        "name": "LOGGED_AGAINST",
-        "description": "Time entry is logged against the target engagement or task."
-      },
-      {
-        "name": "GOVERNED_BY",
-        "description": "Engagement is governed by the target contract."
-      },
-      {
-        "name": "LEADS_TO",
-        "description": "Proposal leads to the target engagement or contract."
-      },
-      {
-        "name": "RECEIVED_BY",
-        "description": "Feedback was received from the target client."
-      }
-    ]
-  },
-  "real_estate": {
-    "description": null,
-    "entity_types": [
-      {
-        "name": "Property",
-        "description": "A real estate asset: apartment, house, office, or land plot."
-      },
-      {
-        "name": "Owner",
-        "description": "The person or entity holding title to a property."
-      },
-      {
-        "name": "Tenant",
-        "description": "A person or entity renting a property under a lease."
-      },
-      {
-        "name": "LeaseAgreement",
-        "description": "A contract granting use of a property for a term and rent."
-      },
-      {
-        "name": "Showing",
-        "description": "A scheduled viewing of a property by a prospective buyer or tenant."
-      },
-      {
-        "name": "Offer",
-        "description": "A formal bid to purchase or lease a property at stated terms."
-      },
-      {
-        "name": "Transaction",
-        "description": "A completed sale or lease execution for a property."
-      },
-      {
-        "name": "Agent",
-        "description": "A real estate professional representing buyers, sellers, or landlords."
-      },
-      {
-        "name": "Inspection",
-        "description": "A formal assessment of a property's condition."
-      },
-      {
-        "name": "Listing",
-        "description": "A public advertisement of a property available for sale or rent."
-      }
-    ],
-    "relation_types": [
-      {
-        "name": "OWNED_BY",
-        "description": "Property is owned by the target owner."
-      },
-      {
-        "name": "LEASED_BY",
-        "description": "Property is leased to the target tenant under a lease agreement."
-      },
-      {
-        "name": "LISTED_BY",
-        "description": "Property is listed by the target agent."
-      },
-      {
-        "name": "SHOWN_TO",
-        "description": "Showing is presented to the target prospect."
-      },
-      {
-        "name": "COVERED_BY",
-        "description": "Transaction or lease is covered by the target agreement."
-      },
-      {
-        "name": "INSPECTED_IN",
-        "description": "Property was assessed in the target inspection."
-      },
-      {
-        "name": "RESULTED_IN",
-        "description": "Showing or offer resulted in the target transaction."
-      },
-      {
-        "name": "ADVERTISED_AS",
-        "description": "Property is advertised as the target listing."
-      }
-    ]
-  },
-  "retail": {
-    "description": null,
-    "entity_types": [
-      {
-        "name": "Store",
-        "description": "A physical retail outlet with address, hours, and staff."
-      },
-      {
-        "name": "Product",
-        "description": "A goods item sold in store, with SKU, price, and description."
-      },
-      {
-        "name": "ProductCategory",
-        "description": "A hierarchical classification grouping related products."
-      },
-      {
-        "name": "Sale",
-        "description": "A completed retail transaction with items, amount, and date."
-      },
-      {
-        "name": "Receipt",
-        "description": "A document recording a specific sale transaction."
-      },
-      {
-        "name": "Customer",
-        "description": "A person who makes purchases in the store."
-      },
-      {
-        "name": "Return",
-        "description": "A customer-initiated reversal of a previous purchase."
-      },
-      {
-        "name": "Promotion",
-        "description": "A time-limited discount or marketing offer applied to products."
-      },
-      {
-        "name": "Supplier",
-        "description": "A vendor providing goods for resale in the store."
-      },
-      {
-        "name": "StockLevel",
-        "description": "The current inventory quantity of a product at a store."
-      }
-    ],
-    "relation_types": [
-      {
-        "name": "SOLD_AT",
-        "description": "Product is sold at the target store."
-      },
-      {
-        "name": "BELONGS_TO",
-        "description": "Product belongs to the target category."
-      },
-      {
-        "name": "MADE_AT",
-        "description": "Sale was made at the target store."
-      },
-      {
-        "name": "PURCHASED_BY",
-        "description": "Sale was made to the target customer."
-      },
-      {
-        "name": "INCLUDES",
-        "description": "Sale or receipt includes the target product."
-      },
-      {
-        "name": "APPLIES_TO",
-        "description": "Promotion applies to the target product or category."
-      },
-      {
-        "name": "RESULTS_IN",
-        "description": "Return results from the target sale."
-      },
-      {
-        "name": "SUPPLIED_BY",
-        "description": "Product is supplied by the target supplier."
-      }
-    ]
-  },
-  "sales_crm": {
-    "description": null,
-    "entity_types": [
-      {
-        "name": "Lead",
-        "description": "A prospective customer at an early stage of the sales funnel."
-      },
-      {
-        "name": "Contact",
-        "description": "A named individual at a prospective or existing client company."
-      },
-      {
-        "name": "Account",
-        "description": "A customer or prospect company tracked in the CRM."
-      },
-      {
-        "name": "Opportunity",
-        "description": "A qualified sales deal being actively pursued."
-      },
-      {
-        "name": "Proposal",
-        "description": "A commercial offer or quotation sent to a prospect."
-      },
-      {
-        "name": "Activity",
-        "description": "A logged sales action: call, email, meeting, or demo."
-      },
-      {
-        "name": "Pipeline",
-        "description": "An ordered set of stages through which deals progress."
-      },
-      {
-        "name": "Product",
-        "description": "A good or service being sold, with price and description."
-      },
-      {
-        "name": "Contract",
-        "description": "A signed agreement formalising a sale or renewal."
-      },
-      {
-        "name": "SalesRep",
-        "description": "A salesperson responsible for one or more accounts or deals."
-      }
-    ],
-    "relation_types": [
-      {
-        "name": "OWNED_BY",
-        "description": "Opportunity or account is assigned to the target sales rep."
-      },
-      {
-        "name": "BELONGS_TO",
-        "description": "Lead or contact belongs to the target account."
-      },
-      {
-        "name": "HAS_STAGE",
-        "description": "Opportunity is currently at the target pipeline stage."
-      },
-      {
-        "name": "RESULTED_IN",
-        "description": "Lead or opportunity resulted in the target contract or deal."
-      },
-      {
-        "name": "INCLUDES",
-        "description": "Proposal or contract includes the target product or line item."
-      },
-      {
-        "name": "LOGGED_FOR",
-        "description": "Activity was logged against the target contact or opportunity."
-      },
-      {
-        "name": "CONVERTS_TO",
-        "description": "Lead converts to the target contact or opportunity."
-      },
-      {
-        "name": "FOLLOWS_UP_ON",
-        "description": "Activity is a follow-up to the target activity or opportunity."
-      }
-    ]
-  }
+}
 }

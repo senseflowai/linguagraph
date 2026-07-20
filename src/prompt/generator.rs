@@ -744,6 +744,7 @@ mod tests {
             "test",
             crate::graph::DomainOntology {
                 name: None,
+                example: None,
                 description: None,
                 entity_types: vec![crate::graph::EntityTypeSpec {
                     name: "Camera".into(),
@@ -1021,6 +1022,7 @@ mod tests {
     fn domain(desc: &str, entity: crate::graph::EntityTypeSpec) -> crate::graph::DomainOntology {
         crate::graph::DomainOntology {
             name: None,
+            example: None,
             description: Some(desc.into()),
             entity_types: vec![entity],
             relation_types: vec![],

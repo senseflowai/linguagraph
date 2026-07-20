@@ -339,6 +339,26 @@ impl EmbeddingStore for QdrantClient {
         }
         Ok(hits)
     }
+
+    async fn list_ids(
+        &self,
+        collection: &str,
+        filter: &EmbeddingFilter,
+    ) -> Result<Vec<Uuid>, StoreError> {
+        let raw = self.scroll_payloads(collection, filter_to_json(filter)).await?;
+        Ok(raw
+            .into_iter()
+            .filter_map(|(id, _)| Uuid::parse_str(&id).ok())
+            .collect())
+    }
+
+    async fn delete(&self, collection: &str, ids: &[Uuid]) -> Result<(), StoreError> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let id_strs: Vec<String> = ids.iter().map(Uuid::to_string).collect();
+        self.delete_points(collection, &id_strs).await
+    }
 }
 
 /// True when a prefetch branch's sparse `query.indices` array is empty.
@@ -352,7 +372,7 @@ fn sparse_idx_is_empty(prefetch: &JsonValue) -> bool {
 }
 
 impl QdrantClient {
-    async fn collection_exists(&self, collection: &str) -> Result<bool, StoreError> {
+    pub async fn collection_exists(&self, collection: &str) -> Result<bool, StoreError> {
         let url = format!("{}/collections/{}", self.base_url, collection);
         let resp = self
             .auth(self.http.get(&url))
@@ -360,6 +380,171 @@ impl QdrantClient {
             .await
             .map_err(|e| StoreError::Transport(e.to_string()))?;
         Ok(resp.status().is_success())
+    }
+
+    /// Like [`Self::send`] but maps a 404 to `Ok(None)` instead of an
+    /// error, so callers can treat "collection does not exist yet" as an
+    /// empty result rather than a failure — the natural read semantics for
+    /// a namespace nothing has been written to.
+    async fn send_allow_404(
+        &self,
+        req: reqwest::RequestBuilder,
+    ) -> Result<Option<JsonValue>, StoreError> {
+        let resp = self
+            .auth(req)
+            .send()
+            .await
+            .map_err(|e| StoreError::Transport(e.to_string()))?;
+        let status = resp.status();
+        if status.as_u16() == 404 {
+            return Ok(None);
+        }
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| StoreError::Transport(e.to_string()))?;
+        if !status.is_success() {
+            return Err(StoreError::Backend(format!(
+                "qdrant {}: {}",
+                status.as_u16(),
+                text
+            )));
+        }
+        if text.is_empty() {
+            return Ok(Some(JsonValue::Null));
+        }
+        serde_json::from_str(&text)
+            .map(Some)
+            .map_err(|e| StoreError::Backend(e.to_string()))
+    }
+
+    // -----------------------------------------------------------------
+    // Raw point operations.
+    //
+    // These deliberately bypass the typed [`EmbeddingPayload`] shape used
+    // by the `EmbeddingStore` impl: the ontology subsystem stores
+    // authoritative *schema* points whose payload is an arbitrary JSON
+    // object (`kind:"schema"`, the full `DomainOntology`), alongside the
+    // routing embeddings, in one collection. They are also what the
+    // per-domain garbage-collection on delete/rename is built from.
+    // -----------------------------------------------------------------
+
+    /// Upsert a single point with an explicit id, vector, and arbitrary
+    /// JSON payload. Used to write ontology schema points.
+    pub async fn upsert_raw(
+        &self,
+        collection: &str,
+        id: &str,
+        vector: &[f32],
+        payload: JsonValue,
+    ) -> Result<(), StoreError> {
+        let url = format!(
+            "{}/collections/{}/points?wait=true",
+            self.base_url, collection
+        );
+        let body = json!({ "points": [ { "id": id, "vector": vector, "payload": payload } ] });
+        self.send(self.http.put(&url).json(&body)).await?;
+        Ok(())
+    }
+
+    /// Fetch one point's payload by id. `Ok(None)` when the point (or the
+    /// whole collection) does not exist.
+    pub async fn get_payload(
+        &self,
+        collection: &str,
+        id: &str,
+    ) -> Result<Option<JsonValue>, StoreError> {
+        let url = format!("{}/collections/{}/points", self.base_url, collection);
+        let body = json!({ "ids": [id], "with_payload": true, "with_vector": false });
+        let Some(resp) = self.send_allow_404(self.http.post(&url).json(&body)).await? else {
+            return Ok(None);
+        };
+        Ok(resp
+            .get("result")
+            .and_then(JsonValue::as_array)
+            .and_then(|a| a.first())
+            .and_then(|p| p.get("payload").cloned()))
+    }
+
+    /// Enumerate `(id, payload)` for every point matching `filter` (or all
+    /// points when `None`), paging through the collection. Returns an empty
+    /// vec when the collection does not exist.
+    pub async fn scroll_payloads(
+        &self,
+        collection: &str,
+        filter: Option<JsonValue>,
+    ) -> Result<Vec<(String, JsonValue)>, StoreError> {
+        let url = format!("{}/collections/{}/points/scroll", self.base_url, collection);
+        let mut out = Vec::new();
+        let mut offset = JsonValue::Null;
+        loop {
+            let mut body = json!({ "limit": 256, "with_payload": true, "with_vector": false });
+            if let Some(f) = &filter {
+                body["filter"] = f.clone();
+            }
+            if !offset.is_null() {
+                body["offset"] = offset.clone();
+            }
+            let Some(resp) = self.send_allow_404(self.http.post(&url).json(&body)).await? else {
+                return Ok(Vec::new());
+            };
+            let result = &resp["result"];
+            if let Some(points) = result.get("points").and_then(JsonValue::as_array) {
+                for p in points {
+                    let Some(id) = point_id_string(&p["id"]) else {
+                        continue;
+                    };
+                    let payload = p.get("payload").cloned().unwrap_or(JsonValue::Null);
+                    out.push((id, payload));
+                }
+            }
+            match result.get("next_page_offset") {
+                Some(o) if !o.is_null() => offset = o.clone(),
+                _ => break,
+            }
+        }
+        Ok(out)
+    }
+
+    /// Delete every point matching `filter`. A missing collection is a
+    /// no-op (nothing to delete). This is the primitive the ontology
+    /// subsystem uses to garbage-collect all of a domain's points (schema
+    /// **and** routing embeddings, both carrying `domain` in their payload)
+    /// on delete/rename — fixing the stale-point leak the content-addressed
+    /// scheme left behind.
+    pub async fn delete_by_filter(
+        &self,
+        collection: &str,
+        filter: JsonValue,
+    ) -> Result<(), StoreError> {
+        let url = format!(
+            "{}/collections/{}/points/delete?wait=true",
+            self.base_url, collection
+        );
+        let body = json!({ "filter": filter });
+        self.send_allow_404(self.http.post(&url).json(&body)).await?;
+        Ok(())
+    }
+
+    /// Delete points by explicit id. A missing collection is a no-op.
+    pub async fn delete_points(&self, collection: &str, ids: &[String]) -> Result<(), StoreError> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let url = format!(
+            "{}/collections/{}/points/delete?wait=true",
+            self.base_url, collection
+        );
+        let body = json!({ "points": ids });
+        self.send_allow_404(self.http.post(&url).json(&body)).await?;
+        Ok(())
+    }
+
+    /// Delete an entire collection. A missing collection is a no-op.
+    pub async fn delete_collection(&self, collection: &str) -> Result<(), StoreError> {
+        let url = format!("{}/collections/{}", self.base_url, collection);
+        self.send_allow_404(self.http.delete(&url)).await?;
+        Ok(())
     }
 }
 
@@ -394,16 +579,6 @@ fn filter_to_json(filter: &EmbeddingFilter) -> Option<JsonValue> {
         None
     } else {
         Some(json!({ "must": must }))
-    }
-}
-
-#[cfg(test)]
-impl QdrantClient {
-    /// Delete a collection (test cleanup only).
-    async fn delete_collection(&self, collection: &str) -> Result<(), StoreError> {
-        let url = format!("{}/collections/{}", self.base_url, collection);
-        self.send(self.http.delete(&url)).await?;
-        Ok(())
     }
 }
 

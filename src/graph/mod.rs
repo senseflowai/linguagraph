@@ -20,6 +20,10 @@ pub use ontology::{
     OntologyError, OntologyPropertyType, PropertySpec, RelationTypeSpec,
     DEFAULT_DOMAIN_SELECTION_THRESHOLD, DEFAULT_DOMAIN_SELECTION_TOP_K,
 };
+// Crate-internal: the ontology service (`crate::ontology::service`) reuses
+// the domain-level routing passage builder to compute the fresh embedding
+// id-set it garbage-collects against.
+pub(crate) use ontology::domain_embedding_text;
 pub use ontology_storage::{
     InMemoryOntologyCatalogStorage, JsonFileOntologyCatalogStorage, OntologyCatalogStorage,
     DEFAULT_ONTOLOGY_CATALOG_CACHE_PATH,

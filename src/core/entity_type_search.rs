@@ -330,6 +330,7 @@ mod tests {
             "legal",
             DomainOntology {
                 name: None,
+                example: None,
                 description: None,
                 entity_types: vec![EntityTypeSpec::with_description("Person", "a human")],
                 relation_types: vec![],

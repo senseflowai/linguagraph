@@ -143,6 +143,7 @@ mod tests {
             "demo",
             DomainOntology {
                 name: None,
+                example: None,
                 description: None,
                 entity_types: vec![EntityTypeSpec::with_description("Foo", "A foo.")],
                 relation_types: vec![RelationTypeSpec::new("KNOWS")],

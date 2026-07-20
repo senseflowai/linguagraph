@@ -146,6 +146,7 @@ mod tests {
     fn sample_ontology() -> DomainOntology {
         DomainOntology {
             name: None,
+            example: None,
             description: None,
             entity_types: vec![
                 EntityTypeSpec {

@@ -260,6 +260,31 @@ pub trait EmbeddingStore: Send + Sync + std::fmt::Debug {
         let _ = (collection, query_text, label, limit);
         Ok(Vec::new())
     }
+
+    /// Enumerate the ids of every point matching `filter`. Used by the
+    /// ontology service to diff a domain's *current* routing points against
+    /// the fresh content-addressed id-set and delete the stale remainder.
+    ///
+    /// The default implementation returns nothing, so a store that can't
+    /// enumerate simply opts out of garbage collection (stale points then
+    /// accumulate, exactly as before this method existed) rather than
+    /// failing the write.
+    async fn list_ids(
+        &self,
+        collection: &str,
+        filter: &EmbeddingFilter,
+    ) -> Result<Vec<Uuid>, StoreError> {
+        let _ = (collection, filter);
+        Ok(Vec::new())
+    }
+
+    /// Delete points by id. The default is a no-op (pairs with the
+    /// [`Self::list_ids`] opt-out: a store that can't enumerate has nothing
+    /// to delete).
+    async fn delete(&self, collection: &str, ids: &[Uuid]) -> Result<(), StoreError> {
+        let _ = (collection, ids);
+        Ok(())
+    }
 }
 
 /// A shared embedding store plus the collection/model it is addressed with.
@@ -444,6 +469,33 @@ impl EmbeddingStore for InMemoryEmbeddingStore {
         hits.sort_by(|a, b| b.score.total_cmp(&a.score));
         hits.truncate(limit);
         Ok(hits)
+    }
+
+    async fn list_ids(
+        &self,
+        collection: &str,
+        filter: &EmbeddingFilter,
+    ) -> Result<Vec<Uuid>, StoreError> {
+        let guard = self.inner.lock().unwrap();
+        Ok(guard
+            .get(collection)
+            .map(|map| {
+                map.iter()
+                    .filter(|(_, (_, payload))| filter.accepts(payload))
+                    .map(|(id, _)| *id)
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    async fn delete(&self, collection: &str, ids: &[Uuid]) -> Result<(), StoreError> {
+        let mut guard = self.inner.lock().unwrap();
+        if let Some(map) = guard.get_mut(collection) {
+            for id in ids {
+                map.remove(id);
+            }
+        }
+        Ok(())
     }
 }
 

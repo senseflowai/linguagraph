@@ -19,4 +19,4 @@ pub use generator::{
 pub use ontology_suggest::render_schema_suggest_prompt;
 pub(crate) use schema::is_enum_candidate_property_name;
 pub use schema::{GraphSchema, NodeKind, Property, PropertyType, RelKind};
-pub use select::{reindex_domain_schema, QuerySelectionParams};
+pub use select::{domain_routing_passages, reindex_domain_schema, QuerySelectionParams};

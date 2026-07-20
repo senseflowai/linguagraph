@@ -232,6 +232,43 @@ pub async fn reindex_domain_schema(
     ensure_indexed(index, embedder, &passages).await
 }
 
+/// Every routing passage for one domain — the **domain**-level passage
+/// (used by [`crate::graph::OntologyCatalog::select_domains`]) plus one
+/// **entity** passage per declared entity type and one **property**
+/// passage per non-hidden property (used by
+/// [`super::generate_query_prompt`]'s entity/property selection).
+///
+/// Built straight from the *declared* `ontology`, independent of live
+/// graph data — so a brand-new, still-empty domain is covered. Exposed so
+/// the ontology service can (a) warm exactly this set on a schema edit and
+/// (b) compute their content-addressed [`crate::embeddings::point_id`]s to
+/// garbage-collect the domain's *stale* points (ones whose passage no
+/// longer exists after an edit), which [`ensure_indexed`] alone never
+/// removes.
+pub fn domain_routing_passages(
+    domain_name: &str,
+    ontology: &DomainOntology,
+) -> Vec<(EmbeddingPayload, String)> {
+    let mut passages = vec![(
+        EmbeddingPayload::domain(domain_name.to_string()),
+        crate::graph::domain_embedding_text(domain_name, ontology),
+    )];
+    if !ontology.entity_types.is_empty() {
+        let schema = GraphSchema {
+            nodes: ontology
+                .entity_types
+                .iter()
+                .map(|spec| node_from_entity_spec(domain_name, spec))
+                .collect(),
+            relationships: Vec::new(),
+        };
+        let mut domain_schemas = BTreeMap::new();
+        domain_schemas.insert(domain_name.to_string(), schema);
+        passages.extend(schema_passages(&domain_schemas));
+    }
+    passages
+}
+
 /// Narrow the already domain-filtered `domain_schemas` down to the schema
 /// slice relevant to `query`.
 ///

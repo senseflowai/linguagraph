@@ -146,15 +146,22 @@ impl DeletePlan {
     /// Returns one row with three columns: `source_id`, `orphan_ids`,
     /// `chunk_ids`. The orphan / chunk lists may be empty; `source_id`
     /// is `null` when the source does not exist.
+    ///
+    /// Deliberately avoids the `NOT EXISTS { MATCH ... }` subquery form:
+    /// that syntax isn't parsed by Memgraph 3.0 (still the version pinned
+    /// in some deployments), where it fails hard with a parser error
+    /// before any cleanup runs — silently defeating the whole delete path
+    /// if the caller doesn't propagate the error. The `OPTIONAL MATCH` +
+    /// `collect`/`size` form below is plain openCypher and has been
+    /// supported since early Memgraph releases.
     pub fn discover_query(&self) -> CypherQuery {
         let prefix_suffix = self.prefix_suffix();
         let text = format!(
             "MATCH (s:{src}{prefix} {{name: $source_name}})\n\
              OPTIONAL MATCH (s)<-[:{mention}]-(e)\n\
-             WHERE e IS NOT NULL AND NOT EXISTS {{\n\
-             \x20\x20MATCH (e)-[:{mention}]->(other:{src}{prefix})\n\
-             \x20\x20WHERE id(other) <> id(s)\n\
-             }}\n\
+             OPTIONAL MATCH (e)-[:{mention}]->(other:{src}{prefix})\n\
+             WITH s, e, collect(DISTINCT id(other)) AS mentioned_source_ids\n\
+             WHERE e IS NULL OR (size(mentioned_source_ids) = 1 AND id(s) IN mentioned_source_ids)\n\
              WITH s, collect(DISTINCT id(e)) AS orphan_ids\n\
              OPTIONAL MATCH (s)<-[:{part_of}]-(c:{chunk}{prefix})\n\
              WITH s, orphan_ids, collect(DISTINCT id(c)) AS chunk_ids\n\
@@ -329,8 +336,12 @@ mod tests {
         let q = plan("src-1").discover_query();
         assert!(q.text.contains("MATCH (s:Source {name: $source_name})"));
         assert!(q.text.contains("OPTIONAL MATCH (s)<-[:mention]-(e)"));
-        assert!(q.text.contains("MATCH (e)-[:mention]->(other:Source)"));
-        assert!(q.text.contains("WHERE id(other) <> id(s)"));
+        assert!(q.text.contains("OPTIONAL MATCH (e)-[:mention]->(other:Source)"));
+        // No EXISTS{} subquery: Memgraph 3.0 doesn't parse that form.
+        assert!(!q.text.contains("EXISTS"));
+        assert!(q
+            .text
+            .contains("size(mentioned_source_ids) = 1 AND id(s) IN mentioned_source_ids"));
         assert!(q.text.contains("OPTIONAL MATCH (s)<-[:part_of]-(c:Chunk)"));
         assert!(q
             .text
